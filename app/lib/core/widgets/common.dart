@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
@@ -10,6 +10,7 @@ class StatCard extends StatelessWidget {
     required this.icon,
     this.accent = AppTheme.brand,
     this.subtitle,
+    this.onTap,
   });
 
   final String label;
@@ -17,10 +18,11 @@ class StatCard extends StatelessWidget {
   final IconData icon;
   final Color accent;
   final String? subtitle;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final card = Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -91,6 +93,12 @@ class StatCard extends StatelessWidget {
           ],
         ],
       ),
+    );
+    if (onTap == null) return card;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: card,
     );
   }
 }
@@ -287,3 +295,4 @@ class ConnectivityBadge extends StatelessWidget {
     );
   }
 }
+

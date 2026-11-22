@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/data/repository.dart';
@@ -22,10 +22,10 @@ class DashboardScreen extends StatelessWidget {
     const weekdays = [
       'lunes',
       'martes',
-      'miércoles',
+      'miÃ©rcoles',
       'jueves',
       'viernes',
-      'sábado',
+      'sÃ¡bado',
       'domingo',
     ];
     const months = [
@@ -48,7 +48,7 @@ class DashboardScreen extends StatelessWidget {
 
   String get _greeting {
     final hour = DateTime.now().hour;
-    if (hour < 12) return 'Buenos días';
+    if (hour < 12) return 'Buenos dÃ­as';
     if (hour < 19) return 'Buenas tardes';
     return 'Buenas noches';
   }
@@ -78,7 +78,7 @@ class DashboardScreen extends StatelessWidget {
             _OfflineBanner(pending: repository.pendingSyncCount),
           ],
           const SizedBox(height: 14),
-          _KpiGrid(repository: repository, role: role),
+          _KpiGrid(repository: repository, role: role, onNavigate: onNavigate),
           SectionHeader(
             title: 'Acciones rápidas',
             action: Text(
@@ -114,7 +114,7 @@ class DashboardScreen extends StatelessWidget {
             _TablesOverview(repository: repository),
           ],
           if (role == UserRole.admin || role == UserRole.cashier) ...[
-            const SectionHeader(title: 'Ventas últimos 7 días'),
+            const SectionHeader(title: 'Ventas Ãºltimos 7 dÃ­as'),
             _SalesSpark(repository: repository),
           ],
           SectionHeader(
@@ -127,8 +127,8 @@ class DashboardScreen extends StatelessWidget {
           if (repository.orders.isEmpty)
             const EmptyState(
               icon: Icons.receipt_long_outlined,
-              title: 'Todavía no hay pedidos',
-              message: 'Cuando llegue un pedido aparecerá aquí en tiempo real.',
+              title: 'TodavÃ­a no hay pedidos',
+              message: 'Cuando llegue un pedido aparecerÃ¡ aquÃ­ en tiempo real.',
             )
           else
             ...repository.orders.take(4).map(
@@ -191,7 +191,7 @@ class _GreetingCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '$greeting, $name 👋',
+                  '$greeting, $name ðŸ‘‹',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 18,
@@ -253,7 +253,7 @@ class _GreetingCard extends StatelessWidget {
               ],
             ),
           ),
-          const Text('🍽️', style: TextStyle(fontSize: 44)),
+          const Text('ðŸ½ï¸', style: TextStyle(fontSize: 44)),
         ],
       ),
     );
@@ -281,8 +281,8 @@ class _OfflineBanner extends StatelessWidget {
           Expanded(
             child: Text(
               pending > 0
-                  ? 'Sin conexión. $pending pedido(s) se sincronizarán al volver.'
-                  : 'Sin conexión. Los cambios se guardan en el dispositivo.',
+                  ? 'Sin conexiÃ³n. $pending pedido(s) se sincronizarÃ¡n al volver.'
+                  : 'Sin conexiÃ³n. Los cambios se guardan en el dispositivo.',
               style: const TextStyle(
                 fontSize: 11.5,
                 fontWeight: FontWeight.w600,
@@ -297,10 +297,11 @@ class _OfflineBanner extends StatelessWidget {
 }
 
 class _KpiGrid extends StatelessWidget {
-  const _KpiGrid({required this.repository, required this.role});
+  const _KpiGrid({required this.repository, required this.role, required this.onNavigate});
 
   final RestaurantRepository repository;
   final UserRole role;
+  final void Function(AppTab tab) onNavigate;
 
   @override
   Widget build(BuildContext context) {
@@ -312,24 +313,28 @@ class _KpiGrid extends StatelessWidget {
             icon: Icons.payments_outlined,
             accent: AppTheme.success,
             subtitle: '${repository.todayOrderCount} pedidos',
+            onTap: () => onNavigate(AppTab.reports),
           ),
           StatCard(
             label: 'Por cobrar',
             value: formatCop(repository.pendingPayments),
             icon: Icons.account_balance_wallet_outlined,
             accent: AppTheme.warning,
+            onTap: () => onNavigate(AppTab.orders),
           ),
           StatCard(
             label: 'Pedidos activos',
             value: '${repository.activeOrders.length}',
             icon: Icons.receipt_long_outlined,
             subtitle: '${repository.pendingCount} pendientes',
+            onTap: () => onNavigate(AppTab.orders),
           ),
           StatCard(
             label: 'Mesas ocupadas',
             value: '${repository.occupiedTables}/${repository.tables.length}',
             icon: Icons.table_restaurant_outlined,
             accent: const Color(0xFF2563EB),
+            onTap: () => onNavigate(AppTab.tables),
           ),
         ],
       UserRole.cashier => [
@@ -338,23 +343,27 @@ class _KpiGrid extends StatelessWidget {
             value: formatCop(repository.todaySales),
             icon: Icons.payments_outlined,
             accent: AppTheme.success,
+            onTap: () => onNavigate(AppTab.reports),
           ),
           StatCard(
             label: 'Por cobrar',
             value: formatCop(repository.pendingPayments),
             icon: Icons.account_balance_wallet_outlined,
             accent: AppTheme.warning,
+            onTap: () => onNavigate(AppTab.orders),
           ),
           StatCard(
             label: 'Listos para entregar',
             value: '${repository.readyCount}',
             icon: Icons.room_service_outlined,
+            onTap: () => onNavigate(AppTab.orders),
           ),
           StatCard(
             label: 'Pedidos hoy',
             value: '${repository.todayOrderCount}',
             icon: Icons.receipt_long_outlined,
             accent: const Color(0xFF2563EB),
+            onTap: () => onNavigate(AppTab.orders),
           ),
         ],
       UserRole.waiter => [
@@ -363,23 +372,27 @@ class _KpiGrid extends StatelessWidget {
             value: '${repository.freeTables}',
             icon: Icons.check_circle_outline_rounded,
             accent: AppTheme.success,
+            onTap: () => onNavigate(AppTab.tables),
           ),
           StatCard(
             label: 'Mesas ocupadas',
             value: '${repository.occupiedTables}',
             icon: Icons.groups_outlined,
             accent: const Color(0xFF2563EB),
+            onTap: () => onNavigate(AppTab.tables),
           ),
           StatCard(
             label: 'Pedidos activos',
             value: '${repository.activeOrders.length}',
             icon: Icons.receipt_long_outlined,
+            onTap: () => onNavigate(AppTab.orders),
           ),
           StatCard(
             label: 'Listos',
             value: '${repository.readyCount}',
             icon: Icons.room_service_outlined,
             accent: AppTheme.success,
+            onTap: () => onNavigate(AppTab.orders),
           ),
         ],
       UserRole.cook => [
@@ -388,23 +401,27 @@ class _KpiGrid extends StatelessWidget {
             value: '${repository.pendingCount}',
             icon: Icons.hourglass_top_rounded,
             accent: AppTheme.warning,
+            onTap: () => onNavigate(AppTab.orders),
           ),
           StatCard(
             label: 'En preparación',
             value: '${repository.preparingCount}',
             icon: Icons.soup_kitchen_outlined,
+            onTap: () => onNavigate(AppTab.orders),
           ),
           StatCard(
             label: 'Listos',
             value: '${repository.readyCount}',
             icon: Icons.room_service_outlined,
             accent: AppTheme.success,
+            onTap: () => onNavigate(AppTab.orders),
           ),
           StatCard(
             label: 'Pedidos hoy',
             value: '${repository.todayOrderCount}',
             icon: Icons.receipt_long_outlined,
             accent: const Color(0xFF2563EB),
+            onTap: () => onNavigate(AppTab.orders),
           ),
         ],
     };
@@ -462,7 +479,7 @@ class _QuickActions extends StatelessWidget {
         if (role.canManageMenu)
           ActionChip(
             avatar: const Icon(Icons.restaurant_menu_outlined, size: 16),
-            label: const Text('Menú'),
+            label: const Text('MenÃº'),
             onPressed: () => onNavigate(AppTab.menu),
           ),
         if (role.canSeeReports)
@@ -499,7 +516,7 @@ class _KitchenQueue extends StatelessWidget {
     if (queue.isEmpty) {
       return const EmptyState(
         icon: Icons.soup_kitchen_outlined,
-        title: 'Cocina al día',
+        title: 'Cocina al dÃ­a',
         message: 'No hay pedidos pendientes de preparar.',
       );
     }

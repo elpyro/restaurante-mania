@@ -129,6 +129,10 @@ class Order {
     required this.source,
     required this.synced,
     this.inventoryDeducted = false,
+    this.createdBy,
+    this.createdByName,
+    this.updatedBy,
+    this.updatedByName,
   });
 
   final String id;
@@ -153,6 +157,12 @@ class Order {
   /// Evita descontar dos veces el inventario del mismo pedido.
   final bool inventoryDeducted;
 
+  /// Huella de auditoría: quién creó y quién actualizó por última vez.
+  final String? createdBy;
+  final String? createdByName;
+  final String? updatedBy;
+  final String? updatedByName;
+
   int get itemCount => items.fold(0, (sum, item) => sum + item.quantity);
 
   Order copyWith({
@@ -172,6 +182,10 @@ class Order {
     DateTime? updatedAt,
     bool? synced,
     bool? inventoryDeducted,
+    String? createdBy,
+    String? createdByName,
+    String? updatedBy,
+    String? updatedByName,
   }) {
     return Order(
       id: id,
@@ -193,6 +207,10 @@ class Order {
       source: source,
       synced: synced ?? this.synced,
       inventoryDeducted: inventoryDeducted ?? this.inventoryDeducted,
+      createdBy: createdBy ?? this.createdBy,
+      createdByName: createdByName ?? this.createdByName,
+      updatedBy: updatedBy ?? this.updatedBy,
+      updatedByName: updatedByName ?? this.updatedByName,
     );
   }
 
@@ -216,6 +234,10 @@ class Order {
         'source': source,
         'synced': synced,
         'inventoryDeducted': inventoryDeducted,
+        'createdBy': createdBy,
+        'createdByName': createdByName,
+        'updatedBy': updatedBy,
+        'updatedByName': updatedByName,
       };
 
   factory Order.fromJson(Map<String, dynamic> json) => Order(
@@ -243,6 +265,10 @@ class Order {
         source: json['source'] as String? ?? 'app',
         synced: json['synced'] as bool? ?? true,
         inventoryDeducted: json['inventoryDeducted'] as bool? ?? false,
+        createdBy: json['createdBy'] as String?,
+        createdByName: json['createdByName'] as String?,
+        updatedBy: json['updatedBy'] as String?,
+        updatedByName: json['updatedByName'] as String?,
       );
 }
 

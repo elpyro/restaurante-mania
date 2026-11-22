@@ -744,6 +744,8 @@ class RestaurantRepository extends ChangeNotifier {
       updatedAt: now,
       source: 'app',
       synced: isOnline,
+      createdBy: _currentUser?.id,
+      createdByName: _currentUser?.name,
     );
     _orders.insert(0, order);
 
@@ -759,7 +761,12 @@ class RestaurantRepository extends ChangeNotifier {
     final index = _orders.indexWhere((order) => order.id == orderId);
     if (index < 0) return;
     final order = _orders[index];
-    _orders[index] = order.copyWith(status: status, updatedAt: DateTime.now());
+    _orders[index] = order.copyWith(
+      status: status,
+      updatedAt: DateTime.now(),
+      updatedBy: _currentUser?.id,
+      updatedByName: _currentUser?.name,
+    );
     if ((status == OrderStatus.preparing ||
             status == OrderStatus.ready ||
             status == OrderStatus.delivered) &&
@@ -799,6 +806,8 @@ class RestaurantRepository extends ChangeNotifier {
           : OrderStatus.delivered,
       updatedAt: DateTime.now(),
       inventoryDeducted: true,
+      updatedBy: _currentUser?.id,
+      updatedByName: _currentUser?.name,
     );
     if (order.tableNumber != null) {
       await _freeTableByNumber(order.tableNumber!);

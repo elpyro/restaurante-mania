@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/data/repository.dart';
@@ -45,6 +45,58 @@ class _OrdersScreenState extends State<OrdersScreen> {
         order.customerName.toLowerCase().contains(query) ||
         (order.tableNumber?.toString() ?? '').contains(query);
   }
+  List<Widget> _groupedOrderWidgets(
+    BuildContext context,
+    RestaurantRepository repository,
+    UserRole role,
+    List<Order> orders,
+  ) {
+    final groups = <int?, List<Order>>{};
+    for (final order in orders) {
+      groups.putIfAbsent(order.tableNumber, () => <Order>[]).add(order);
+    }
+    final keys = groups.keys.toList()
+      ..sort((a, b) {
+        if (a == null) return 1;
+        if (b == null) return -1;
+        return a.compareTo(b);
+      });
+
+    final widgets = <Widget>[];
+    for (final key in keys) {
+      final label = key == null ? 'Sin mesa' : 'Mesa $key';
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 6, bottom: 6),
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: AppTheme.ink,
+            ),
+          ),
+        ),
+      );
+      for (final order in groups[key]!) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: OrderCard(
+              order: order,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => OrderDetailScreen(orderId: order.id),
+                ),
+              ),
+              actions: _actionsFor(context, repository, role, order),
+            ),
+          ),
+        );
+      }
+    }
+    return widgets;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,7 +129,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
               controller: _searchController,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                hintText: 'Buscar por código, cliente o mesa',
+                hintText: 'Buscar por cÃ³digo, cliente o mesa',
                 prefixIcon: const Icon(Icons.search_rounded, size: 20),
                 suffixIcon: _searchController.text.isEmpty
                     ? null
@@ -174,25 +226,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       ),
                     ],
                   )
-                : ListView.builder(
+                : ListView(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 96),
-                    itemCount: orders.length,
-                    itemBuilder: (context, index) {
-                      final order = orders[index];
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: OrderCard(
-                          order: order,
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (_) =>
-                                  OrderDetailScreen(orderId: order.id),
-                            ),
-                          ),
-                          actions: _actionsFor(context, repository, role, order),
-                        ),
-                      );
-                    },
+                    children: _groupedOrderWidgets(
+                      context,
+                      repository,
+                      role,
+                      orders,
+                    ),
                   ),
           ),
         ],

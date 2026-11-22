@@ -291,6 +291,29 @@ class OrderDetailScreen extends StatelessWidget {
               ),
               ],
               const SectionHeader(title: 'SincronizaciÃ³n'),
+              const SectionHeader(title: 'Auditoría'),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFEDEAE6)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _AuditRow(
+                      label: 'Creado por',
+                      value: order.createdByName ?? 'Sin registro',
+                    ),
+                    const SizedBox(height: 4),
+                    _AuditRow(
+                      label: 'Última acción',
+                      value: order.updatedByName ?? 'Sin registro',
+                    ),
+                  ],
+                ),
+              ),
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
@@ -674,6 +697,38 @@ class _TotalRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _AuditRow extends StatelessWidget {
+  const _AuditRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(
+          '$label: ',
+          style: const TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF78716C),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              fontSize: 11.5,
+              color: AppTheme.ink,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
