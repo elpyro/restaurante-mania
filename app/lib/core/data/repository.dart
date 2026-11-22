@@ -760,7 +760,10 @@ class RestaurantRepository extends ChangeNotifier {
     if (index < 0) return;
     final order = _orders[index];
     _orders[index] = order.copyWith(status: status, updatedAt: DateTime.now());
-    if (status == OrderStatus.preparing && !order.inventoryDeducted) {
+    if ((status == OrderStatus.preparing ||
+            status == OrderStatus.ready ||
+            status == OrderStatus.delivered) &&
+        !order.inventoryDeducted) {
       await _deductInventory(order);
       _orders[index] = _orders[index].copyWith(inventoryDeducted: true);
     }
@@ -786,12 +789,16 @@ class RestaurantRepository extends ChangeNotifier {
     final index = _orders.indexWhere((order) => order.id == orderId);
     if (index < 0) return;
     final order = _orders[index];
+    if (!order.inventoryDeducted) {
+      await _deductInventory(order);
+    }
     _orders[index] = order.copyWith(
       paymentStatus: PaymentStatus.paid,
       status: order.status == OrderStatus.cancelled
           ? OrderStatus.cancelled
           : OrderStatus.delivered,
       updatedAt: DateTime.now(),
+      inventoryDeducted: true,
     );
     if (order.tableNumber != null) {
       await _freeTableByNumber(order.tableNumber!);

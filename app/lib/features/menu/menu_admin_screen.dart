@@ -1,4 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/data/repository.dart';
@@ -238,10 +243,21 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
                                   color: const Color(0xFFFFF7ED),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
-                                child: Text(
-                                  item.emoji,
-                                  style: const TextStyle(fontSize: 25),
-                                ),
+                                child: item.imageUrl.isNotEmpty &&
+                                        File(item.imageUrl).existsSync()
+                                    ? ClipRRect(
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: Image.file(
+                                          File(item.imageUrl),
+                                          width: 46,
+                                          height: 46,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      )
+                                    : Text(
+                                        item.emoji,
+                                        style: const TextStyle(fontSize: 25),
+                                      ),
                               ),
                               const SizedBox(width: 10),
                               Expanded(
@@ -456,6 +472,33 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
     });
   }
 
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final file = await picker.pickImage(source: ImageSource.gallery);
+    if (file == null) return;
+    final saved = await _copyToAppDir(file, 'images');
+    setState(() => _imageUrl.text = saved);
+  }
+
+  Future<void> _pickVideo() async {
+    final picker = ImagePicker();
+    final file = await picker.pickVideo(source: ImageSource.gallery);
+    if (file == null) return;
+    final saved = await _copyToAppDir(file, 'videos');
+    setState(() => _videoUrl.text = saved);
+  }
+
+  Future<String> _copyToAppDir(XFile file, String subdir) async {
+    final base = await getApplicationDocumentsDirectory();
+    final dir = Directory(p.join(base.path, 'media', subdir));
+    if (!await dir.exists()) await dir.create(recursive: true);
+    final ext = p.extension(file.path).isEmpty ? '' : p.extension(file.path);
+    final name = '${DateTime.now().millisecondsSinceEpoch}$ext';
+    final dest = p.join(dir.path, name);
+    await File(file.path).copy(dest);
+    return dest;
+  }
+
   void _save() {
     final name = _name.text.trim();
     final price = double.tryParse(_price.text.replaceAll('.', '').trim());
@@ -536,14 +579,20 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
               decoration: const InputDecoration(labelText: 'SKU'),
             ),
             const SizedBox(height: 10),
-            TextField(
-              controller: _imageUrl,
-              decoration: const InputDecoration(labelText: 'URL de la foto'),
+            _MediaPicker(
+              label: 'Foto del plato',
+              path: _imageUrl.text,
+              icon: Icons.photo_camera_outlined,
+              onPick: _pickImage,
+              onClear: () => setState(() => _imageUrl.text = ''),
             ),
             const SizedBox(height: 10),
-            TextField(
-              controller: _videoUrl,
-              decoration: const InputDecoration(labelText: 'URL del video'),
+            _MediaPicker(
+              label: 'Video del plato',
+              path: _videoUrl.text,
+              icon: Icons.videocam_outlined,
+              onPick: _pickVideo,
+              onClear: () => setState(() => _videoUrl.text = ''),
             ),
             const SizedBox(height: 14),
             const Text(
@@ -751,6 +800,111 @@ class _RecipeLineDialogState extends State<_RecipeLineDialog> {
           child: const Text('Agregar'),
         ),
       ],
+    );
+  }
+}
+
+class _MediaPicker extends StatelessWidget {
+  const _MediaPicker({
+    required this.label,
+    required this.path,
+    required this.icon,
+    required this.onPick,
+    required this.onClear,
+  });
+
+  final String label;
+  final String path;
+  final IconData icon;
+  final VoidCallback onPick;
+  final VoidCallback onClear;
+
+  bool get _isImage {
+    final lower = path.toLowerCase();
+    return lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.png') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.webp');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFEDEAE6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: AppTheme.brandDark),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.ink,
+                  ),
+                ),
+              ),
+              if (path.isNotEmpty)
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.close_rounded, size: 16),
+                  onPressed: onClear,
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (path.isEmpty)
+            OutlinedButton.icon(
+              onPressed: onPick,
+              icon: const Icon(Icons.upload_rounded, size: 16),
+              label: const Text('Subir desde el dispositivo'),
+            )
+          else ...[
+            if (_isImage && File(path).existsSync())
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.file(
+                  File(path),
+                  height: 120,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                ),
+              )
+            else
+              Container(
+                height: 48,
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F5F4),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  path.split(RegExp(r'[\\/]')).last,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11.5),
+                ),
+              ),
+            const SizedBox(height: 6),
+            TextButton.icon(
+              onPressed: onPick,
+              icon: const Icon(Icons.refresh_rounded, size: 16),
+              label: const Text('Cambiar archivo'),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
