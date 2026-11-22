@@ -94,6 +94,27 @@ class _OrdersScreenState extends State<OrdersScreen> {
           ),
         );
       }
+      // Botón de pago por grupo (solo si hay pedidos por cobrar y hay mesa)
+      final hasPending = groups[key]!.any(
+        (o) => o.paymentStatus == PaymentStatus.pending &&
+            o.status != OrderStatus.cancelled,
+      );
+      if (hasPending && role.canMarkPaid && key != null) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: FilledButton.icon(
+              onPressed: () => repository.markGroupPaid(key),
+              icon: const Icon(Icons.payments_outlined, size: 18),
+              label: Text('Pagar $label'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.brand,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ),
+        );
+      }
     }
     return widgets;
   }
@@ -129,7 +150,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
               controller: _searchController,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                hintText: 'Buscar por cÃ³digo, cliente o mesa',
+                hintText: 'Buscar por código, cliente o mesa',
                 prefixIcon: const Icon(Icons.search_rounded, size: 20),
                 suffixIcon: _searchController.text.isEmpty
                     ? null

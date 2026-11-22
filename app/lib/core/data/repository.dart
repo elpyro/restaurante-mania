@@ -1,4 +1,4 @@
-// ignore_for_file: prefer_initializing_formals
+﻿// ignore_for_file: prefer_initializing_formals
 
 import 'dart:async';
 import 'dart:convert';
@@ -814,6 +814,62 @@ class RestaurantRepository extends ChangeNotifier {
     }
     await _persistOrders();
     notifyListeners();
+  }
+
+  /// Busca pedidos en preparación para una mesa específica.
+  List<Order> preparingOrdersForTable(int tableNumber) {
+    return _orders
+        .where((o) =>
+            o.tableNumber == tableNumber && o.status == OrderStatus.preparing)
+        .toList();
+  }
+
+  /// Agrega items a un pedido existente en preparación.
+  Future<void> addItemsToOrder(String orderId, List<CartLine> lines) async {
+    final index = _orders.indexWhere((o) => o.id == orderId);
+    if (index < 0) return;
+    final order = _orders[index];
+    final newItems = [...order.items];
+    for (final line in lines) {
+      final existing = newItems.indexWhere((i) => i.menuItemId == line.menuItemId);
+      if (existing >= 0) {
+        newItems[existing] = OrderItem(
+          menuItemId: newItems[existing].menuItemId,
+          name: newItems[existing].name,
+          price: newItems[existing].price,
+          quantity: newItems[existing].quantity + line.quantity,
+          emoji: newItems[existing].emoji,
+        );
+      } else {
+        newItems.add(OrderItem(
+          menuItemId: line.menuItemId,
+          name: line.name,
+          price: line.price,
+          quantity: line.quantity,
+          emoji: line.emoji,
+        ));
+      }
+    }
+    _orders[index] = order.copyWith(
+      items: newItems,
+      updatedAt: DateTime.now(),
+      updatedBy: _currentUser?.id,
+      updatedByName: _currentUser?.name,
+    );
+    await _persistOrders();
+    notifyListeners();
+  }
+  Future<void> markGroupPaid(int tableNumber) async {
+    final group = _orders
+        .where((order) =>
+            order.tableNumber == tableNumber &&
+            order.paymentStatus == PaymentStatus.pending &&
+            order.status != OrderStatus.cancelled)
+        .toList();
+    if (group.isEmpty) return;
+    for (final order in group) {
+      await markOrderPaid(order.id);
+    }
   }
 
   Future<void> cancelOrder(String orderId) =>

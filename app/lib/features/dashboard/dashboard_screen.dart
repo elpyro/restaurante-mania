@@ -22,10 +22,10 @@ class DashboardScreen extends StatelessWidget {
     const weekdays = [
       'lunes',
       'martes',
-      'miÃ©rcoles',
+      'miércoles',
       'jueves',
       'viernes',
-      'sÃ¡bado',
+      'sábado',
       'domingo',
     ];
     const months = [
@@ -48,7 +48,7 @@ class DashboardScreen extends StatelessWidget {
 
   String get _greeting {
     final hour = DateTime.now().hour;
-    if (hour < 12) return 'Buenos dÃ­as';
+    if (hour < 12) return 'Buenos días';
     if (hour < 19) return 'Buenas tardes';
     return 'Buenas noches';
   }
@@ -111,10 +111,18 @@ class DashboardScreen extends StatelessWidget {
                 child: const Text('Ver todas'),
               ),
             ),
-            _TablesOverview(repository: repository),
+            _TablesOverview(
+              repository: repository,
+              onTap: (tableNumber) => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      NewOrderScreen(initialTableNumber: tableNumber),
+                ),
+              ),
+            ),
           ],
           if (role == UserRole.admin || role == UserRole.cashier) ...[
-            const SectionHeader(title: 'Ventas Ãºltimos 7 dÃ­as'),
+            const SectionHeader(title: 'Ventas últimos 7 días'),
             _SalesSpark(repository: repository),
           ],
           SectionHeader(
@@ -127,8 +135,8 @@ class DashboardScreen extends StatelessWidget {
           if (repository.orders.isEmpty)
             const EmptyState(
               icon: Icons.receipt_long_outlined,
-              title: 'TodavÃ­a no hay pedidos',
-              message: 'Cuando llegue un pedido aparecerÃ¡ aquÃ­ en tiempo real.',
+              title: 'Todavía no hay pedidos',
+              message: 'Cuando llegue un pedido aparecerá aquí en tiempo real.',
             )
           else
             ...repository.orders.take(4).map(
@@ -191,7 +199,7 @@ class _GreetingCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '$greeting, $name ðŸ‘‹',
+                  '$greeting, $name 👋',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 18,
@@ -253,7 +261,7 @@ class _GreetingCard extends StatelessWidget {
               ],
             ),
           ),
-          const Text('ðŸ½ï¸', style: TextStyle(fontSize: 44)),
+          const Text('🍽️', style: TextStyle(fontSize: 44)),
         ],
       ),
     );
@@ -281,8 +289,8 @@ class _OfflineBanner extends StatelessWidget {
           Expanded(
             child: Text(
               pending > 0
-                  ? 'Sin conexiÃ³n. $pending pedido(s) se sincronizarÃ¡n al volver.'
-                  : 'Sin conexiÃ³n. Los cambios se guardan en el dispositivo.',
+                  ? 'Sin conexión. $pending pedido(s) se sincronizarán al volver.'
+                  : 'Sin conexión. Los cambios se guardan en el dispositivo.',
               style: const TextStyle(
                 fontSize: 11.5,
                 fontWeight: FontWeight.w600,
@@ -479,7 +487,7 @@ class _QuickActions extends StatelessWidget {
         if (role.canManageMenu)
           ActionChip(
             avatar: const Icon(Icons.restaurant_menu_outlined, size: 16),
-            label: const Text('MenÃº'),
+            label: const Text('Menú'),
             onPressed: () => onNavigate(AppTab.menu),
           ),
         if (role.canSeeReports)
@@ -516,7 +524,7 @@ class _KitchenQueue extends StatelessWidget {
     if (queue.isEmpty) {
       return const EmptyState(
         icon: Icons.soup_kitchen_outlined,
-        title: 'Cocina al dÃ­a',
+        title: 'Cocina al día',
         message: 'No hay pedidos pendientes de preparar.',
       );
     }
@@ -608,9 +616,10 @@ class _CashierQueue extends StatelessWidget {
 }
 
 class _TablesOverview extends StatelessWidget {
-  const _TablesOverview({required this.repository});
+  const _TablesOverview({required this.repository, required this.onTap});
 
   final RestaurantRepository repository;
+  final void Function(int tableNumber) onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -623,56 +632,64 @@ class _TablesOverview extends StatelessWidget {
         itemBuilder: (context, index) {
           final table = repository.tables[index];
           final color = tableStatusColor(table.status);
-          return Container(
-            width: 96,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Colors.white,
+          return Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            child: InkWell(
+              onTap: () => onTap(table.number),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: color.withValues(alpha: 0.35)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+              child: Container(
+                width: 96,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: color.withValues(alpha: 0.35)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        'Mesa ${table.number}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          color: AppTheme.ink,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Mesa ${table.number}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: AppTheme.ink,
+                            ),
+                          ),
                         ),
+                        const SizedBox(width: 4),
+                        Icon(tableStatusIcon(table.status), size: 14, color: color),
+                      ],
+                    ),
+                    const Spacer(),
+                    Text(
+                      table.status.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w600,
+                        color: color,
                       ),
                     ),
-                    const SizedBox(width: 4),
-                    Icon(tableStatusIcon(table.status), size: 14, color: color),
+                    Text(
+                      '${table.capacity} personas',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 9,
+                        color: Color(0xFFA8A29E),
+                      ),
+                    ),
                   ],
                 ),
-                const Spacer(),
-                Text(
-                  table.status.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.w600,
-                    color: color,
-                  ),
-                ),
-                Text(
-                  '${table.capacity} personas',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 9,
-                    color: Color(0xFFA8A29E),
-                  ),
-                ),
-              ],
+              ),
             ),
           );
         },

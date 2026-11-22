@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/data/repository.dart';
@@ -362,6 +362,39 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
     });
     try {
       final repository = context.read<RestaurantRepository>();
+      // Si hay un pedido en preparación para la misma mesa, ofrecer fusionar
+      if (_type == OrderType.table) {
+        final preparing = repository.preparingOrdersForTable(_tableNumber);
+        if (preparing.isNotEmpty) {
+          final existing = preparing.first;
+          final merge = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Pedido en preparación'),
+              content: Text(
+                'La mesa $_tableNumber ya tiene un pedido en preparación '
+                '(${existing.code}). ¿Deseas agregar estos items al pedido existente?',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Crear nuevo'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Agregar al existente'),
+                ),
+              ],
+            ),
+          );
+          if (merge == true) {
+            await repository.addItemsToOrder(existing.id, widget.lines);
+            if (!mounted) return;
+            Navigator.of(context).pop(existing);
+            return;
+          }
+        }
+      }
       final order = await repository.createOrder(
         lines: widget.lines,
         customerName: name,

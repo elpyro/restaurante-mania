@@ -51,7 +51,7 @@ class OrderDetailScreen extends StatelessWidget {
                       builder: (dialogContext) => AlertDialog(
                         title: const Text('Cancelar pedido'),
                         content: Text(
-                          'Â¿Cancelar el pedido ${order.code}? Esta acciÃ³n no se puede deshacer.',
+                          '¿Cancelar el pedido ${order.code}? Esta acción no se puede deshacer.',
                         ),
                         actions: [
                           TextButton(
@@ -110,7 +110,7 @@ class OrderDetailScreen extends StatelessWidget {
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Este pedido fue cancelado. No requiere preparaciÃ³n.',
+                          'Este pedido fue cancelado. No requiere preparación.',
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
@@ -148,7 +148,7 @@ class OrderDetailScreen extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    '${item.quantity} Ã— ${item.name}',
+                                    '${item.quantity} × ${item.name}',
                                     style: const TextStyle(
                                       fontSize: 13,
                                       fontWeight: FontWeight.w600,
@@ -234,7 +234,7 @@ class OrderDetailScreen extends StatelessWidget {
                               ?.hasRecipe ??
                           false)) ...[
                         Text(
-                          '${orderItem.quantity} Ã— ${orderItem.name}',
+                          '${orderItem.quantity} × ${orderItem.name}',
                           style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
@@ -290,7 +290,7 @@ class OrderDetailScreen extends StatelessWidget {
                 ),
               ),
               ],
-              const SectionHeader(title: 'SincronizaciÃ³n'),
+              const SectionHeader(title: 'Sincronización'),
               const SectionHeader(title: 'Auditoría'),
               Container(
                 padding: const EdgeInsets.all(14),
@@ -335,7 +335,7 @@ class OrderDetailScreen extends StatelessWidget {
                       child: Text(
                         order.synced
                             ? 'Pedido sincronizado correctamente.'
-                            : 'Guardado en el dispositivo. Se enviarÃ¡ al recuperar la conexiÃ³n.',
+                            : 'Guardado en el dispositivo. Se enviará al recuperar la conexión.',
                         style: const TextStyle(
                           fontSize: 12,
                           color: Color(0xFF57534E),
