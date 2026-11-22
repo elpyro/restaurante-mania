@@ -1,0 +1,95 @@
+﻿# ============================================================================
+# .gitignore — Monorepo Restaurante Manía
+# ============================================================================
+
+# --- Dependencias ---
+node_modules/
+.pnp
+.pnp.js
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+
+# --- Next.js ---
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# --- Flutter / Dart ---
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+coverage/
+*.iml
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/extensions.json
+app/android/local.properties
+app/android/key.properties
+app/android/.gradle/
+app/android/app/debug/
+app/android/app/profile/
+app/android/app/release/
+app/ios/Pods/
+app/ios/.symlinks/
+app/ios/Flutter/Flutter.framework
+app/ios/Flutter/Flutter.podspec
+app/ios/Runner.xcworkspace/xcuserdata/
+app/ios/Runner.xcodeproj/xcuserdata/
+*.jks
+*.keystore
+*.aab
+*.apk
+
+# --- Firebase ---
+.firebase/
+firebase/functions/lib/
+firebase/functions/node_modules/
+firebase/.firebaserc
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+database-debug.log
+pubsub-debug.log
+
+# --- Entorno y secretos ---
+.env
+.env.local
+.env.*.local
+*.local
+!.env.example
+*.pem
+*.key
+
+# --- Logs y temporales ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.logs/
+tmp/
+temp/
+
+# --- Cobertura de tests ---
+coverage/
+.nyc_output/
+htmlcov/
+
+# --- Sistema operativo ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# --- Editores ---
+*.swp
+*.swo
+*~
