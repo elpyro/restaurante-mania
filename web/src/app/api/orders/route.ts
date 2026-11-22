@@ -1,7 +1,16 @@
 import { NextResponse } from "next/server";
-import { createOrder, OrderValidationError } from "@/lib/orders";
+import { createOrder, listOrders, OrderValidationError } from "@/lib/orders";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET() {
+  const orders = await listOrders();
+  return NextResponse.json(
+    { orders },
+    { headers: { "Cache-Control": "no-store" } },
+  );
+}
 
 export async function POST(request: Request) {
   let body: unknown;

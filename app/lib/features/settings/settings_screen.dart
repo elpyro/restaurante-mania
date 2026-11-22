@@ -17,8 +17,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _hours;
   late final TextEditingController _whatsapp;
   late final TextEditingController _address;
+  late final TextEditingController _serverUrl;
   late bool _isOpen;
   String? _error;
+  String? _serverMessage;
 
   @override
   void initState() {
@@ -29,6 +31,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _whatsapp = TextEditingController(text: settings.whatsapp);
     _address = TextEditingController(text: settings.address);
     _isOpen = settings.isOpen;
+    _serverUrl = TextEditingController(
+      text: context.read<RestaurantRepository>().serverUrl,
+    );
   }
 
   @override
@@ -37,6 +42,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _hours.dispose();
     _whatsapp.dispose();
     _address.dispose();
+    _serverUrl.dispose();
     super.dispose();
   }
 
@@ -160,7 +166,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: const Icon(Icons.save_outlined, size: 18),
             label: const Text('Guardar cambios'),
           ),
-          const _SectionLabel('Conectividad y sincronización'),
+          const _SectionLabel('Servidor web (pedidos en línea)'),
+          TextField(
+            controller: _serverUrl,
+            decoration: const InputDecoration(
+              labelText: 'URL del servidor web',
+              hintText: 'http://192.168.101.7:3000',
+              helperText:
+                  'Pedidos creados en la web se importan automáticamente.',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: () async {
+                    await repository.updateServerUrl(_serverUrl.text);
+                    setState(() => _serverMessage = 'Servidor guardado.');
+                  },
+                  icon: const Icon(Icons.save_outlined, size: 18),
+                  label: const Text('Guardar URL'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    await repository.updateServerUrl(_serverUrl.text);
+                    final ok = await repository.testServerConnection();
+                    setState(() {
+                      _serverMessage = ok
+                          ? 'Conexión correcta con la web.'
+                          : 'No se pudo conectar. Revisa la URL o la red.';
+                    });
+                  },
+                  icon: const Icon(Icons.wifi_tethering_rounded, size: 18),
+                  label: const Text('Probar'),
+                ),
+              ),
+            ],
+          ),
+          if (_serverMessage != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              _serverMessage!,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF57534E),
+              ),
+            ),
+          ],
+          const SizedBox(height: 6),
+          OutlinedButton.icon(
+            onPressed: () async {
+              final count = await repository.pullServerOrders();
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    count == 0
+                        ? 'No hay pedidos nuevos de la web.'
+                        : 'Se importaron $count pedido(s) de la web.',
+                  ),
+                ),
+              );
+            },
+            icon: const Icon(Icons.download_rounded, size: 18),
+            label: const Text('Importar pedidos web ahora'),
+          ),
           Container(
             decoration: BoxDecoration(
               color: Colors.white,

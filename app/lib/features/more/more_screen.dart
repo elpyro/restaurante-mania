@@ -5,6 +5,7 @@ import '../../core/data/repository.dart';
 import '../../core/models/role.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../inventory/inventory_screen.dart';
 import '../reports/reports_screen.dart';
 import '../settings/settings_screen.dart';
 
@@ -148,6 +149,15 @@ class MoreScreen extends StatelessWidget {
           subtitle: 'Restaurante, conexión y datos demo',
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+          ),
+        ),
+        _MenuTile(
+          icon: Icons.inventory_2_outlined,
+          label: 'Inventario',
+          subtitle:
+              '${repository.ingredients.length} insumos · ${repository.lowStockIngredients.length} con stock bajo',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const InventoryScreen()),
           ),
         ),
         _MenuTile(

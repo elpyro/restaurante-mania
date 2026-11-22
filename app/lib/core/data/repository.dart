@@ -2,12 +2,14 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart' hide Category;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/app_user.dart';
 import '../models/category.dart';
+import '../models/ingredient.dart';
 import '../models/menu_item.dart';
 import '../models/order.dart';
 import '../models/restaurant_settings.dart';
@@ -49,31 +51,47 @@ class RestaurantRepository extends ChangeNotifier {
     required bool ownsConnectivity,
     required List<Category> categories,
     required List<MenuItem> items,
+    required List<Ingredient> ingredients,
     required List<Order> orders,
     required List<RestaurantTable> tables,
     required RestaurantSettings settings,
     required AppUser? currentUser,
     required DateTime? lastSync,
+    required String serverUrl,
   })  : _prefs = prefs,
         _connectivity = connectivity,
         _ownsConnectivity = ownsConnectivity,
         _categories = categories,
         _items = items,
+        _ingredients = ingredients,
         _orders = orders,
         _tables = tables,
         _settings = settings,
         _currentUser = currentUser,
-        _lastSync = lastSync {
+        _lastSync = lastSync,
+        _serverUrl = serverUrl {
     _connectivity.online.addListener(_onConnectivityChanged);
   }
 
   static const _kCategories = 'rm_categories_v1';
   static const _kItems = 'rm_menu_items_v1';
+  static const _kIngredients = 'rm_ingredients_v1';
   static const _kOrders = 'rm_orders_v1';
   static const _kTables = 'rm_tables_v1';
   static const _kSettings = 'rm_settings_v1';
   static const _kSession = 'rm_session_v1';
   static const _kLastSync = 'rm_last_sync_v1';
+  static const _kServerUrl = 'rm_server_url_v1';
+
+  /// URL de la web pública para importar los pedidos creados en línea.
+  /// Se puede cambiar desde Configuración o con
+  /// `--dart-define=WEB_API_URL=http://mi-servidor:3000`.
+  static const defaultServerUrl = String.fromEnvironment(
+    'WEB_API_URL',
+    defaultValue: 'http://192.168.101.7:3000',
+  );
+
+  static const _pollInterval = Duration(seconds: 12);
 
   final SharedPreferences _prefs;
   final ConnectivityService _connectivity;
@@ -81,13 +99,17 @@ class RestaurantRepository extends ChangeNotifier {
 
   List<Category> _categories;
   List<MenuItem> _items;
+  List<Ingredient> _ingredients;
   List<Order> _orders;
   List<RestaurantTable> _tables;
   RestaurantSettings _settings;
   AppUser? _currentUser;
   DateTime? _lastSync;
+  String _serverUrl;
   bool _syncing = false;
+  bool _pullingServerOrders = false;
   Future<void>? _syncFuture;
+  Timer? _webPollTimer;
 
   static Future<RestaurantRepository> load({
     ConnectivityService? connectivity,
@@ -104,7 +126,16 @@ class RestaurantRepository extends ChangeNotifier {
       _kCategories,
       Category.fromJson,
     );
-    final items = _readList<MenuItem>(prefs, _kItems, MenuItem.fromJson);
+    final storedItems = _readList<MenuItem>(prefs, _kItems, MenuItem.fromJson);
+    final seedItems = SeedData.menuItemsWithRecipes();
+    final items = storedItems.isEmpty
+        ? seedItems
+        : _hydrateSeedExtras(storedItems, seedItems);
+    final ingredients = _readList<Ingredient>(
+      prefs,
+      _kIngredients,
+      Ingredient.fromJson,
+    );
     final orders = _readList<Order>(prefs, _kOrders, Order.fromJson);
     final tables = _readList<RestaurantTable>(
       prefs,
@@ -124,27 +155,80 @@ class RestaurantRepository extends ChangeNotifier {
     final lastSyncRaw = prefs.getString(_kLastSync);
     final lastSync =
         lastSyncRaw == null ? null : DateTime.tryParse(lastSyncRaw);
+    final serverUrl = _normalizeServerUrl(
+      prefs.getString(_kServerUrl) ?? defaultServerUrl,
+    );
 
     final repository = RestaurantRepository._(
       prefs: prefs,
       connectivity: service,
       ownsConnectivity: connectivity == null,
       categories: categories.isEmpty ? [...SeedData.categories] : categories,
-      items: items.isEmpty ? [...SeedData.menuItems] : items,
+      items: items,
+      ingredients: ingredients.isEmpty
+          ? [...SeedData.ingredients]
+          : ingredients,
       orders: (orders.isEmpty ? SeedData.orders() : orders)
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
       tables: tables.isEmpty ? SeedData.tables() : tables,
       settings: settings,
       currentUser: currentUser,
       lastSync: lastSync,
+      serverUrl: serverUrl,
     );
 
     if (categories.isEmpty) await repository._persistCategories();
-    if (items.isEmpty) await repository._persistItems();
+    if (storedItems.isEmpty || !_sameItemExtras(storedItems, items)) {
+      await repository._persistItems();
+    }
+    if (ingredients.isEmpty) await repository._persistIngredients();
     if (orders.isEmpty) await repository._persistOrders();
     if (tables.isEmpty) await repository._persistTables();
 
+    if (watchConnectivity) {
+      repository._startWebPolling();
+    }
+
     return repository;
+  }
+
+  /// Agrega SKU, recetas y medios a los platos guardados por versiones
+  /// anteriores de la app, sin sobrescribir cambios del administrador.
+  static List<MenuItem> _hydrateSeedExtras(
+    List<MenuItem> stored,
+    List<MenuItem> seeds,
+  ) {
+    final seedById = {for (final item in seeds) item.id: item};
+    return stored.map((item) {
+      final seed = seedById[item.id];
+      if (seed == null) return item;
+      return item.copyWith(
+        sku: item.sku.isEmpty ? seed.sku : item.sku,
+        recipe: item.recipe.isEmpty ? seed.recipe : item.recipe,
+        recipeSteps:
+            item.recipeSteps.isEmpty ? seed.recipeSteps : item.recipeSteps,
+        ingredients:
+            item.ingredients.isEmpty ? seed.ingredients : item.ingredients,
+      );
+    }).toList();
+  }
+
+  static bool _sameItemExtras(List<MenuItem> a, List<MenuItem> b) {
+    if (a.length != b.length) return false;
+    for (var index = 0; index < a.length; index++) {
+      final left = jsonEncode(a[index].toJson());
+      final right = jsonEncode(b[index].toJson());
+      if (left != right) return false;
+    }
+    return true;
+  }
+
+  static String _normalizeServerUrl(String value) {
+    var url = value.trim();
+    while (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
+    }
+    return url.isEmpty ? defaultServerUrl : url;
   }
 
   static List<T> _readList<T>(
@@ -277,6 +361,229 @@ class RestaurantRepository extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------------
+  // Sincronización con la web pública
+  // ---------------------------------------------------------------------------
+
+  String get serverUrl => _serverUrl;
+
+  Future<void> updateServerUrl(String value) async {
+    _serverUrl = _normalizeServerUrl(value);
+    await _prefs.setString(_kServerUrl, _serverUrl);
+    notifyListeners();
+  }
+
+  void _startWebPolling() {
+    _webPollTimer?.cancel();
+    _webPollTimer = Timer.periodic(_pollInterval, (_) {
+      if (isOnline) unawaited(pullServerOrders());
+    });
+    unawaited(pullServerOrders());
+  }
+
+  /// Prueba la conexión con la API de la web pública.
+  Future<bool> testServerConnection() async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final request =
+          await client.getUrl(Uri.parse('$_serverUrl/api/health'));
+      final response = await request.close();
+      await response.drain<void>();
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// Descarga los pedidos creados en la web y los agrega al repositorio.
+  ///
+  /// Devuelve cuántos pedidos nuevos se importaron. Los pedidos locales que
+  /// ya existen no se sobrescriben para no perder cambios de estado hechos
+  /// desde la app.
+  Future<int> pullServerOrders() async {
+    if (_pullingServerOrders || _serverUrl.isEmpty) return 0;
+    _pullingServerOrders = true;
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final request =
+          await client.getUrl(Uri.parse('$_serverUrl/api/orders'));
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final response = await request.close();
+      if (response.statusCode != 200) {
+        await response.drain<void>();
+        return 0;
+      }
+      final body = await utf8.decoder.bind(response).join();
+      final decoded = jsonDecode(body);
+      final rawList = decoded is List
+          ? decoded
+          : decoded is Map<String, dynamic>
+              ? decoded['orders']
+              : null;
+      if (rawList is! List) return 0;
+
+      final existing = _orders.map((order) => order.id).toSet();
+      final imported = <Order>[];
+      for (final raw in rawList) {
+        if (raw is! Map<String, dynamic>) continue;
+        final order = Order.fromJson({
+          ...raw,
+          'source': 'web',
+          'synced': true,
+        });
+        if (order.id.isEmpty || existing.contains(order.id)) continue;
+        existing.add(order.id);
+        imported.add(order);
+      }
+      if (imported.isEmpty) {
+        _lastSync = DateTime.now();
+        _prefs.setString(_kLastSync, _lastSync!.toIso8601String());
+        return 0;
+      }
+
+      _orders = [...imported, ..._orders]
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      for (final order in imported) {
+        final table = order.tableNumber;
+        if (table != null) {
+          await _setTableForOrder(table, order.id);
+        }
+      }
+      _lastSync = DateTime.now();
+      _prefs.setString(_kLastSync, _lastSync!.toIso8601String());
+      await _persistOrders();
+      notifyListeners();
+      return imported.length;
+    } catch (_) {
+      return 0;
+    } finally {
+      _pullingServerOrders = false;
+      client.close(force: true);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Inventario
+  // ---------------------------------------------------------------------------
+
+  List<Ingredient> get ingredients => List.unmodifiable(_ingredients);
+
+  List<Ingredient> get lowStockIngredients =>
+      _ingredients.where((ingredient) => ingredient.isLow).toList()
+        ..sort((a, b) => a.stock.compareTo(b.stock));
+
+  Ingredient? ingredientById(String id) {
+    final matches = _ingredients.where((ingredient) => ingredient.id == id);
+    return matches.isEmpty ? null : matches.first;
+  }
+
+  Future<Ingredient> addIngredient({
+    required String name,
+    required IngredientUnit unit,
+    required double stock,
+    required double minStock,
+    double cost = 0,
+  }) async {
+    final ingredient = Ingredient(
+      id: newId('ing'),
+      name: name.trim(),
+      unit: unit,
+      stock: stock,
+      minStock: minStock,
+      cost: cost,
+    );
+    _ingredients.add(ingredient);
+    await _persistIngredients();
+    notifyListeners();
+    return ingredient;
+  }
+
+  Future<void> upsertIngredient(Ingredient ingredient) async {
+    final index =
+        _ingredients.indexWhere((entry) => entry.id == ingredient.id);
+    if (index >= 0) {
+      _ingredients[index] = ingredient;
+    } else {
+      _ingredients.add(ingredient);
+    }
+    await _persistIngredients();
+    notifyListeners();
+  }
+
+  Future<void> deleteIngredient(String ingredientId) async {
+    _ingredients.removeWhere((ingredient) => ingredient.id == ingredientId);
+    _items = _items
+        .map(
+          (item) => item.copyWith(
+            recipe: item.recipe
+                .where((line) => line.ingredientId != ingredientId)
+                .toList(),
+          ),
+        )
+        .toList();
+    await _persistIngredients();
+    await _persistItems();
+    notifyListeners();
+  }
+
+  Future<void> adjustIngredientStock(String ingredientId, double delta) async {
+    final index =
+        _ingredients.indexWhere((ingredient) => ingredient.id == ingredientId);
+    if (index < 0) return;
+    final ingredient = _ingredients[index];
+    final next = ingredient.stock + delta;
+    _ingredients[index] = ingredient.copyWith(stock: next < 0 ? 0 : next);
+    await _persistIngredients();
+    notifyListeners();
+  }
+
+  /// Insumos que consume un pedido completo (receta × cantidad).
+  Map<String, double> consumptionForOrder(Order order) {
+    final result = <String, double>{};
+    for (final orderItem in order.items) {
+      final menuItem = menuItemById(orderItem.menuItemId);
+      if (menuItem == null || menuItem.recipe.isEmpty) continue;
+      for (final line in menuItem.recipe) {
+        final amount = line.quantity * orderItem.quantity;
+        result[line.ingredientId] = (result[line.ingredientId] ?? 0) + amount;
+      }
+    }
+    return result;
+  }
+
+  Future<void> _deductInventory(Order order) async {
+    final consumption = consumptionForOrder(order);
+    if (consumption.isEmpty) return;
+    for (final entry in consumption.entries) {
+      final index = _ingredients
+          .indexWhere((ingredient) => ingredient.id == entry.key);
+      if (index < 0) continue;
+      final ingredient = _ingredients[index];
+      final next = ingredient.stock - entry.value;
+      _ingredients[index] =
+          ingredient.copyWith(stock: next < 0 ? 0 : next);
+    }
+    await _persistIngredients();
+  }
+
+  Future<void> _restoreInventory(Order order) async {
+    final consumption = consumptionForOrder(order);
+    if (consumption.isEmpty) return;
+    for (final entry in consumption.entries) {
+      final index = _ingredients
+          .indexWhere((ingredient) => ingredient.id == entry.key);
+      if (index < 0) continue;
+      final ingredient = _ingredients[index];
+      _ingredients[index] =
+          ingredient.copyWith(stock: ingredient.stock + entry.value);
+    }
+    await _persistIngredients();
+  }
+
+  // ---------------------------------------------------------------------------
   // Menú
   // ---------------------------------------------------------------------------
 
@@ -287,6 +594,11 @@ class RestaurantRepository extends ChangeNotifier {
 
   List<MenuItem> get availableMenuItems =>
       _items.where((item) => item.isAvailable).toList();
+
+  MenuItem? menuItemById(String id) {
+    final matches = _items.where((item) => item.id == id);
+    return matches.isEmpty ? null : matches.first;
+  }
 
   List<MenuItem> itemsForCategory(String categoryId) =>
       _items.where((item) => item.categoryId == categoryId).toList();
@@ -371,8 +683,8 @@ class RestaurantRepository extends ChangeNotifier {
 
   Future<Order> createOrder({
     required List<CartLine> lines,
-    required String customerName,
-    required String customerPhone,
+    String customerName = '',
+    String customerPhone = '',
     required OrderType type,
     int? tableNumber,
     required PaymentMethod paymentMethod,
@@ -381,6 +693,24 @@ class RestaurantRepository extends ChangeNotifier {
     if (lines.isEmpty) {
       throw ArgumentError('El pedido necesita al menos un producto.');
     }
+    final trimmedName = customerName.trim();
+    final trimmedPhone = customerPhone.trim();
+    if (type == OrderType.table) {
+      if (tableNumber == null) {
+        throw ArgumentError('Selecciona la mesa del pedido.');
+      }
+    } else {
+      if (trimmedName.length < 2) {
+        throw ArgumentError('Escribe el nombre del cliente.');
+      }
+      final digits = trimmedPhone.replaceAll(RegExp(r'\D'), '');
+      if (digits.length < 7) {
+        throw ArgumentError('Escribe un teléfono válido.');
+      }
+    }
+    final resolvedName = trimmedName.isNotEmpty
+        ? trimmedName
+        : 'Mesa $tableNumber';
     final now = DateTime.now();
     final orderItems = lines
         .map(
@@ -398,8 +728,8 @@ class RestaurantRepository extends ChangeNotifier {
     final order = Order(
       id: newId('order'),
       code: orderCode(),
-      customerName: customerName.trim(),
-      customerPhone: customerPhone.trim(),
+      customerName: resolvedName,
+      customerPhone: trimmedPhone,
       type: type,
       tableNumber: type == OrderType.table ? tableNumber : null,
       items: orderItems,
@@ -430,8 +760,17 @@ class RestaurantRepository extends ChangeNotifier {
     if (index < 0) return;
     final order = _orders[index];
     _orders[index] = order.copyWith(status: status, updatedAt: DateTime.now());
-    if (status == OrderStatus.cancelled && order.tableNumber != null) {
-      await _freeTableByNumber(order.tableNumber!);
+    if (status == OrderStatus.preparing && !order.inventoryDeducted) {
+      await _deductInventory(order);
+      _orders[index] = _orders[index].copyWith(inventoryDeducted: true);
+    }
+    if (status == OrderStatus.cancelled) {
+      if (order.inventoryDeducted) {
+        await _restoreInventory(order);
+      }
+      if (order.tableNumber != null) {
+        await _freeTableByNumber(order.tableNumber!);
+      }
     }
     await _persistOrders();
     notifyListeners();
@@ -496,7 +835,7 @@ class RestaurantRepository extends ChangeNotifier {
         _tables.indexWhere((table) => table.number == tableNumber);
     if (index < 0) return;
     _tables[index] = _tables[index].copyWith(
-      status: TableStatus.esperandoPedido,
+      status: TableStatus.ocupada,
       currentOrderId: orderId,
     );
     await _persistTables();
@@ -621,13 +960,15 @@ class RestaurantRepository extends ChangeNotifier {
   Future<void> resetDemoData() async {
     await _prefs.remove(_kCategories);
     await _prefs.remove(_kItems);
+    await _prefs.remove(_kIngredients);
     await _prefs.remove(_kOrders);
     await _prefs.remove(_kTables);
     await _prefs.remove(_kSettings);
     await _prefs.remove(_kSession);
     await _prefs.remove(_kLastSync);
     _categories = [...SeedData.categories];
-    _items = [...SeedData.menuItems];
+    _items = SeedData.menuItemsWithRecipes();
+    _ingredients = [...SeedData.ingredients];
     _orders = SeedData.orders()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     _tables = SeedData.tables();
@@ -636,6 +977,7 @@ class RestaurantRepository extends ChangeNotifier {
     _lastSync = null;
     await _persistCategories();
     await _persistItems();
+    await _persistIngredients();
     await _persistOrders();
     await _persistTables();
     notifyListeners();
@@ -669,6 +1011,15 @@ class RestaurantRepository extends ChangeNotifier {
     );
   }
 
+  Future<void> _persistIngredients() async {
+    await _prefs.setString(
+      _kIngredients,
+      jsonEncode(
+        _ingredients.map((ingredient) => ingredient.toJson()).toList(),
+      ),
+    );
+  }
+
   Future<void> _persistOrders() async {
     await _prefs.setString(
       _kOrders,
@@ -685,6 +1036,7 @@ class RestaurantRepository extends ChangeNotifier {
 
   @override
   void dispose() {
+    _webPollTimer?.cancel();
     _connectivity.online.removeListener(_onConnectivityChanged);
     if (_ownsConnectivity) _connectivity.dispose();
     super.dispose();

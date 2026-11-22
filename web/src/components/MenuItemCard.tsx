@@ -14,10 +14,20 @@ export function MenuItemCard({ item }: { item: MenuItem }) {
     <article className="group flex flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-card">
       <Link
         href={`/menu/${item.slug}`}
-        className="relative grid h-36 place-items-center bg-gradient-to-br from-brand-100 via-amber-50 to-emerald-50 text-6xl"
+        className="relative grid h-36 place-items-center overflow-hidden bg-gradient-to-br from-brand-100 via-amber-50 to-emerald-50 text-6xl"
         aria-label={`Ver ${item.name}`}
       >
-        <span className="transition group-hover:scale-110">{item.emoji}</span>
+        {item.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={item.imageUrl}
+            alt={item.name}
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <span className="transition group-hover:scale-110">{item.emoji}</span>
+        )}
         {item.featured ? (
           <span className="absolute left-3 top-3 rounded-full bg-white/85 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-700 shadow-sm">
             Favorito

@@ -24,6 +24,9 @@ export interface MenuItem {
   featured: boolean;
   prepMinutes: number;
   calories: number;
+  sku?: string;
+  imageUrl?: string;
+  videoUrl?: string;
 }
 
 export type OrderType = "pickup" | "delivery" | "table";

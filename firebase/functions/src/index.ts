@@ -84,11 +84,31 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
 
   const errors: string[] = [];
 
-  if (!isValidCustomerName(payload.customerName)) {
-    errors.push("El nombre debe tener entre 2 y 80 caracteres.");
-  }
-  if (!isValidPhone(payload.customerPhone)) {
-    errors.push("El teléfono debe tener entre 7 y 15 dígitos.");
+  const isTable = payload.type === "table";
+  if (isTable) {
+    if (
+      payload.customerName !== undefined &&
+      payload.customerName !== null &&
+      payload.customerName !== "" &&
+      !isValidCustomerName(payload.customerName)
+    ) {
+      errors.push("El nombre debe tener entre 2 y 80 caracteres.");
+    }
+    if (
+      payload.customerPhone !== undefined &&
+      payload.customerPhone !== null &&
+      payload.customerPhone !== "" &&
+      !isValidPhone(payload.customerPhone)
+    ) {
+      errors.push("El teléfono debe tener entre 7 y 15 dígitos.");
+    }
+  } else {
+    if (!isValidCustomerName(payload.customerName)) {
+      errors.push("El nombre debe tener entre 2 y 80 caracteres.");
+    }
+    if (!isValidPhone(payload.customerPhone)) {
+      errors.push("El teléfono debe tener entre 7 y 15 dígitos.");
+    }
   }
   if (!isValidOrderType(payload.type)) {
     errors.push("El tipo de pedido no es válido.");
@@ -184,11 +204,20 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
     Math.random().toString(36).slice(2, 6).toUpperCase(),
   );
 
+  const resolvedCustomerName =
+    isTable && (typeof payload.customerName !== "string" || !payload.customerName.trim())
+      ? `Mesa ${payload.tableNumber}`
+      : String(payload.customerName).trim();
+  const resolvedCustomerPhone =
+    isTable && (typeof payload.customerPhone !== "string" || !payload.customerPhone.trim())
+      ? ""
+      : String(payload.customerPhone).trim();
+
   const orderRef = db.collection("orders").doc();
   await orderRef.set({
     code,
-    customerName: String(payload.customerName).trim(),
-    customerPhone: String(payload.customerPhone).trim(),
+    customerName: resolvedCustomerName,
+    customerPhone: resolvedCustomerPhone,
     type: payload.type,
     tableNumber: payload.type === "table" ? payload.tableNumber ?? null : null,
     items: lines,
@@ -204,6 +233,22 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
     createdAt: now,
     updatedAt: now,
   });
+
+  if (isTable && isValidTableNumber(payload.tableNumber)) {
+    const tableQuery = await db
+      .collection("tables")
+      .where("number", "==", payload.tableNumber)
+      .limit(1)
+      .get();
+    const tableDoc = tableQuery.docs[0];
+    if (tableDoc) {
+      await tableDoc.ref.update({
+        status: "ocupada",
+        currentOrderId: orderRef.id,
+        updatedAt: now,
+      });
+    }
+  }
 
   logger.info("Pedido creado", {
     orderId: orderRef.id,
@@ -256,6 +301,7 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
 
     const data = snapshot.data() ?? {};
     const current = data.status as OrderStatus;
+    const items = Array.isArray(data.items) ? data.items : [];
 
     if (!canTransition(role, current, target as OrderStatus)) {
       throw new HttpsError(
@@ -275,6 +321,108 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
     }
     if (target === "cancelled") {
       patch.paymentStatus = "refunded";
+    }
+
+    // Inventario: descontar al pasar a preparación, reponer al cancelar.
+    const deducted = data.inventoryDeducted === true;
+    if (target === "preparing" && !deducted) {
+      const menuIds = [
+        ...new Set(
+          items
+            .map((line: { menuItemId?: string }) => line.menuItemId)
+            .filter((id): id is string => typeof id === "string"),
+        ),
+      ];
+      const menuSnaps = await Promise.all(
+        menuIds.map((id) => transaction.get(db.collection("menuItems").doc(id))),
+      );
+      const menuById = new Map(
+        menuSnaps.map((snap) => [snap.id, snap.data() ?? {}]),
+      );
+      const consumption = new Map<string, number>();
+      for (const line of items as Array<{
+        menuItemId?: string;
+        quantity?: number;
+      }>) {
+        const menu = menuById.get(line.menuItemId ?? "") ?? {};
+        const recipe = Array.isArray(menu.recipe) ? menu.recipe : [];
+        const lineQty = typeof line.quantity === "number" ? line.quantity : 0;
+        for (const entry of recipe as Array<{
+          ingredientId?: string;
+          quantity?: number;
+        }>) {
+          const ingId = entry.ingredientId;
+          if (typeof ingId !== "string") continue;
+          const qty =
+            (typeof entry.quantity === "number" ? entry.quantity : 0) * lineQty;
+          consumption.set(ingId, (consumption.get(ingId) ?? 0) + qty);
+        }
+      }
+      const ingIds = [...consumption.keys()];
+      const ingSnaps = await Promise.all(
+        ingIds.map((id) => transaction.get(db.collection("ingredients").doc(id))),
+      );
+      for (const snap of ingSnaps) {
+        if (!snap.exists) continue;
+        const data = snap.data() ?? {};
+        const stock = typeof data.stock === "number" ? data.stock : 0;
+        const qty = consumption.get(snap.id) ?? 0;
+        const next = stock - qty;
+        transaction.update(snap.ref, {
+          stock: next < 0 ? 0 : next,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+      patch.inventoryDeducted = true;
+    }
+    if (target === "cancelled" && deducted) {
+      const menuIds = [
+        ...new Set(
+          items
+            .map((line: { menuItemId?: string }) => line.menuItemId)
+            .filter((id): id is string => typeof id === "string"),
+        ),
+      ];
+      const menuSnaps = await Promise.all(
+        menuIds.map((id) => transaction.get(db.collection("menuItems").doc(id))),
+      );
+      const menuById = new Map(
+        menuSnaps.map((snap) => [snap.id, snap.data() ?? {}]),
+      );
+      const consumption = new Map<string, number>();
+      for (const line of items as Array<{
+        menuItemId?: string;
+        quantity?: number;
+      }>) {
+        const menu = menuById.get(line.menuItemId ?? "") ?? {};
+        const recipe = Array.isArray(menu.recipe) ? menu.recipe : [];
+        const lineQty = typeof line.quantity === "number" ? line.quantity : 0;
+        for (const entry of recipe as Array<{
+          ingredientId?: string;
+          quantity?: number;
+        }>) {
+          const ingId = entry.ingredientId;
+          if (typeof ingId !== "string") continue;
+          const qty =
+            (typeof entry.quantity === "number" ? entry.quantity : 0) * lineQty;
+          consumption.set(ingId, (consumption.get(ingId) ?? 0) + qty);
+        }
+      }
+      const ingIds = [...consumption.keys()];
+      const ingSnaps = await Promise.all(
+        ingIds.map((id) => transaction.get(db.collection("ingredients").doc(id))),
+      );
+      for (const snap of ingSnaps) {
+        if (!snap.exists) continue;
+        const data = snap.data() ?? {};
+        const stock = typeof data.stock === "number" ? data.stock : 0;
+        const qty = consumption.get(snap.id) ?? 0;
+        transaction.update(snap.ref, {
+          stock: stock + qty,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+      patch.inventoryDeducted = false;
     }
 
     transaction.update(orderRef, patch);

@@ -58,9 +58,19 @@ export function CheckoutForm() {
 
   function validate(): string[] {
     const found: string[] = [];
-    if (customerName.trim().length < 2) found.push("Escribe tu nombre completo.");
-    if (customerPhone.replace(/\D/g, "").length < 7) {
-      found.push("Escribe un teléfono válido (mínimo 7 dígitos).");
+    const isTable = type === "table";
+    if (!isTable) {
+      if (customerName.trim().length < 2) found.push("Escribe tu nombre completo.");
+      if (customerPhone.replace(/\D/g, "").length < 7) {
+        found.push("Escribe un teléfono válido (mínimo 7 dígitos).");
+      }
+    } else {
+      if (customerName.trim() && customerName.trim().length < 2) {
+        found.push("Escribe un nombre válido o déjalo vacío.");
+      }
+      if (customerPhone.trim() && customerPhone.replace(/\D/g, "").length < 7) {
+        found.push("Escribe un teléfono válido o déjalo vacío.");
+      }
     }
     if (type === "table") {
       const table = Number(tableNumber);
@@ -135,10 +145,10 @@ export function CheckoutForm() {
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <label className="block text-sm">
               <span className="mb-1.5 block font-medium text-ink-700">
-                Nombre completo *
+                Nombre completo {type === "table" ? "(opcional)" : "*"}
               </span>
               <input
-                required
+                required={type !== "table"}
                 value={customerName}
                 onChange={(event) => setCustomerName(event.target.value)}
                 className="w-full rounded-xl border border-stone-300 px-3 py-2.5 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
@@ -148,10 +158,10 @@ export function CheckoutForm() {
             </label>
             <label className="block text-sm">
               <span className="mb-1.5 block font-medium text-ink-700">
-                Teléfono / WhatsApp *
+                Teléfono / WhatsApp {type === "table" ? "(opcional)" : "*"}
               </span>
               <input
-                required
+                required={type !== "table"}
                 value={customerPhone}
                 onChange={(event) => setCustomerPhone(event.target.value)}
                 className="w-full rounded-xl border border-stone-300 px-3 py-2.5 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"

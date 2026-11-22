@@ -1,5 +1,6 @@
 import '../models/app_user.dart';
 import '../models/category.dart';
+import '../models/ingredient.dart';
 import '../models/menu_item.dart';
 import '../models/order.dart';
 import '../models/restaurant_settings.dart';
@@ -296,6 +297,228 @@ class SeedData {
     ),
   ];
 
+  /// Insumos base del inventario. Las cantidades están en la unidad indicada.
+  static final ingredients = <Ingredient>[
+    _ing('masa-maiz', 'Masa de maíz', IngredientUnit.gramo, 8000, 1000, 3.5),
+    _ing('carne-res', 'Carne de res', IngredientUnit.gramo, 6000, 800, 18),
+    _ing('papa-criolla', 'Papa criolla', IngredientUnit.gramo, 7000, 1000, 4.5),
+    _ing('hogao', 'Hogao', IngredientUnit.gramo, 3000, 500, 6),
+    _ing('maiz-blanco', 'Maíz blanco', IngredientUnit.gramo, 4000, 500, 4),
+    _ing('queso-campesino', 'Queso campesino', IngredientUnit.gramo, 3500, 500, 12),
+    _ing('mantequilla', 'Mantequilla', IngredientUnit.gramo, 2000, 300, 14),
+    _ing('platano-verde', 'Plátano verde', IngredientUnit.unidad, 60, 10, 800),
+    _ing('tomate', 'Tomate', IngredientUnit.gramo, 3000, 400, 3),
+    _ing('cebolla', 'Cebolla', IngredientUnit.gramo, 2500, 400, 2.8),
+    _ing('frijoles', 'Frijoles', IngredientUnit.gramo, 5000, 800, 6),
+    _ing('arroz', 'Arroz', IngredientUnit.gramo, 10000, 1500, 2.2),
+    _ing('chicharron', 'Chicharrón', IngredientUnit.gramo, 2500, 400, 20),
+    _ing('carne-molida', 'Carne molida', IngredientUnit.gramo, 3000, 500, 16),
+    _ing('morcilla', 'Morcilla', IngredientUnit.gramo, 1500, 300, 12),
+    _ing('chorizo', 'Chorizo', IngredientUnit.gramo, 2000, 300, 14),
+    _ing('huevo', 'Huevo', IngredientUnit.unidad, 120, 20, 500),
+    _ing('arepa', 'Arepa', IngredientUnit.unidad, 80, 15, 1200),
+    _ing('pollo', 'Pollo', IngredientUnit.gramo, 6000, 800, 11),
+    _ing('papa-pastusa', 'Papa pastusa', IngredientUnit.gramo, 6000, 800, 3.8),
+    _ing('mazorca', 'Mazorca', IngredientUnit.unidad, 40, 8, 900),
+    _ing('guascas', 'Guascas', IngredientUnit.gramo, 300, 50, 15),
+    _ing('crema', 'Crema', IngredientUnit.mililitro, 2500, 400, 8),
+    _ing('camaron', 'Camarón', IngredientUnit.gramo, 1500, 300, 38),
+    _ing('calamar', 'Calamar', IngredientUnit.gramo, 1500, 300, 30),
+    _ing('pescado', 'Pescado', IngredientUnit.gramo, 2500, 400, 22),
+    _ing('leche-coco', 'Leche de coco', IngredientUnit.mililitro, 3000, 500, 9),
+    _ing('pechuga-pollo', 'Pechuga de pollo', IngredientUnit.gramo, 5000, 700, 13),
+    _ing('papa', 'Papa', IngredientUnit.gramo, 6000, 800, 3.2),
+    _ing('lechuga', 'Lechuga', IngredientUnit.unidad, 25, 5, 1500),
+    _ing('harina', 'Harina', IngredientUnit.gramo, 5000, 800, 3),
+    _ing('leche', 'Leche', IngredientUnit.mililitro, 5000, 800, 3.6),
+    _ing('leche-condensada', 'Leche condensada', IngredientUnit.mililitro, 1500, 250, 8),
+    _ing('leche-evaporada', 'Leche evaporada', IngredientUnit.mililitro, 1500, 250, 7.5),
+    _ing('chocolate', 'Chocolate', IngredientUnit.gramo, 1800, 300, 28),
+    _ing('helado', 'Helado', IngredientUnit.mililitro, 2000, 300, 12),
+    _ing('limon', 'Limón', IngredientUnit.unidad, 60, 10, 400),
+    _ing('azucar', 'Azúcar', IngredientUnit.gramo, 4000, 600, 3),
+    _ing('hielo', 'Hielo', IngredientUnit.gramo, 5000, 800, 0.5),
+    _ing('lulo', 'Lulo', IngredientUnit.unidad, 40, 8, 900),
+    _ing('agua', 'Agua', IngredientUnit.mililitro, 20000, 3000, 0.2),
+    _ing('cafe-huila', 'Café de Huila', IngredientUnit.gramo, 1500, 250, 32),
+    _ing('vainilla', 'Vainilla', IngredientUnit.mililitro, 500, 100, 20),
+  ];
+
+  /// Consumo de insumos por porción de cada plato.
+  static final recipes = <String, Map<String, double>>{
+    'item-empanadas': {
+      'masa-maiz': 120.0,
+      'carne-res': 80.0,
+      'papa-criolla': 50.0,
+      'hogao': 30.0,
+    },
+    'item-arepa-queso': {
+      'maiz-blanco': 100.0,
+      'queso-campesino': 60.0,
+      'mantequilla': 10.0,
+    },
+    'item-patacones': {
+      'platano-verde': 1.0,
+      'tomate': 40.0,
+      'cebolla': 30.0,
+      'queso-campesino': 40.0,
+    },
+    'item-bandeja-paisa': {
+      'frijoles': 150.0,
+      'arroz': 180.0,
+      'chicharron': 80.0,
+      'carne-molida': 90.0,
+      'morcilla': 60.0,
+      'chorizo': 60.0,
+      'huevo': 1.0,
+      'arepa': 1.0,
+      'platano-verde': 1.0,
+    },
+    'item-ajiaco': {
+      'pollo': 180.0,
+      'papa-criolla': 120.0,
+      'papa-pastusa': 100.0,
+      'mazorca': 0.5,
+      'guascas': 10.0,
+      'crema': 40.0,
+    },
+    'item-cazuela-mariscos': {
+      'camaron': 100.0,
+      'calamar': 80.0,
+      'pescado': 120.0,
+      'leche-coco': 150.0,
+      'arroz': 150.0,
+    },
+    'item-pollo-plancha': {
+      'pechuga-pollo': 200.0,
+      'papa': 150.0,
+      'mantequilla': 15.0,
+      'lechuga': 0.25,
+    },
+    'item-tres-leches': {
+      'harina': 80.0,
+      'leche': 120.0,
+      'leche-condensada': 60.0,
+      'leche-evaporada': 60.0,
+      'huevo': 1.0,
+    },
+    'item-flan': {
+      'leche': 150.0,
+      'huevo': 1.0,
+      'azucar': 50.0,
+      'vainilla': 5.0,
+    },
+    'item-brownie': {
+      'chocolate': 70.0,
+      'mantequilla': 40.0,
+      'huevo': 1.0,
+      'harina': 60.0,
+      'helado': 80.0,
+    },
+    'item-limonada-coco': {
+      'limon': 2.0,
+      'leche-coco': 120.0,
+      'azucar': 30.0,
+      'hielo': 150.0,
+    },
+    'item-jugo-lulo': {
+      'lulo': 3.0,
+      'agua': 200.0,
+      'azucar': 25.0,
+    },
+    'item-cafe': {
+      'cafe-huila': 18.0,
+      'agua': 180.0,
+    },
+  };
+
+  /// Receta de preparación visible para el rol cocinero.
+  static const recipeSteps = <String, String>{
+    'item-empanadas':
+        '1. Amasar el maíz y formar discos.\n2. Rellenar con carne y papa criolla guisada.\n3. Freír hasta dorar y servir con hogao.',
+    'item-arepa-queso':
+        '1. Asar la arepa en la parrilla.\n2. Agregar queso campesino y mantequilla.\n3. Servir cuando el queso esté derretido.',
+    'item-patacones':
+        '1. Cortar el plátano verde en rodajas.\n2. Freír dos veces hasta que queden crocantes.\n3. Cubrir con hogao y queso rallado.',
+    'item-bandeja-paisa':
+        '1. Calentar frijoles, arroz y carnes por separado.\n2. Freír el huevo y el plátano.\n3. Montar la bandeja con la arepa y servir.',
+    'item-ajiaco':
+        '1. Cocinar el pollo con papa pastusa y mazorca.\n2. Agregar papa criolla y guascas al final.\n3. Servir con crema y alcaparras aparte.',
+    'item-cazuela-mariscos':
+        '1. Saltear camarón, calamar y pescado.\n2. Agregar leche de coco y reducir.\n3. Servir con arroz con coco.',
+    'item-pollo-plancha':
+        '1. Marinar la pechuga con finas hierbas.\n2. Sellar a la plancha y terminar en horno.\n3. Servir con puré de papa y ensalada.',
+    'item-tres-leches':
+        '1. Hornear el bizcocho y dejar enfriar.\n2. Bañar con la mezcla de tres leches.\n3. Cubrir con merengue y canela.',
+    'item-flan':
+        '1. Preparar el caramelo en el molde.\n2. Mezclar leche, huevo, azúcar y vainilla.\n3. Hornar a baño María y refrigerar.',
+    'item-brownie':
+        '1. Derretir chocolate con mantequilla.\n2. Integrar huevo y harina sin batir de más.\n3. Hornear y servir con helado.',
+    'item-limonada-coco':
+        '1. Licuar limón con leche de coco y azúcar.\n2. Agregar hielo y licuar de nuevo.\n3. Servir bien frío.',
+    'item-jugo-lulo':
+        '1. Licuar el lulo con agua y azúcar.\n2. Colar si el cliente lo prefiere.\n3. Servir con hielo.',
+    'item-cafe':
+        '1. Moler el café de Huila al momento.\n2. Preparar en prensa francesa o espresso.\n3. Servir de inmediato.',
+  };
+
+  static Ingredient _ing(
+    String id,
+    String name,
+    IngredientUnit unit,
+    double stock,
+    double minStock,
+    double cost,
+  ) {
+    return Ingredient(
+      id: id,
+      name: name,
+      unit: unit,
+      stock: stock,
+      minStock: minStock,
+      cost: cost,
+    );
+  }
+
+  static Ingredient ingredientById(String id) {
+    return ingredients.firstWhere(
+      (ingredient) => ingredient.id == id,
+      orElse: () => Ingredient(
+        id: id,
+        name: id,
+        unit: IngredientUnit.unidad,
+        stock: 0,
+        minStock: 0,
+      ),
+    );
+  }
+
+  /// Platos con SKU, receta estructurada y pasos de preparación.
+  static List<MenuItem> menuItemsWithRecipes() {
+    return menuItems.map((item) {
+      final recipe = recipes[item.id] ?? const <String, double>{};
+      final lines = recipe.entries
+          .map(
+            (entry) => RecipeIngredient(
+              ingredientId: entry.key,
+              quantity: entry.value,
+            ),
+          )
+          .toList();
+      final names = lines
+          .map((line) => ingredientById(line.ingredientId).name)
+          .toList();
+      return item.copyWith(
+        sku: item.sku.isEmpty
+            ? 'SKU-${item.id.replaceFirst('item-', '').toUpperCase()}'
+            : item.sku,
+        recipe: lines,
+        recipeSteps: recipeSteps[item.id] ?? item.recipeSteps,
+        ingredients: names.isEmpty ? item.ingredients : names,
+      );
+    }).toList();
+  }
+
   static const users = <AppUser>[
     AppUser(
       id: 'u-admin',
@@ -373,6 +596,7 @@ class SeedData {
       required DateTime createdAt,
       String notes = '',
       bool synced = true,
+      bool inventoryDeducted = false,
     }) {
       final orderItems = items.entries.map((entry) {
         final menuItem = menuItems.firstWhere((item) => item.id == entry.key);
@@ -407,6 +631,7 @@ class SeedData {
         updatedAt: createdAt,
         source: type == OrderType.table ? 'app' : 'web',
         synced: synced,
+        inventoryDeducted: inventoryDeducted,
       );
     }
 
@@ -437,6 +662,7 @@ class SeedData {
         paymentStatus: PaymentStatus.pending,
         paymentMethod: PaymentMethod.cash,
         createdAt: now.subtract(const Duration(minutes: 24)),
+        inventoryDeducted: true,
       ),
       build(
         id: 'order-3',
@@ -450,6 +676,7 @@ class SeedData {
         paymentStatus: PaymentStatus.pending,
         paymentMethod: PaymentMethod.card,
         createdAt: now.subtract(const Duration(minutes: 38)),
+        inventoryDeducted: true,
       ),
       build(
         id: 'order-4',
@@ -463,6 +690,7 @@ class SeedData {
         paymentStatus: PaymentStatus.paid,
         paymentMethod: PaymentMethod.cash,
         createdAt: now.subtract(const Duration(hours: 2)),
+        inventoryDeducted: true,
       ),
       build(
         id: 'order-5',
@@ -476,6 +704,7 @@ class SeedData {
         paymentStatus: PaymentStatus.paid,
         paymentMethod: PaymentMethod.daviplata,
         createdAt: now.subtract(const Duration(days: 1, hours: 3)),
+        inventoryDeducted: true,
       ),
       build(
         id: 'order-6',
@@ -489,6 +718,7 @@ class SeedData {
         paymentStatus: PaymentStatus.paid,
         paymentMethod: PaymentMethod.nequi,
         createdAt: now.subtract(const Duration(days: 1, hours: 5)),
+        inventoryDeducted: true,
       ),
       build(
         id: 'order-7',
@@ -515,6 +745,7 @@ class SeedData {
         paymentStatus: PaymentStatus.paid,
         paymentMethod: PaymentMethod.card,
         createdAt: now.subtract(const Duration(days: 3, hours: 4)),
+        inventoryDeducted: true,
       ),
     ];
   }

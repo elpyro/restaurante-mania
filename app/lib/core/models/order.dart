@@ -128,6 +128,7 @@ class Order {
     required this.updatedAt,
     required this.source,
     required this.synced,
+    this.inventoryDeducted = false,
   });
 
   final String id;
@@ -149,6 +150,9 @@ class Order {
   final String source;
   final bool synced;
 
+  /// Evita descontar dos veces el inventario del mismo pedido.
+  final bool inventoryDeducted;
+
   int get itemCount => items.fold(0, (sum, item) => sum + item.quantity);
 
   Order copyWith({
@@ -167,6 +171,7 @@ class Order {
     String? notes,
     DateTime? updatedAt,
     bool? synced,
+    bool? inventoryDeducted,
   }) {
     return Order(
       id: id,
@@ -187,6 +192,7 @@ class Order {
       updatedAt: updatedAt ?? this.updatedAt,
       source: source,
       synced: synced ?? this.synced,
+      inventoryDeducted: inventoryDeducted ?? this.inventoryDeducted,
     );
   }
 
@@ -209,6 +215,7 @@ class Order {
         'updatedAt': updatedAt.toIso8601String(),
         'source': source,
         'synced': synced,
+        'inventoryDeducted': inventoryDeducted,
       };
 
   factory Order.fromJson(Map<String, dynamic> json) => Order(
@@ -235,6 +242,7 @@ class Order {
             DateTime.now(),
         source: json['source'] as String? ?? 'app',
         synced: json['synced'] as bool? ?? true,
+        inventoryDeducted: json['inventoryDeducted'] as bool? ?? false,
       );
 }
 

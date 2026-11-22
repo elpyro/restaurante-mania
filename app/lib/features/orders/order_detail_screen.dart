@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/data/repository.dart';
+import '../../core/models/ingredient.dart';
 import '../../core/models/order.dart';
 import '../../core/models/role.dart';
 import '../../core/theme/app_theme.dart';
@@ -50,7 +51,7 @@ class OrderDetailScreen extends StatelessWidget {
                       builder: (dialogContext) => AlertDialog(
                         title: const Text('Cancelar pedido'),
                         content: Text(
-                          '¿Cancelar el pedido ${order.code}? Esta acción no se puede deshacer.',
+                          'Â¿Cancelar el pedido ${order.code}? Esta acciÃ³n no se puede deshacer.',
                         ),
                         actions: [
                           TextButton(
@@ -109,7 +110,7 @@ class OrderDetailScreen extends StatelessWidget {
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Este pedido fue cancelado. No requiere preparación.',
+                          'Este pedido fue cancelado. No requiere preparaciÃ³n.',
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
@@ -147,7 +148,7 @@ class OrderDetailScreen extends StatelessWidget {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    '${item.quantity} × ${item.name}',
+                                    '${item.quantity} Ã— ${item.name}',
                                     style: const TextStyle(
                                       fontSize: 13,
                                       fontWeight: FontWeight.w600,
@@ -211,7 +212,85 @@ class OrderDetailScreen extends StatelessWidget {
                   ),
                 ),
               ],
-              const SectionHeader(title: 'Sincronización'),
+              if (role.canViewRecipe &&
+                  order.items.any(
+                    (item) =>
+                        (repository.menuItemById(item.menuItemId)?.hasRecipe ??
+                            false),
+                  )) ...[
+                const SectionHeader(title: 'Receta (cocina)'),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFEDEAE6)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final orderItem in order.items) ...[
+                      if ((repository.menuItemById(orderItem.menuItemId)
+                              ?.hasRecipe ??
+                          false)) ...[
+                        Text(
+                          '${orderItem.quantity} Ã— ${orderItem.name}',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.ink,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                          ... (repository
+                                  .menuItemById(orderItem.menuItemId)
+                                  ?.recipe ??
+                              const <RecipeIngredient>[])
+                              .map((line) {
+                            final ingredient = repository
+                                .ingredientById(line.ingredientId);
+                            final name =
+                                ingredient?.name ?? line.ingredientId;
+                            final unit = ingredient?.unit.symbol ?? '';
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 2),
+                              child: Text(
+                                '• $name: '
+                                '${line.quantity * orderItem.quantity} $unit',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF57534E),
+                                ),
+                              ),
+                            );
+                          }),
+                          if ((repository
+                                      .menuItemById(orderItem.menuItemId)
+                                      ?.recipeSteps ??
+                                  '')
+                              .trim()
+                              .isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                repository
+                                    .menuItemById(orderItem.menuItemId)!
+                                    .recipeSteps,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF57534E),
+                                  height: 1.4,
+                                ),
+                              ),
+                            ),
+                          const SizedBox(height: 8),
+                      ],
+                    ],
+                  ],
+                ),
+              ),
+              ],
+              const SectionHeader(title: 'SincronizaciÃ³n'),
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
@@ -233,7 +312,7 @@ class OrderDetailScreen extends StatelessWidget {
                       child: Text(
                         order.synced
                             ? 'Pedido sincronizado correctamente.'
-                            : 'Guardado en el dispositivo. Se enviará al recuperar la conexión.',
+                            : 'Guardado en el dispositivo. Se enviarÃ¡ al recuperar la conexiÃ³n.',
                         style: const TextStyle(
                           fontSize: 12,
                           color: Color(0xFF57534E),

@@ -337,13 +337,24 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
     final name = _nameController.text.trim();
     final phone = _phoneController.text.trim();
     final digits = phone.replaceAll(RegExp(r'\D'), '');
-    if (name.length < 2) {
-      setState(() => _error = 'Escribe el nombre del cliente.');
-      return;
-    }
-    if (digits.length < 7) {
-      setState(() => _error = 'Escribe un teléfono válido.');
-      return;
+    if (_type != OrderType.table) {
+      if (name.length < 2) {
+        setState(() => _error = 'Escribe el nombre del cliente.');
+        return;
+      }
+      if (digits.length < 7) {
+        setState(() => _error = 'Escribe un teléfono válido.');
+        return;
+      }
+    } else {
+      if (name.isNotEmpty && name.length < 2) {
+        setState(() => _error = 'Escribe un nombre válido.');
+        return;
+      }
+      if (phone.isNotEmpty && digits.length < 7) {
+        setState(() => _error = 'Escribe un teléfono válido.');
+        return;
+      }
     }
     setState(() {
       _error = null;
@@ -416,7 +427,7 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
                   controller: _nameController,
                   textCapitalization: TextCapitalization.words,
                   decoration: const InputDecoration(
-                    labelText: 'Nombre del cliente *',
+                    labelText: 'Nombre del cliente (opcional en mesa)',
                     prefixIcon: Icon(Icons.person_outline_rounded),
                   ),
                 ),
@@ -425,7 +436,7 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
                   controller: _phoneController,
                   keyboardType: TextInputType.phone,
                   decoration: const InputDecoration(
-                    labelText: 'Teléfono *',
+                    labelText: 'Teléfono (opcional en mesa)',
                     prefixIcon: Icon(Icons.phone_outlined),
                   ),
                 ),

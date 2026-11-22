@@ -270,3 +270,11 @@ Decisiones de seguridad:
 - **Backend**: `firebase deploy --only firestore:rules,firestore:indexes,functions`.
 - **App**: `flutter build apk --release` (firma debug para pruebas) o
   `flutter build appbundle` con keystore propio para Play Store.
+
+
+## Actualización 2026-11-22
+- Sincronización web→app vía GET /api/orders + polling HTTP 12 s.
+- Inventario con descuento automático al preparar.
+- Recetas, SKU, fotos y video en platos (solo app cook/admin).
+- Mesa pasa a ocupada al tomar pedido; cliente opcional en mesa.
+

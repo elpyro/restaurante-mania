@@ -64,6 +64,11 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /ingredients/{ingredientId} {
+      allow read: if true;
+      allow create, update, delete: if canManageMenu();
+    }
+
     match /tables/{tableId} {
       allow read: if true;
       allow write: if canManageTables();
@@ -114,11 +119,14 @@ service cloud.firestore {
           'createdAt'
         ])
         && data.customerName is string
-        && data.customerName.size() >= 2
         && data.customerName.size() <= 80
         && data.customerPhone is string
-        && data.customerPhone.size() >= 7
         && data.customerPhone.size() <= 20
+        && (data.type != 'table'
+            ? (data.customerName.size() >= 2
+                && data.customerPhone.size() >= 7
+                && data.customerPhone.size() <= 20)
+            : true)
         && data.type in ['pickup', 'delivery', 'table']
         && data.items is list
         && data.items.size() > 0

@@ -1,3 +1,5 @@
+import 'ingredient.dart';
+
 enum MenuItemStatus {
   available('Disponible'),
   limited('Últimas unidades'),
@@ -28,6 +30,11 @@ class MenuItem {
     required this.featured,
     required this.prepMinutes,
     required this.calories,
+    this.sku = '',
+    this.imageUrl = '',
+    this.videoUrl = '',
+    this.recipeSteps = '',
+    this.recipe = const [],
   });
 
   final String id;
@@ -38,6 +45,8 @@ class MenuItem {
   final String categoryId;
   final String categorySlug;
   final MenuItemStatus status;
+
+  /// Nombres legibles de los ingredientes (para la web y fichas públicas).
   final List<String> ingredients;
   final List<String> allergens;
   final String emoji;
@@ -45,7 +54,26 @@ class MenuItem {
   final int prepMinutes;
   final int calories;
 
+  /// Código interno del producto.
+  final String sku;
+
+  /// URL de la foto del plato (opcional).
+  final String imageUrl;
+
+  /// URL del video de preparación (opcional).
+  final String videoUrl;
+
+  /// Pasos de la receta. Solo se muestran al rol cocinero.
+  final String recipeSteps;
+
+  /// Insumos y cantidades que consume una porción.
+  final List<RecipeIngredient> recipe;
+
   bool get isAvailable => status != MenuItemStatus.unavailable;
+
+  bool get hasMedia => imageUrl.trim().isNotEmpty || videoUrl.trim().isNotEmpty;
+
+  bool get hasRecipe => recipe.isNotEmpty || recipeSteps.trim().isNotEmpty;
 
   MenuItem copyWith({
     String? name,
@@ -60,6 +88,11 @@ class MenuItem {
     bool? featured,
     int? prepMinutes,
     int? calories,
+    String? sku,
+    String? imageUrl,
+    String? videoUrl,
+    String? recipeSteps,
+    List<RecipeIngredient>? recipe,
   }) {
     return MenuItem(
       id: id,
@@ -76,6 +109,11 @@ class MenuItem {
       featured: featured ?? this.featured,
       prepMinutes: prepMinutes ?? this.prepMinutes,
       calories: calories ?? this.calories,
+      sku: sku ?? this.sku,
+      imageUrl: imageUrl ?? this.imageUrl,
+      videoUrl: videoUrl ?? this.videoUrl,
+      recipeSteps: recipeSteps ?? this.recipeSteps,
+      recipe: recipe ?? this.recipe,
     );
   }
 
@@ -94,6 +132,11 @@ class MenuItem {
         'featured': featured,
         'prepMinutes': prepMinutes,
         'calories': calories,
+        'sku': sku,
+        'imageUrl': imageUrl,
+        'videoUrl': videoUrl,
+        'recipeSteps': recipeSteps,
+        'recipe': recipe.map((line) => line.toJson()).toList(),
       };
 
   factory MenuItem.fromJson(Map<String, dynamic> json) => MenuItem(
@@ -117,5 +160,13 @@ class MenuItem {
         featured: json['featured'] as bool? ?? false,
         prepMinutes: (json['prepMinutes'] as num?)?.toInt() ?? 15,
         calories: (json['calories'] as num?)?.toInt() ?? 0,
+        sku: json['sku'] as String? ?? '',
+        imageUrl: json['imageUrl'] as String? ?? '',
+        videoUrl: json['videoUrl'] as String? ?? '',
+        recipeSteps: json['recipeSteps'] as String? ?? '',
+        recipe: (json['recipe'] as List<dynamic>? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(RecipeIngredient.fromJson)
+            .toList(),
       );
 }

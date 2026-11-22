@@ -93,3 +93,6 @@ $RECYCLE.BIN/
 *.swp
 *.swo
 *~
+
+# Web demo order persistence
+web/.data/

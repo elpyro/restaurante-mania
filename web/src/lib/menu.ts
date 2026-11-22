@@ -55,6 +55,9 @@ function mapMenuItem(
     featured: doc.data.featured === true,
     prepMinutes: asNumber(doc.data.prepMinutes, 15),
     calories: asNumber(doc.data.calories),
+    sku: asString(doc.data.sku),
+    imageUrl: asString(doc.data.imageUrl),
+    videoUrl: asString(doc.data.videoUrl),
   };
 }
 

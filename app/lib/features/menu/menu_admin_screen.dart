@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/data/repository.dart';
 import '../../core/models/category.dart';
+import '../../core/models/ingredient.dart';
 import '../../core/models/menu_item.dart';
 import '../../core/models/role.dart';
 import '../../core/theme/app_theme.dart';
@@ -35,17 +36,28 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
       builder: (_) => _MenuEditorDialog(
         item: item,
         categories: repository.categories,
+        ingredients: repository.ingredients,
       ),
     );
     if (draft == null) return;
 
     if (item == null) {
-      await repository.addMenuItem(
+      final created = await repository.addMenuItem(
         name: draft.name,
         description: draft.description,
         price: draft.price,
         categoryId: draft.categoryId,
         emoji: draft.emoji,
+      );
+      await repository.upsertMenuItem(
+        created.copyWith(
+          sku: draft.sku,
+          imageUrl: draft.imageUrl,
+          videoUrl: draft.videoUrl,
+          recipeSteps: draft.recipeSteps,
+          recipe: draft.recipe,
+          ingredients: draft.ingredients,
+        ),
       );
     } else {
       final category = repository.categoryById(draft.categoryId);
@@ -57,6 +69,12 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
           categoryId: draft.categoryId,
           categorySlug: category?.slug ?? item.categorySlug,
           emoji: draft.emoji,
+          sku: draft.sku,
+          imageUrl: draft.imageUrl,
+          videoUrl: draft.videoUrl,
+          recipeSteps: draft.recipeSteps,
+          recipe: draft.recipe,
+          ingredients: draft.ingredients,
         ),
       );
     }
@@ -335,6 +353,12 @@ class _MenuDraft {
     required this.price,
     required this.categoryId,
     required this.emoji,
+    required this.sku,
+    required this.imageUrl,
+    required this.videoUrl,
+    required this.recipeSteps,
+    required this.recipe,
+    required this.ingredients,
   });
 
   final String name;
@@ -342,13 +366,24 @@ class _MenuDraft {
   final double price;
   final String categoryId;
   final String emoji;
+  final String sku;
+  final String imageUrl;
+  final String videoUrl;
+  final String recipeSteps;
+  final List<RecipeIngredient> recipe;
+  final List<String> ingredients;
 }
 
 class _MenuEditorDialog extends StatefulWidget {
-  const _MenuEditorDialog({required this.item, required this.categories});
+  const _MenuEditorDialog({
+    required this.item,
+    required this.categories,
+    required this.ingredients,
+  });
 
   final MenuItem? item;
   final List<Category> categories;
+  final List<Ingredient> ingredients;
 
   @override
   State<_MenuEditorDialog> createState() => _MenuEditorDialogState();
@@ -359,7 +394,12 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
   late final TextEditingController _description;
   late final TextEditingController _price;
   late final TextEditingController _emoji;
+  late final TextEditingController _sku;
+  late final TextEditingController _imageUrl;
+  late final TextEditingController _videoUrl;
+  late final TextEditingController _recipeSteps;
   late String _categoryId;
+  late List<RecipeIngredient> _recipe;
   String? _error;
 
   @override
@@ -371,8 +411,13 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
       text: widget.item == null ? '' : widget.item!.price.toStringAsFixed(0),
     );
     _emoji = TextEditingController(text: widget.item?.emoji ?? '🍽️');
+    _sku = TextEditingController(text: widget.item?.sku ?? '');
+    _imageUrl = TextEditingController(text: widget.item?.imageUrl ?? '');
+    _videoUrl = TextEditingController(text: widget.item?.videoUrl ?? '');
+    _recipeSteps = TextEditingController(text: widget.item?.recipeSteps ?? '');
     _categoryId = widget.item?.categoryId ??
         (widget.categories.isEmpty ? '' : widget.categories.first.id);
+    _recipe = List<RecipeIngredient>.from(widget.item?.recipe ?? const []);
   }
 
   @override
@@ -381,7 +426,34 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
     _description.dispose();
     _price.dispose();
     _emoji.dispose();
+    _sku.dispose();
+    _imageUrl.dispose();
+    _videoUrl.dispose();
+    _recipeSteps.dispose();
     super.dispose();
+  }
+
+  String _ingredientName(String id) {
+    final matches = widget.ingredients.where((item) => item.id == id);
+    return matches.isEmpty ? id : matches.first.name;
+  }
+
+  Future<void> _addRecipeLine() async {
+    if (widget.ingredients.isEmpty) return;
+    final result = await showDialog<_RecipeLineDraft>(
+      context: context,
+      builder: (_) => _RecipeLineDialog(ingredients: widget.ingredients),
+    );
+    if (result == null) return;
+    setState(() {
+      _recipe = [..._recipe, result.toRecipe()];
+    });
+  }
+
+  void _removeRecipeLine(int index) {
+    setState(() {
+      _recipe = [..._recipe]..removeAt(index);
+    });
   }
 
   void _save() {
@@ -399,6 +471,9 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
       setState(() => _error = 'Selecciona una categoría.');
       return;
     }
+    final ingredientNames = _recipe
+        .map((line) => _ingredientName(line.ingredientId))
+        .toList();
     Navigator.of(context).pop(
       _MenuDraft(
         name: name,
@@ -406,6 +481,14 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
         price: price,
         categoryId: _categoryId,
         emoji: _emoji.text.trim().isEmpty ? '🍽️' : _emoji.text.trim(),
+        sku: _sku.text.trim(),
+        imageUrl: _imageUrl.text.trim(),
+        videoUrl: _videoUrl.text.trim(),
+        recipeSteps: _recipeSteps.text.trim(),
+        recipe: _recipe,
+        ingredients: ingredientNames.isEmpty
+            ? (widget.item?.ingredients ?? const [])
+            : ingredientNames,
       ),
     );
   }
@@ -447,6 +530,21 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
                 helperText: 'Ej.: 🍛, 🥤, 🍰',
               ),
             ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _sku,
+              decoration: const InputDecoration(labelText: 'SKU'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _imageUrl,
+              decoration: const InputDecoration(labelText: 'URL de la foto'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _videoUrl,
+              decoration: const InputDecoration(labelText: 'URL del video'),
+            ),
             const SizedBox(height: 14),
             const Text(
               'Categoría',
@@ -470,6 +568,75 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
                 );
               }).toList(),
             ),
+            const SizedBox(height: 14),
+            const Text(
+              'Receta (pasos para cocina)',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.ink,
+              ),
+            ),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _recipeSteps,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                hintText: '1. ...\n2. ...',
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                const Text(
+                  'Insumos por porción',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.ink,
+                  ),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: _addRecipeLine,
+                  icon: const Icon(Icons.add_rounded, size: 16),
+                  label: const Text('Agregar'),
+                ),
+              ],
+            ),
+            if (_recipe.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 6),
+                child: Text(
+                  'Sin receta estructurada.',
+                  style: TextStyle(fontSize: 11, color: Color(0xFFA8A29E)),
+                ),
+              )
+            else
+              Column(
+                children: List.generate(_recipe.length, (index) {
+                  final line = _recipe[index];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${_ingredientName(line.ingredientId)} · '
+                            '${line.quantity}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.close_rounded, size: 16),
+                          onPressed: () => _removeRecipeLine(index),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ),
             if (_error != null) ...[
               const SizedBox(height: 10),
               Text(
@@ -490,6 +657,99 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
           child: const Text('Cancelar'),
         ),
         FilledButton(onPressed: _save, child: const Text('Guardar')),
+      ],
+    );
+  }
+}
+
+class _RecipeLineDraft {
+  const _RecipeLineDraft({
+    required this.ingredientId,
+    required this.quantity,
+  });
+
+  final String ingredientId;
+  final double quantity;
+
+  RecipeIngredient toRecipe() =>
+      RecipeIngredient(ingredientId: ingredientId, quantity: quantity);
+}
+
+class _RecipeLineDialog extends StatefulWidget {
+  const _RecipeLineDialog({required this.ingredients});
+
+  final List<Ingredient> ingredients;
+
+  @override
+  State<_RecipeLineDialog> createState() => _RecipeLineDialogState();
+}
+
+class _RecipeLineDialogState extends State<_RecipeLineDialog> {
+  late String _ingredientId;
+  final _quantityController = TextEditingController(text: '1');
+
+  @override
+  void initState() {
+    super.initState();
+    _ingredientId = widget.ingredients.first.id;
+  }
+
+  @override
+  void dispose() {
+    _quantityController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Agregar insumo a la receta'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DropdownButtonFormField<String>(
+            initialValue: _ingredientId,
+            decoration: const InputDecoration(labelText: 'Insumo'),
+            items: widget.ingredients
+                .map(
+                  (ingredient) => DropdownMenuItem<String>(
+                    value: ingredient.id,
+                    child: Text(ingredient.name),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value != null) setState(() => _ingredientId = value);
+            },
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _quantityController,
+            keyboardType:
+                const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: 'Cantidad por porción',
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final qty = double.tryParse(
+              _quantityController.text.replaceAll(',', '.').trim(),
+            );
+            if (qty == null || qty <= 0) return;
+            Navigator.of(context).pop(
+              _RecipeLineDraft(ingredientId: _ingredientId, quantity: qty),
+            );
+          },
+          child: const Text('Agregar'),
+        ),
       ],
     );
   }

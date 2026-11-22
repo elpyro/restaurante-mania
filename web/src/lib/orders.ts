@@ -1,4 +1,6 @@
 import { cartTotals } from "./cart";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import path from "node:path";
 import { createDocument, getDocument, isFirestoreConfigured } from "./firebase/rest";
 import { getMenu } from "./menu";
 import type {
@@ -42,19 +44,30 @@ export function validateOrderInput(raw: unknown): ValidationResult {
   const body = raw as Record<string, unknown>;
 
   const customerName = text(body.customerName);
-  if (customerName.length < 2 || customerName.length > 80) {
-    errors.push("El nombre debe tener entre 2 y 80 caracteres.");
-  }
-
   const customerPhone = text(body.customerPhone);
-  const phoneDigits = customerPhone.replace(/\D/g, "");
-  if (phoneDigits.length < 7 || phoneDigits.length > 15) {
-    errors.push("El teléfono debe tener entre 7 y 15 dígitos.");
-  }
-
   const type = text(body.type) as OrderType;
+  const isTable = type === "table";
+
   if (!ORDER_TYPES.includes(type)) {
     errors.push("El tipo de pedido no es válido.");
+  }
+
+  if (!isTable) {
+    if (customerName.length < 2 || customerName.length > 80) {
+      errors.push("El nombre debe tener entre 2 y 80 caracteres.");
+    }
+    const phoneDigits = customerPhone.replace(/\D/g, "");
+    if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+      errors.push("El teléfono debe tener entre 7 y 15 dígitos.");
+    }
+  } else {
+    if (customerName.length > 80) {
+      errors.push("El nombre no puede superar 80 caracteres.");
+    }
+    const phoneDigits = customerPhone.replace(/\D/g, "");
+    if (customerPhone && (phoneDigits.length < 7 || phoneDigits.length > 15)) {
+      errors.push("El teléfono debe tener entre 7 y 15 dígitos.");
+    }
   }
 
   let tableNumber: number | null = null;
@@ -151,11 +164,56 @@ function demoOrders(): Map<string, Order> {
   return globalStore.__restauranteOrders;
 }
 
+const DATA_DIR = path.join(process.cwd(), ".data");
+const DATA_FILE = path.join(DATA_DIR, "orders.json");
+const disablePersistence =
+  process.env.VITEST === "true" ||
+  process.env.NODE_ENV === "test" ||
+  process.env.DISABLE_ORDER_PERSISTENCE === "true";
+
+let diskLoaded = false;
+
+async function loadFromDisk() {
+  if (disablePersistence || diskLoaded) return;
+  diskLoaded = true;
+  try {
+    const raw = await readFile(DATA_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      for (const entry of parsed) {
+        if (entry && typeof entry.id === "string") {
+          demoOrders().set(entry.id, entry as Order);
+        }
+      }
+    }
+  } catch {
+    /* archivo inexistente o inválido */
+  }
+}
+
+async function persistOrdersToDisk() {
+  if (disablePersistence) return;
+  try {
+    await mkdir(DATA_DIR, { recursive: true });
+    await writeFile(
+      DATA_FILE,
+      JSON.stringify(listDemoOrders().slice(0, 200), null, 2),
+      "utf8",
+    );
+  } catch {
+    /* no bloquear la creación del pedido */
+  }
+}
+
 export async function createOrder(raw: unknown): Promise<Order> {
   const validation = validateOrderInput(raw);
   if (!validation.ok) throw new OrderValidationError(validation.errors);
 
   const input = validation.value;
+  const resolvedCustomerName =
+    input.type === "table" && input.customerName.trim().length < 2
+      ? `Mesa ${input.tableNumber}`
+      : input.customerName;
   const { items: menuItems } = await getMenu();
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
 
@@ -186,7 +244,7 @@ export async function createOrder(raw: unknown): Promise<Order> {
   const now = new Date();
   const base = {
     code: orderCode(),
-    customerName: input.customerName,
+    customerName: resolvedCustomerName,
     customerPhone: input.customerPhone,
     type: input.type,
     tableNumber: input.tableNumber,
@@ -228,6 +286,7 @@ export async function createOrder(raw: unknown): Promise<Order> {
     const oldest = store.keys().next().value;
     if (oldest) store.delete(oldest);
   }
+  await persistOrdersToDisk();
   return order;
 }
 
@@ -251,4 +310,9 @@ export function listDemoOrders(): Order[] {
   return [...demoOrders().values()].sort(
     (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
   );
+}
+
+export async function listOrders(): Promise<Order[]> {
+  await loadFromDisk();
+  return listDemoOrders();
 }

@@ -89,6 +89,27 @@ class OrderCard extends StatelessWidget {
                     ),
                     const SizedBox(width: 6),
                   ],
+                  if (order.source == 'web') ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE0F2FE),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text(
+                        'Web',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF0369A1),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
                   StatusPill(
                     label: order.status.label,
                     color: statusColor,

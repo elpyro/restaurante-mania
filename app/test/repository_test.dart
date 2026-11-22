@@ -123,7 +123,7 @@ void main() {
       paymentMethod: PaymentMethod.card,
     );
     expect(repository.tableByNumber(6)?.status,
-        TableStatus.esperandoPedido);
+        TableStatus.ocupada);
     expect(repository.tableByNumber(6)?.currentOrderId, order.id);
 
     await repository.markOrderPaid(order.id);
