@@ -2,28 +2,45 @@ import type { CartLine, CartTotals, MenuItem } from "./types";
 
 export const TAX_RATE = 0;
 
+function clampQty(quantity: number, maxServings?: number | null): number {
+  const hardMax =
+    typeof maxServings === "number" && Number.isFinite(maxServings)
+      ? Math.max(0, Math.floor(maxServings))
+      : 99;
+  return Math.min(99, hardMax, Math.max(0, Math.floor(quantity)));
+}
+
 export function addLine(
   lines: CartLine[],
-  item: Pick<MenuItem, "id" | "name" | "price" | "emoji">,
+  item: Pick<MenuItem, "id" | "name" | "price" | "emoji" | "imageUrl"> & {
+    maxServings?: number | null;
+  },
   quantity = 1,
 ): CartLine[] {
   if (quantity <= 0) return lines;
   const existing = lines.find((line) => line.menuItemId === item.id);
+  const maxServings = item.maxServings ?? existing?.maxServings ?? null;
   if (existing) {
+    const nextQty = clampQty(existing.quantity + quantity, maxServings);
+    if (nextQty === existing.quantity) return lines;
     return lines.map((line) =>
       line.menuItemId === item.id
-        ? { ...line, quantity: Math.min(99, line.quantity + quantity) }
+        ? { ...line, quantity: nextQty, maxServings }
         : line,
     );
   }
+  const nextQty = clampQty(quantity, maxServings);
+  if (nextQty <= 0) return lines;
   return [
     ...lines,
     {
       menuItemId: item.id,
       name: item.name,
       price: item.price,
-      quantity: Math.min(99, quantity),
+      quantity: nextQty,
       emoji: item.emoji,
+      imageUrl: item.imageUrl,
+      maxServings,
     },
   ];
 }
@@ -32,13 +49,14 @@ export function updateQuantity(
   lines: CartLine[],
   menuItemId: string,
   quantity: number,
+  maxServings?: number | null,
 ): CartLine[] {
   if (quantity <= 0) return removeLine(lines, menuItemId);
-  return lines.map((line) =>
-    line.menuItemId === menuItemId
-      ? { ...line, quantity: Math.min(99, Math.floor(quantity)) }
-      : line,
-  );
+  return lines.map((line) => {
+    if (line.menuItemId !== menuItemId) return line;
+    const limit = maxServings ?? line.maxServings ?? null;
+    return { ...line, quantity: clampQty(quantity, limit), maxServings: limit };
+  });
 }
 
 export function removeLine(lines: CartLine[], menuItemId: string): CartLine[] {

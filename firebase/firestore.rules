@@ -141,6 +141,11 @@ service cloud.firestore {
         && data.paymentStatus == 'pending'
         && data.paymentMethod in ['cash', 'card', 'nequi', 'daviplata']
         && (!('notes' in data) || (data.notes is string && data.notes.size() <= 300))
+        && (!('deliveryAddress' in data) || (data.deliveryAddress is string && data.deliveryAddress.size() <= 160))
+        && (
+          data.type != 'delivery'
+          || ('deliveryAddress' in data && data.deliveryAddress is string && data.deliveryAddress.size() >= 5 && data.deliveryAddress.size() <= 160)
+        )
         && (
           data.type != 'table'
           || (data.tableNumber is int && data.tableNumber >= 1 && data.tableNumber <= 100)
@@ -168,6 +173,23 @@ service cloud.firestore {
     match /reports/{docId} {
       allow read: if isStaff();
       allow write: if false;
+    }
+
+    // ---------------------------------------------------------------------
+    // CRM de clientes. Solo personal autenticado; clientes deben tener
+    // teléfono. La app también sincroniza por API web cuando no usa SDK.
+    // ---------------------------------------------------------------------
+    match /customers/{customerId} {
+      allow get, list: if isStaff();
+      allow create, update: if isStaff()
+        && request.resource.data.keys().hasOnly([
+          'id', 'name', 'phone', 'normalizedPhone', 'address', 'tags',
+          'notes', 'createdAt', 'updatedAt', 'lastOrderAt', 'orderCount',
+          'totalSpent', 'lastType'
+        ])
+        && request.resource.data.phone is string
+        && request.resource.data.phone.size() >= 7;
+      allow delete: if isAdmin();
     }
 
     // Denegar todo lo no contemplado explícitamente.

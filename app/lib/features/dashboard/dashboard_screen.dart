@@ -11,6 +11,7 @@ import '../../core/utils/formatters.dart';
 import '../../core/widgets/common.dart';
 import '../../core/widgets/order_card.dart';
 import '../orders/new_order_screen.dart';
+import '../inventory/inventory_screen.dart';
 import '../orders/order_detail_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
@@ -18,251 +19,63 @@ class DashboardScreen extends StatelessWidget {
 
   final void Function(AppTab tab) onNavigate;
 
-  String get _todayLabel {
-    const weekdays = [
-      'lunes',
-      'martes',
-      'miércoles',
-      'jueves',
-      'viernes',
-      'sábado',
-      'domingo',
-    ];
-    const months = [
-      'enero',
-      'febrero',
-      'marzo',
-      'abril',
-      'mayo',
-      'junio',
-      'julio',
-      'agosto',
-      'septiembre',
-      'octubre',
-      'noviembre',
-      'diciembre',
-    ];
-    final now = DateTime.now();
-    return '${weekdays[now.weekday - 1]}, ${now.day} de ${months[now.month - 1]}';
-  }
-
-  String get _greeting {
-    final hour = DateTime.now().hour;
-    if (hour < 12) return 'Buenos días';
-    if (hour < 19) return 'Buenas tardes';
-    return 'Buenas noches';
-  }
-
   @override
   Widget build(BuildContext context) {
     final repository = context.watch<RestaurantRepository>();
     final role = repository.role ?? UserRole.admin;
-    final firstName =
-        (repository.currentUser?.name ?? 'equipo').split(' ').first;
 
-    return RefreshIndicator(
-      onRefresh: repository.syncPendingOrders,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-        children: [
-          _GreetingCard(
-            greeting: _greeting,
-            name: firstName,
-            role: role,
-            date: _todayLabel,
-            isOpen: repository.settings.isOpen,
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const NewOrderScreen(),
           ),
-          if (!repository.isOnline) ...[
-            const SizedBox(height: 12),
-            _OfflineBanner(pending: repository.pendingSyncCount),
-          ],
-          const SizedBox(height: 14),
-          _KpiGrid(repository: repository, role: role, onNavigate: onNavigate),
-          SectionHeader(
-            title: 'Acciones rápidas',
-            action: Text(
-              role.label,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF78716C),
-              ),
-            ),
-          ),
-          _QuickActions(
-            repository: repository,
-            role: role,
-            onNavigate: onNavigate,
-          ),
-          if (role == UserRole.cook) ...[
-            const SectionHeader(title: 'Cola de cocina'),
-            _KitchenQueue(repository: repository),
-          ],
-          if (role == UserRole.cashier) ...[
-            const SectionHeader(title: 'Por cobrar'),
-            _CashierQueue(repository: repository),
-          ],
-          if (role == UserRole.waiter || role == UserRole.admin) ...[
-            SectionHeader(
-              title: 'Mesas',
-              action: TextButton(
-                onPressed: () => onNavigate(AppTab.tables),
-                child: const Text('Ver todas'),
-              ),
-            ),
-            _TablesOverview(
-              repository: repository,
-              onTap: (tableNumber) => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) =>
-                      NewOrderScreen(initialTableNumber: tableNumber),
-                ),
-              ),
-            ),
-          ],
-          if (role == UserRole.admin || role == UserRole.cashier) ...[
-            const SectionHeader(title: 'Ventas últimos 7 días'),
-            _SalesSpark(repository: repository),
-          ],
-          SectionHeader(
-            title: 'Pedidos recientes',
-            action: TextButton(
-              onPressed: () => onNavigate(AppTab.orders),
-              child: const Text('Ver todos'),
-            ),
-          ),
-          if (repository.orders.isEmpty)
-            const EmptyState(
-              icon: Icons.receipt_long_outlined,
-              title: 'Todavía no hay pedidos',
-              message: 'Cuando llegue un pedido aparecerá aquí en tiempo real.',
-            )
-          else
-            ...repository.orders.take(4).map(
-                  (order) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: OrderCard(
-                      order: order,
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => OrderDetailScreen(orderId: order.id),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GreetingCard extends StatelessWidget {
-  const _GreetingCard({
-    required this.greeting,
-    required this.name,
-    required this.role,
-    required this.date,
-    required this.isOpen,
-  });
-
-  final String greeting;
-  final String name;
-  final UserRole role;
-  final String date;
-  final bool isOpen;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppTheme.brand, AppTheme.brandDark],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.brand.withValues(alpha: 0.25),
-            blurRadius: 22,
-            offset: const Offset(0, 10),
-          ),
-        ],
+        backgroundColor: AppTheme.brand,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('Nuevo pedido'),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$greeting, $name 👋',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.3,
+      body: RefreshIndicator(
+        onRefresh: repository.syncPendingOrders,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
+          children: [
+            if (!repository.isOnline) ...[
+              _OfflineBanner(pending: repository.pendingSyncCount),
+              const SizedBox(height: 12),
+            ],
+            _KpiGrid(repository: repository, role: role, onNavigate: onNavigate),
+            if (role == UserRole.cook) ...[
+              const SectionHeader(title: 'Cola de cocina'),
+              _KitchenQueue(repository: repository),
+            ],
+            if (role == UserRole.waiter) ...[
+              SectionHeader(
+                title: 'Mesas',
+                action: TextButton(
+                  onPressed: () => onNavigate(AppTab.tables),
+                  child: const Text('Ver todas'),
+                ),
+              ),
+              _TablesOverview(
+                repository: repository,
+                onTap: (tableNumber) => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        NewOrderScreen(initialTableNumber: tableNumber),
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  date,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.85),
-                    fontSize: 11.5,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        role.label,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: (isOpen ? Colors.white : Colors.black)
-                            .withValues(alpha: isOpen ? 0.18 : 0.22),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        isOpen ? 'Restaurante abierto' : 'Restaurante cerrado',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const Text('🍽️', style: TextStyle(fontSize: 44)),
-        ],
+              ),
+            ],
+            if (role == UserRole.admin || role == UserRole.cashier) ...[
+              const SectionHeader(title: 'Ventas últimos 7 días'),
+              _SalesSpark(repository: repository),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -324,25 +137,47 @@ class _KpiGrid extends StatelessWidget {
             onTap: () => onNavigate(AppTab.reports),
           ),
           StatCard(
-            label: 'Por cobrar',
-            value: formatCop(repository.pendingPayments),
-            icon: Icons.account_balance_wallet_outlined,
-            accent: AppTheme.warning,
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-          StatCard(
             label: 'Pedidos activos',
             value: '${repository.activeOrders.length}',
             icon: Icons.receipt_long_outlined,
+            accent: AppTheme.warning,
             subtitle: '${repository.pendingCount} pendientes',
             onTap: () => onNavigate(AppTab.orders),
           ),
           StatCard(
-            label: 'Mesas ocupadas',
-            value: '${repository.occupiedTables}/${repository.tables.length}',
-            icon: Icons.table_restaurant_outlined,
+            label: 'En preparación',
+            value: '${repository.preparingCount}',
+            icon: Icons.soup_kitchen_outlined,
             accent: const Color(0xFF2563EB),
-            onTap: () => onNavigate(AppTab.tables),
+            onTap: () => onNavigate(AppTab.orders),
+          ),
+          StatCard(
+            label: 'Pedidos listos',
+            value: '${repository.readyCount}',
+            icon: Icons.room_service_outlined,
+            accent: AppTheme.success,
+            onTap: () => onNavigate(AppTab.orders),
+          ),
+          StatCard(
+            label: 'Ingredientes agotados',
+            value:
+                '${repository.ingredients.where((i) => i.stock <= 0).length}',
+            icon: Icons.inventory_2_outlined,
+            accent: AppTheme.danger,
+            subtitle:
+                '${repository.lowStockIngredients.length} con stock bajo',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const InventoryScreen(),
+              ),
+            ),
+          ),
+          StatCard(
+            label: 'Pedidos hoy',
+            value: '${repository.todayOrderCount}',
+            icon: Icons.today_outlined,
+            accent: const Color(0xFF7C3AED),
+            onTap: () => onNavigate(AppTab.orders),
           ),
         ],
       UserRole.cashier => [
@@ -354,9 +189,9 @@ class _KpiGrid extends StatelessWidget {
             onTap: () => onNavigate(AppTab.reports),
           ),
           StatCard(
-            label: 'Por cobrar',
-            value: formatCop(repository.pendingPayments),
-            icon: Icons.account_balance_wallet_outlined,
+            label: 'Pedidos activos',
+            value: '${repository.activeOrders.length}',
+            icon: Icons.receipt_long_outlined,
             accent: AppTheme.warning,
             onTap: () => onNavigate(AppTab.orders),
           ),
@@ -446,67 +281,6 @@ class _KpiGrid extends StatelessWidget {
   }
 }
 
-class _QuickActions extends StatelessWidget {
-  const _QuickActions({
-    required this.repository,
-    required this.role,
-    required this.onNavigate,
-  });
-
-  final RestaurantRepository repository;
-  final UserRole role;
-  final void Function(AppTab tab) onNavigate;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        if (role.canCreateOrders)
-          ActionChip(
-            avatar: const Icon(Icons.add_rounded, size: 16),
-            label: const Text('Nuevo pedido'),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => const NewOrderScreen(),
-              ),
-            ),
-          ),
-        ActionChip(
-          avatar: const Icon(Icons.receipt_long_outlined, size: 16),
-          label: const Text('Pedidos'),
-          onPressed: () => onNavigate(AppTab.orders),
-        ),
-        if (role.canManageTables)
-          ActionChip(
-            avatar: const Icon(Icons.table_restaurant_outlined, size: 16),
-            label: const Text('Mesas'),
-            onPressed: () => onNavigate(AppTab.tables),
-          ),
-        if (role.canManageMenu)
-          ActionChip(
-            avatar: const Icon(Icons.restaurant_menu_outlined, size: 16),
-            label: const Text('Menú'),
-            onPressed: () => onNavigate(AppTab.menu),
-          ),
-        if (role.canSeeReports)
-          ActionChip(
-            avatar: const Icon(Icons.bar_chart_outlined, size: 16),
-            label: const Text('Reportes'),
-            onPressed: () => onNavigate(AppTab.reports),
-          ),
-        if (repository.pendingSyncCount > 0 && repository.isOnline)
-          ActionChip(
-            avatar: const Icon(Icons.cloud_upload_outlined, size: 16),
-            label: Text('Sincronizar (${repository.pendingSyncCount})'),
-            onPressed: repository.syncPendingOrders,
-          ),
-      ],
-    );
-  }
-}
-
 class _KitchenQueue extends StatelessWidget {
   const _KitchenQueue({required this.repository});
 
@@ -557,55 +331,6 @@ class _KitchenQueue extends StatelessWidget {
                       icon: const Icon(Icons.check_rounded, size: 16),
                       label: const Text('Marcar listo'),
                     ),
-                ],
-              ),
-            ),
-          )
-          .toList(),
-    );
-  }
-}
-
-class _CashierQueue extends StatelessWidget {
-  const _CashierQueue({required this.repository});
-
-  final RestaurantRepository repository;
-
-  @override
-  Widget build(BuildContext context) {
-    final queue = repository.orders
-        .where((order) =>
-            order.paymentStatus == PaymentStatus.pending &&
-            order.status != OrderStatus.cancelled)
-        .take(4)
-        .toList();
-
-    if (queue.isEmpty) {
-      return const EmptyState(
-        icon: Icons.account_balance_wallet_outlined,
-        title: 'Todo cobrado',
-        message: 'No hay cuentas pendientes por cobrar.',
-      );
-    }
-
-    return Column(
-      children: queue
-          .map(
-            (order) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: OrderCard(
-                order: order,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => OrderDetailScreen(orderId: order.id),
-                  ),
-                ),
-                actions: [
-                  FilledButton.tonalIcon(
-                    onPressed: () => repository.markOrderPaid(order.id),
-                    icon: const Icon(Icons.payments_outlined, size: 16),
-                    label: const Text('Cobrar'),
-                  ),
                 ],
               ),
             ),

@@ -6,6 +6,7 @@ import '../../core/models/app_tab.dart';
 import '../../core/models/role.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/common.dart';
+import '../crm/crm_screen.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../menu/menu_admin_screen.dart';
 import '../more/more_screen.dart';
@@ -74,9 +75,16 @@ class _AppShellState extends State<AppShell> {
       selectedIcon: Icons.grid_view_rounded,
       builder: () => const MoreScreen(),
     );
+    final crm = _Destination(
+      tab: AppTab.crm,
+      label: 'CRM',
+      icon: Icons.people_outline_rounded,
+      selectedIcon: Icons.people_rounded,
+      builder: () => const CrmScreen(),
+    );
 
     return switch (role) {
-      UserRole.admin => [dashboard, orders, tables, menu, more],
+      UserRole.admin => [dashboard, orders, crm, menu, more],
       UserRole.cashier => [dashboard, orders, tables, reports],
       UserRole.waiter => [dashboard, tables, orders, menu],
       UserRole.cook => [dashboard, orders, menu],

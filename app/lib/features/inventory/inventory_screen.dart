@@ -17,6 +17,7 @@ class InventoryScreen extends StatefulWidget {
 class _InventoryScreenState extends State<InventoryScreen> {
   final _searchController = TextEditingController();
   String _query = '';
+  bool _onlyOutOfStock = false;
 
   @override
   void dispose() {
@@ -29,11 +30,14 @@ class _InventoryScreenState extends State<InventoryScreen> {
     final repository = context.watch<RestaurantRepository>();
     final role = repository.role ?? UserRole.admin;
     final canEdit = role.canManageMenu;
-    final lowCount = repository.lowStockIngredients.length;
+    final outOfStockCount =
+        repository.ingredients.where((i) => i.stock <= 0).length;
     final query = _query.trim().toLowerCase();
     final items = repository.ingredients.where((ingredient) {
-      return query.isEmpty ||
-          ingredient.name.toLowerCase().contains(query);
+      final matchesQuery =
+          query.isEmpty || ingredient.name.toLowerCase().contains(query);
+      final matchesStock = !_onlyOutOfStock || ingredient.stock <= 0;
+      return matchesQuery && matchesStock;
     }).toList();
 
     return Scaffold(
@@ -71,9 +75,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 ),
                 const SizedBox(width: 8),
                 _SummaryCard(
-                  label: 'Stock bajo',
-                  value: '$lowCount',
-                  color: lowCount > 0 ? AppTheme.danger : AppTheme.success,
+                  label: 'Sin stock',
+                  value: '$outOfStockCount',
+                  color: outOfStockCount > 0 ? AppTheme.danger : AppTheme.success,
+                  selected: _onlyOutOfStock,
+                  onTap: () => setState(() => _onlyOutOfStock = !_onlyOutOfStock),
                 ),
               ],
             ),
@@ -179,44 +185,71 @@ class _SummaryCard extends StatelessWidget {
     required this.label,
     required this.value,
     required this.color,
+    this.onTap,
+    this.selected = false,
   });
 
   final String label;
   final String value;
   final Color color;
+  final VoidCallback? onTap;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFEDEAE6)),
+    final card = Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: selected ? color.withValues(alpha: 0.08) : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: selected ? color : const Color(0xFFEDEAE6),
+          width: selected ? 1.5 : 1,
         ),
-        child: Row(
-          children: [
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                color: color,
-              ),
+      ),
+      child: Row(
+        children: [
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              color: color,
             ),
-            const SizedBox(width: 8),
-            Text(
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 fontSize: 11.5,
                 fontWeight: FontWeight.w600,
                 color: Color(0xFF78716C),
               ),
             ),
-          ],
-        ),
+          ),
+          if (onTap != null)
+            Icon(
+              selected ? Icons.filter_alt_rounded : Icons.filter_alt_outlined,
+              size: 16,
+              color: selected ? color : const Color(0xFFA8A29E),
+            ),
+        ],
       ),
+    );
+    return Expanded(
+      child: onTap == null
+          ? card
+          : Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(14),
+                child: card,
+              ),
+            ),
     );
   }
 }
@@ -299,7 +332,9 @@ class _IngredientTile extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
-          Row(
+          Wrap(
+            spacing: 12,
+            runSpacing: 2,
             children: [
               Text(
                 'Stock: ${ingredient.stockLabel}',
@@ -309,7 +344,6 @@ class _IngredientTile extends StatelessWidget {
                   color: Color(0xFF57534E),
                 ),
               ),
-              const SizedBox(width: 12),
               Text(
                 'Mínimo: ${ingredient.minStockLabel}',
                 style: const TextStyle(
@@ -317,8 +351,7 @@ class _IngredientTile extends StatelessWidget {
                   color: Color(0xFFA8A29E),
                 ),
               ),
-              if (ingredient.cost > 0) ...[
-                const SizedBox(width: 12),
+              if (ingredient.cost > 0)
                 Text(
                   '\$${ingredient.cost.toStringAsFixed(0)}/${ingredient.unit.symbol}',
                   style: const TextStyle(
@@ -326,7 +359,6 @@ class _IngredientTile extends StatelessWidget {
                     color: Color(0xFFA8A29E),
                   ),
                 ),
-              ],
             ],
           ),
           const SizedBox(height: 8),

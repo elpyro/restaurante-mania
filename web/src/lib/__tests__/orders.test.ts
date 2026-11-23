@@ -4,6 +4,7 @@ import { validateOrderInput } from "../orders";
 const base = {
   customerName: "Ana Pérez",
   customerPhone: "300 123 4567",
+  deliveryAddress: "",
   type: "pickup",
   tableNumber: null,
   paymentMethod: "cash",

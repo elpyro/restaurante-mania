@@ -220,8 +220,15 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
                     itemBuilder: (context, index) {
                       final item = items[index];
                       final category = repository.categoryById(item.categoryId);
+                      final outByIngredients =
+                          repository.isMenuItemOutOfStockByIngredients(item);
+                      final effectivelyAvailable =
+                          repository.isMenuItemEffectivelyAvailable(item);
                       final statusColor =
-                          item.isAvailable ? AppTheme.success : AppTheme.danger;
+                          effectivelyAvailable ? AppTheme.success : AppTheme.danger;
+                      final statusLabel = outByIngredients && item.isAvailable
+                          ? 'Agotado (sin insumos)'
+                          : item.status.label;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Container(
@@ -235,29 +242,11 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
                           ),
                           child: Row(
                             children: [
-                              Container(
-                                width: 46,
-                                height: 46,
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFFFF7ED),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: item.imageUrl.isNotEmpty &&
-                                        File(item.imageUrl).existsSync()
-                                    ? ClipRRect(
-                                        borderRadius: BorderRadius.circular(12),
-                                        child: Image.file(
-                                          File(item.imageUrl),
-                                          width: 46,
-                                          height: 46,
-                                          fit: BoxFit.cover,
-                                        ),
-                                      )
-                                    : Text(
-                                        item.emoji,
-                                        style: const TextStyle(fontSize: 25),
-                                      ),
+                              MenuItemImage(
+                                imageUrl: item.imageUrl,
+                                emoji: item.emoji,
+                                size: 46,
+                                borderRadius: 12,
                               ),
                               const SizedBox(width: 10),
                               Expanded(
@@ -285,7 +274,7 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
                                     ),
                                     const SizedBox(height: 4),
                                     StatusPill(
-                                      label: item.status.label,
+                                      label: statusLabel,
                                       color: statusColor,
                                     ),
                                   ],
@@ -293,9 +282,10 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
                               ),
                               if (canEdit) ...[
                                 Switch.adaptive(
-                                  value: item.isAvailable,
-                                  onChanged: (_) =>
-                                      repository.toggleAvailability(item.id),
+                                  value: effectivelyAvailable,
+                                  onChanged: outByIngredients
+                                      ? null
+                                      : (_) => repository.toggleAvailability(item.id),
                                 ),
                                 PopupMenuButton<String>(
                                   onSelected: (value) {

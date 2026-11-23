@@ -6,6 +6,7 @@ import '../models/order.dart';
 import '../models/restaurant_settings.dart';
 import '../models/restaurant_table.dart';
 import '../models/role.dart';
+import '../utils/formatters.dart';
 
 class SeedData {
   static const demoPassword = '1234';
@@ -59,6 +60,7 @@ class SeedData {
       ingredients: ['Masa de maíz', 'Carne de res', 'Papa criolla', 'Hogao'],
       allergens: ['Gluten', 'Cebolla'],
       emoji: '🥟',
+      imageUrl: 'https://images.unsplash.com/photo-1601050690597-df0568f70950?w=800&q=80&auto=format&fit=crop',
       featured: true,
       prepMinutes: 12,
       calories: 420,
@@ -76,6 +78,7 @@ class SeedData {
       ingredients: ['Maíz blanco', 'Queso campesino', 'Mantequilla'],
       allergens: ['Lácteos'],
       emoji: '🫓',
+      imageUrl: 'https://images.unsplash.com/photo-1599789197514-47270cd526b4?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 8,
       calories: 310,
@@ -93,6 +96,7 @@ class SeedData {
       ingredients: ['Plátano verde', 'Tomate', 'Cebolla', 'Queso'],
       allergens: ['Lácteos'],
       emoji: '🍌',
+      imageUrl: 'https://images.unsplash.com/photo-1528751086790-81a64658fc53?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 10,
       calories: 380,
@@ -120,6 +124,7 @@ class SeedData {
       ],
       allergens: ['Cerdo', 'Huevo', 'Gluten'],
       emoji: '🍛',
+      imageUrl: 'https://images.unsplash.com/photo-1598515214211-89d3c73ae83b?w=800&q=80&auto=format&fit=crop',
       featured: true,
       prepMinutes: 25,
       calories: 1250,
@@ -144,6 +149,7 @@ class SeedData {
       ],
       allergens: ['Lácteos'],
       emoji: '🍲',
+      imageUrl: 'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=800&q=80&auto=format&fit=crop',
       featured: true,
       prepMinutes: 22,
       calories: 720,
@@ -167,6 +173,7 @@ class SeedData {
       ],
       allergens: ['Mariscos', 'Pescado', 'Lácteos'],
       emoji: '🦐',
+      imageUrl: 'https://images.unsplash.com/photo-1559742811-822873691df8?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 28,
       calories: 680,
@@ -184,6 +191,7 @@ class SeedData {
       ingredients: ['Pechuga de pollo', 'Papa', 'Mantequilla', 'Lechuga'],
       allergens: ['Lácteos'],
       emoji: '🍗',
+      imageUrl: 'https://images.unsplash.com/photo-1532550907401-a500c9a57435?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 20,
       calories: 540,
@@ -207,6 +215,7 @@ class SeedData {
       ],
       allergens: ['Gluten', 'Lácteos', 'Huevo'],
       emoji: '🍰',
+      imageUrl: 'https://images.unsplash.com/photo-1464349095431-e9a21285b5f3?w=800&q=80&auto=format&fit=crop',
       featured: true,
       prepMinutes: 5,
       calories: 460,
@@ -223,6 +232,7 @@ class SeedData {
       ingredients: ['Leche', 'Huevo', 'Azúcar', 'Vainilla'],
       allergens: ['Lácteos', 'Huevo'],
       emoji: '🍮',
+      imageUrl: 'https://images.unsplash.com/photo-1551024506-0bccd828d307?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 5,
       calories: 320,
@@ -240,6 +250,7 @@ class SeedData {
       ingredients: ['Chocolate', 'Mantequilla', 'Huevo', 'Harina', 'Helado'],
       allergens: ['Gluten', 'Lácteos', 'Huevo'],
       emoji: '🍫',
+      imageUrl: 'https://images.unsplash.com/photo-1564355808539-22fda35bed7e?w=800&q=80&auto=format&fit=crop',
       featured: true,
       prepMinutes: 8,
       calories: 510,
@@ -257,6 +268,7 @@ class SeedData {
       ingredients: ['Limón', 'Leche de coco', 'Azúcar', 'Hielo'],
       allergens: ['Coco'],
       emoji: '🥥',
+      imageUrl: 'https://images.unsplash.com/photo-1534353473418-4cfa6c56fd38?w=800&q=80&auto=format&fit=crop',
       featured: true,
       prepMinutes: 4,
       calories: 210,
@@ -274,6 +286,7 @@ class SeedData {
       ingredients: ['Lulo', 'Agua', 'Azúcar'],
       allergens: [],
       emoji: '🍹',
+      imageUrl: 'https://images.unsplash.com/photo-1622597467836-f3285f2131b8?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 4,
       calories: 150,
@@ -291,6 +304,7 @@ class SeedData {
       ingredients: ['Café de Huila', 'Agua'],
       allergens: [],
       emoji: '☕',
+      imageUrl: 'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 3,
       calories: 5,
@@ -606,12 +620,44 @@ class SeedData {
           price: menuItem.price,
           quantity: entry.value,
           emoji: menuItem.emoji,
+          imageUrl: menuItem.imageUrl,
         );
       }).toList();
       final subtotal = orderItems.fold<double>(
         0,
         (sum, item) => sum + item.subtotal,
       );
+      final audit = <OrderAuditEntry>[
+        OrderAuditEntry(
+          action: 'Pedido creado',
+          timestamp: createdAt,
+          actorName: 'Sistema (demo)',
+          detail: '${type.label}${tableNumber != null ? ' · Mesa $tableNumber' : ''}',
+        ),
+      ];
+      if (status != OrderStatus.pending) {
+        audit.add(OrderAuditEntry(
+          action: 'Estado actualizado',
+          timestamp: createdAt.add(const Duration(minutes: 2)),
+          actorName: 'Equipo de cocina',
+          detail: 'Pendiente → ${status.label}',
+        ));
+      }
+      if (paymentStatus == PaymentStatus.paid) {
+        audit.add(OrderAuditEntry(
+          action: 'Pago registrado',
+          timestamp: createdAt.add(const Duration(minutes: 12)),
+          actorName: 'Caja',
+          detail: '${paymentMethod.label} · ${formatCop(subtotal)}',
+        ));
+      }
+      if (status == OrderStatus.cancelled) {
+        audit.add(OrderAuditEntry(
+          action: 'Pedido cancelado',
+          timestamp: createdAt.add(const Duration(minutes: 5)),
+          actorName: 'Sistema (demo)',
+        ));
+      }
       return Order(
         id: id,
         code: code,
@@ -632,6 +678,7 @@ class SeedData {
         source: type == OrderType.table ? 'app' : 'web',
         synced: synced,
         inventoryDeducted: inventoryDeducted,
+        auditLog: audit,
       );
     }
 

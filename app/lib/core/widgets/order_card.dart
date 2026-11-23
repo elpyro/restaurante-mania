@@ -12,11 +12,13 @@ class OrderCard extends StatelessWidget {
     required this.order,
     this.onTap,
     this.actions = const [],
+    this.sequenceLabel,
   });
 
   final Order order;
   final VoidCallback? onTap;
   final List<Widget> actions;
+  final String? sequenceLabel;
 
   IconData get _typeIcon => switch (order.type) {
         OrderType.pickup => Icons.shopping_bag_outlined,
@@ -75,6 +77,28 @@ class OrderCard extends StatelessWidget {
                             ),
                           ),
                         ),
+                        if (sequenceLabel != null) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFEF3C7),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: const Color(0xFFFCD34D)),
+                            ),
+                            child: Text(
+                              sequenceLabel!,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF92400E),
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -137,6 +161,18 @@ class OrderCard extends StatelessWidget {
                   color: Color(0xFF78716C),
                 ),
               ),
+              if (order.deliveryAddress.trim().isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  order.deliveryAddress,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF78716C),
+                  ),
+                ),
+              ],
               const SizedBox(height: 8),
               Text(
                 remaining > 0

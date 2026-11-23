@@ -9,6 +9,11 @@ export interface Category {
   emoji: string;
 }
 
+export interface RecipeIngredient {
+  ingredientId: string;
+  quantity: number;
+}
+
 export interface MenuItem {
   id: string;
   name: string;
@@ -27,6 +32,9 @@ export interface MenuItem {
   sku?: string;
   imageUrl?: string;
   videoUrl?: string;
+  recipe?: RecipeIngredient[];
+  /** Max porciones preparables según stock de ingredientes; null = sin límite conocido. */
+  maxServings?: number | null;
 }
 
 export type OrderType = "pickup" | "delivery" | "table";
@@ -35,6 +43,7 @@ export type OrderStatus =
   | "confirmed"
   | "preparing"
   | "ready"
+  | "sent"
   | "delivered"
   | "cancelled";
 export type PaymentStatus = "pending" | "paid" | "refunded";
@@ -46,6 +55,7 @@ export interface OrderItem {
   price: number;
   quantity: number;
   emoji: string;
+  imageUrl?: string;
 }
 
 export interface Order {
@@ -53,6 +63,7 @@ export interface Order {
   code: string;
   customerName: string;
   customerPhone: string;
+  deliveryAddress?: string;
   type: OrderType;
   tableNumber: number | null;
   items: OrderItem[];
@@ -74,6 +85,9 @@ export interface CartLine {
   price: number;
   quantity: number;
   emoji: string;
+  imageUrl?: string;
+  /** Límite por ingredientes; null/undefined = sin límite conocido. */
+  maxServings?: number | null;
 }
 
 export interface CartTotals {
@@ -88,6 +102,7 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   confirmed: "Confirmado",
   preparing: "En preparación",
   ready: "Listo",
+  sent: "Enviado",
   delivered: "Entregado",
   cancelled: "Cancelado",
 };

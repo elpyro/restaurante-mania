@@ -1,13 +1,17 @@
 import { cartTotals } from "./cart";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
-import { createDocument, getDocument, isFirestoreConfigured } from "./firebase/rest";
+import { createDocument, getDocument, isFirestoreConfigured, listDocuments } from "./firebase/rest";
 import { getMenu } from "./menu";
+import { demoIngredientStocks } from "./seed";
 import type {
+  MenuItem,
   Order,
   OrderItem,
+  OrderStatus,
   OrderType,
   PaymentMethod,
+  PaymentStatus,
 } from "./types";
 
 const ORDER_TYPES: OrderType[] = ["pickup", "delivery", "table"];
@@ -21,6 +25,7 @@ export interface OrderInputItem {
 export interface OrderInput {
   customerName: string;
   customerPhone: string;
+  deliveryAddress: string;
   type: OrderType;
   tableNumber: number | null;
   paymentMethod: PaymentMethod;
@@ -45,8 +50,10 @@ export function validateOrderInput(raw: unknown): ValidationResult {
 
   const customerName = text(body.customerName);
   const customerPhone = text(body.customerPhone);
+  const deliveryAddress = text(body.deliveryAddress);
   const type = text(body.type) as OrderType;
   const isTable = type === "table";
+  const isDelivery = type === "delivery";
 
   if (!ORDER_TYPES.includes(type)) {
     errors.push("El tipo de pedido no es válido.");
@@ -68,6 +75,14 @@ export function validateOrderInput(raw: unknown): ValidationResult {
     if (customerPhone && (phoneDigits.length < 7 || phoneDigits.length > 15)) {
       errors.push("El teléfono debe tener entre 7 y 15 dígitos.");
     }
+  }
+
+  if (isDelivery) {
+    if (deliveryAddress.length < 5 || deliveryAddress.length > 160) {
+      errors.push("La dirección de domicilio debe tener entre 5 y 160 caracteres.");
+    }
+  } else if (deliveryAddress.length > 160) {
+    errors.push("La dirección no puede superar 160 caracteres.");
   }
 
   let tableNumber: number | null = null;
@@ -129,6 +144,7 @@ export function validateOrderInput(raw: unknown): ValidationResult {
     value: {
       customerName,
       customerPhone,
+      deliveryAddress,
       type,
       tableNumber,
       paymentMethod,
@@ -138,12 +154,21 @@ export function validateOrderInput(raw: unknown): ValidationResult {
   };
 }
 
+export interface InsufficientItem {
+  menuItemId: string;
+  name: string;
+  requested: number;
+  available: number;
+}
+
 export class OrderValidationError extends Error {
   errors: string[];
-  constructor(errors: string[]) {
+  insufficientItems: InsufficientItem[];
+  constructor(errors: string[], insufficientItems: InsufficientItem[] = []) {
     super(errors.join(" "));
     this.name = "OrderValidationError";
     this.errors = errors;
+    this.insufficientItems = insufficientItems;
   }
 }
 
@@ -205,6 +230,91 @@ async function persistOrdersToDisk() {
   }
 }
 
+async function loadIngredientStocks(): Promise<Map<string, number>> {
+  if (isFirestoreConfigured()) {
+    const ingredientDocs = await listDocuments("ingredients", (doc) => ({
+      id: doc.id,
+      stock:
+        typeof doc.data.stock === "number" && Number.isFinite(doc.data.stock)
+          ? (doc.data.stock as number)
+          : 0,
+    }));
+    return new Map(ingredientDocs.map((i) => [i.id, i.stock]));
+  }
+  return new Map(Object.entries(demoIngredientStocks));
+}
+
+export async function getInsufficientItems(
+  inputItems: OrderInputItem[],
+  menuById: Map<string, MenuItem>,
+): Promise<InsufficientItem[]> {
+  const hasRecipe = inputItems.some(
+    (line) => (menuById.get(line.menuItemId)?.recipe?.length ?? 0) > 0,
+  );
+  if (!hasRecipe) return [];
+
+  const stocks = await loadIngredientStocks();
+  const consumption = new Map<string, number>();
+  for (const line of inputItems) {
+    const menuItem = menuById.get(line.menuItemId);
+    if (!menuItem?.recipe) continue;
+    for (const r of menuItem.recipe) {
+      consumption.set(
+        r.ingredientId,
+        (consumption.get(r.ingredientId) ?? 0) + r.quantity * line.quantity,
+      );
+    }
+  }
+
+  const overStock = [...consumption.entries()].filter(([ingredientId, required]) => {
+    const stock = stocks.get(ingredientId);
+    return stock !== undefined && required > stock + 0.0001;
+  });
+  if (overStock.length === 0) return [];
+
+  const insufficient: InsufficientItem[] = [];
+  for (const line of inputItems) {
+    const menuItem = menuById.get(line.menuItemId);
+    if (!menuItem?.recipe?.length) continue;
+    const contributes = menuItem.recipe.some((r) =>
+      overStock.some(([id]) => id === r.ingredientId),
+    );
+    if (!contributes) continue;
+
+    const othersConsumption = new Map<string, number>();
+    for (const other of inputItems) {
+      if (other.menuItemId === line.menuItemId) continue;
+      const otherItem = menuById.get(other.menuItemId);
+      if (!otherItem?.recipe) continue;
+      for (const r of otherItem.recipe) {
+        othersConsumption.set(
+          r.ingredientId,
+          (othersConsumption.get(r.ingredientId) ?? 0) + r.quantity * other.quantity,
+        );
+      }
+    }
+
+    let available = line.quantity;
+    for (const r of menuItem.recipe) {
+      const stock = stocks.get(r.ingredientId);
+      if (stock === undefined) continue;
+      const remaining = stock - (othersConsumption.get(r.ingredientId) ?? 0);
+      const canMake = remaining <= 0 ? 0 : Math.floor(remaining / r.quantity);
+      if (canMake < available) available = canMake;
+    }
+    available = Math.max(0, available);
+    if (available < line.quantity) {
+      insufficient.push({
+        menuItemId: line.menuItemId,
+        name: menuItem.name,
+        requested: line.quantity,
+        available,
+      });
+    }
+  }
+  return insufficient;
+}
+
 export async function createOrder(raw: unknown): Promise<Order> {
   const validation = validateOrderInput(raw);
   if (!validation.ok) throw new OrderValidationError(validation.errors);
@@ -235,10 +345,39 @@ export async function createOrder(raw: unknown): Promise<Order> {
       price: menuItem.price,
       quantity: line.quantity,
       emoji: menuItem.emoji,
+      imageUrl: menuItem.imageUrl,
     });
   }
 
-  if (errors.length > 0) throw new OrderValidationError(errors);
+  let insufficientItems: InsufficientItem[] = [];
+  if (errors.length === 0) {
+    const hasRecipe = input.items.some(
+      (line) => (menuById.get(line.menuItemId)?.recipe?.length ?? 0) > 0,
+    );
+    if (hasRecipe) {
+      try {
+        insufficientItems = await getInsufficientItems(input.items, menuById);
+      } catch (error) {
+        console.warn("[orders] No se pudo validar stock de ingredientes:", error);
+        errors.push(
+          "No pudimos verificar la disponibilidad de ingredientes. Intenta de nuevo.",
+        );
+      }
+    }
+  }
+
+  if (insufficientItems.length > 0) {
+    const details = insufficientItems
+      .map((i) =>
+        i.available > 0
+          ? `${i.name}: solo hay ${i.available} disponible(s)`
+          : `${i.name}: sin ingredientes disponibles`,
+      )
+      .join(". ");
+    errors.push(`Ingredientes insuficientes. ${details}.`);
+  }
+
+  if (errors.length > 0) throw new OrderValidationError(errors, insufficientItems);
 
   const totals = cartTotals(orderItems);
   const now = new Date();
@@ -246,6 +385,7 @@ export async function createOrder(raw: unknown): Promise<Order> {
     code: orderCode(),
     customerName: resolvedCustomerName,
     customerPhone: input.customerPhone,
+    deliveryAddress: input.type === "delivery" ? input.deliveryAddress : "",
     type: input.type,
     tableNumber: input.tableNumber,
     items: orderItems,
@@ -291,6 +431,7 @@ export async function createOrder(raw: unknown): Promise<Order> {
 }
 
 export async function getOrderById(id: string): Promise<Order | null> {
+  await loadFromDisk();
   const demo = demoOrders().get(id);
   if (demo) return demo;
   if (!isFirestoreConfigured()) return null;
@@ -315,4 +456,43 @@ export function listDemoOrders(): Order[] {
 export async function listOrders(): Promise<Order[]> {
   await loadFromDisk();
   return listDemoOrders();
+}
+
+const ORDER_STATUSES: OrderStatus[] = [
+  "pending",
+  "confirmed",
+  "preparing",
+  "ready",
+  "sent",
+  "delivered",
+  "cancelled",
+];
+const PAYMENT_STATUSES: PaymentStatus[] = ["pending", "paid", "refunded"];
+
+export async function updateOrder(
+  id: string,
+  patch: { status?: OrderStatus; paymentStatus?: PaymentStatus },
+): Promise<Order | null> {
+  await loadFromDisk();
+  const current = demoOrders().get(id);
+  if (!current) return null;
+
+  const next: Order = { ...current };
+  if (patch.status) {
+    if (!ORDER_STATUSES.includes(patch.status)) {
+      throw new OrderValidationError(["Estado de pedido inválido."]);
+    }
+    next.status = patch.status;
+  }
+  if (patch.paymentStatus) {
+    if (!PAYMENT_STATUSES.includes(patch.paymentStatus)) {
+      throw new OrderValidationError(["Estado de pago inválido."]);
+    }
+    next.paymentStatus = patch.paymentStatus;
+  }
+  next.updatedAt = new Date().toISOString();
+
+  demoOrders().set(id, next);
+  await persistOrdersToDisk();
+  return next;
 }

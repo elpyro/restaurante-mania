@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useCart } from "./CartProvider";
 import { formatCOP } from "@/lib/format";
 import type { Order, OrderType, PaymentMethod } from "@/lib/types";
@@ -20,17 +20,42 @@ const paymentOptions: Array<{ value: PaymentMethod; label: string }> = [
   { value: "daviplata", label: "Daviplata" },
 ];
 
+const CUSTOMER_PROFILE_KEY = "rm_customer_profile_v1";
+
 export function CheckoutForm() {
   const router = useRouter();
-  const { lines, totals, ready, clear } = useCart();
+  const { lines, totals, ready, clear, setQuantity, remove } = useCart();
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
   const [type, setType] = useState<OrderType>("pickup");
   const [tableNumber, setTableNumber] = useState("1");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [notes, setNotes] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [profileLoaded, setProfileLoaded] = useState(false);
+  const [insufficientItems, setInsufficientItems] = useState<
+    Array<{ menuItemId: string; name: string; requested: number; available: number }>
+  >([]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(CUSTOMER_PROFILE_KEY);
+      if (!raw) return;
+      const profile = JSON.parse(raw) as {
+        customerName?: string;
+        customerPhone?: string;
+        deliveryAddress?: string;
+      };
+      if (profile.customerName) setCustomerName(profile.customerName);
+      if (profile.customerPhone) setCustomerPhone(profile.customerPhone);
+      if (profile.deliveryAddress) setDeliveryAddress(profile.deliveryAddress);
+      if (profile.customerPhone) setProfileLoaded(true);
+    } catch {
+      /* ignorar perfil inválido */
+    }
+  }, []);
 
   if (!ready) {
     return <div className="h-64 animate-pulse rounded-2xl bg-stone-200" />;
@@ -72,6 +97,11 @@ export function CheckoutForm() {
         found.push("Escribe un teléfono válido o déjalo vacío.");
       }
     }
+    if (type === "delivery") {
+      const addr = deliveryAddress.trim();
+      if (addr.length < 5) found.push("Escribe la dirección de entrega (mínimo 5 caracteres).");
+      if (addr.length > 160) found.push("La dirección no puede superar 160 caracteres.");
+    }
     if (type === "table") {
       const table = Number(tableNumber);
       if (!Number.isInteger(table) || table < 1 || table > 100) {
@@ -79,6 +109,16 @@ export function CheckoutForm() {
       }
     }
     return found;
+  }
+
+  function applyInsufficientItems(
+    items: Array<{ menuItemId: string; name: string; requested: number; available: number }>,
+  ) {
+    setInsufficientItems(items);
+    for (const item of items) {
+      if (item.available > 0) setQuantity(item.menuItemId, item.available);
+      else remove(item.menuItemId);
+    }
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -89,30 +129,75 @@ export function CheckoutForm() {
       return;
     }
     setErrors([]);
+    setInsufficientItems([]);
     setSubmitting(true);
+    const payloadBody = {
+      customerName,
+      customerPhone,
+      deliveryAddress: type === "delivery" ? deliveryAddress : "",
+      type,
+      tableNumber: type === "table" ? Number(tableNumber) : null,
+      paymentMethod,
+      notes,
+      items: lines.map((line) => ({
+        menuItemId: line.menuItemId,
+        quantity: line.quantity,
+      })),
+    };
     try {
+      const checkResponse = await fetch("/api/orders/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payloadBody),
+      });
+      const checkPayload = (await checkResponse.json()) as {
+        ok?: boolean;
+        errors?: string[];
+        insufficientItems?: Array<{
+          menuItemId: string;
+          name: string;
+          requested: number;
+          available: number;
+        }>;
+      };
+      if (!checkResponse.ok || !checkPayload.ok) {
+        const insufficient = checkPayload.insufficientItems ?? [];
+        if (insufficient.length > 0) {
+          applyInsufficientItems(insufficient);
+          setErrors([
+            "Algunos platos no tienen ingredientes suficientes. Ajustamos tu carrito; revisa y confirma de nuevo.",
+          ]);
+        } else {
+          setErrors(checkPayload.errors ?? ["No pudimos validar el pedido."]);
+        }
+        return;
+      }
+
       const response = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          customerName,
-          customerPhone,
-          type,
-          tableNumber: type === "table" ? Number(tableNumber) : null,
-          paymentMethod,
-          notes,
-          items: lines.map((line) => ({
-            menuItemId: line.menuItemId,
-            quantity: line.quantity,
-          })),
-        }),
+        body: JSON.stringify(payloadBody),
       });
       const payload = (await response.json()) as {
         order?: Order;
         errors?: string[];
+        insufficientItems?: Array<{
+          menuItemId: string;
+          name: string;
+          requested: number;
+          available: number;
+        }>;
       };
       if (!response.ok || !payload.order) {
-        setErrors(payload.errors ?? ["No pudimos crear el pedido. Intenta de nuevo."]);
+        const insufficient = payload.insufficientItems ?? [];
+        if (insufficient.length > 0) {
+          applyInsufficientItems(insufficient);
+          setErrors([
+            "Algunos platos no tienen ingredientes suficientes. Ajustamos tu carrito; revisa y confirma de nuevo.",
+          ]);
+        } else {
+          setErrors(payload.errors ?? ["No pudimos crear el pedido. Intenta de nuevo."]);
+        }
         return;
       }
       const order = payload.order;
@@ -125,6 +210,18 @@ export function CheckoutForm() {
           JSON.stringify([order, ...stored].slice(0, 50)),
         );
         window.localStorage.setItem("rm_last_order_id", order.id);
+        const phoneDigits = customerPhone.replace(/\D/g, "");
+        if (phoneDigits.length >= 7 || customerName.trim().length >= 2) {
+          window.localStorage.setItem(
+            CUSTOMER_PROFILE_KEY,
+            JSON.stringify({
+              customerName: customerName.trim(),
+              customerPhone: customerPhone.trim(),
+              deliveryAddress: deliveryAddress.trim(),
+              updatedAt: new Date().toISOString(),
+            }),
+          );
+        }
       } catch {
         /* el pedido ya fue creado en el servidor */
       }
@@ -142,6 +239,11 @@ export function CheckoutForm() {
       <div className="space-y-6">
         <section className="rounded-2xl border border-stone-200 bg-white p-5">
           <h2 className="font-display text-xl font-bold text-ink-900">Tus datos</h2>
+          {profileLoaded && (
+            <p className="mt-2 rounded-xl bg-brand-50 px-3 py-2 text-xs font-medium text-brand-800">
+              Reconocimos tu perfil por teléfono. Puedes editar tus datos antes de confirmar.
+            </p>
+          )}
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <label className="block text-sm">
               <span className="mb-1.5 block font-medium text-ink-700">
@@ -211,6 +313,22 @@ export function CheckoutForm() {
               />
             </label>
           ) : null}
+          {type === "delivery" ? (
+            <label className="mt-4 block text-sm">
+              <span className="mb-1.5 block font-medium text-ink-700">
+                Dirección de entrega *
+              </span>
+              <input
+                required
+                value={deliveryAddress}
+                onChange={(event) => setDeliveryAddress(event.target.value)}
+                className="w-full rounded-xl border border-stone-300 px-3 py-2.5 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+                placeholder="Calle 10 # 43-12, apto 301, Medellín"
+                autoComplete="street-address"
+                maxLength={160}
+              />
+            </label>
+          ) : null}
         </section>
 
         <section className="rounded-2xl border border-stone-200 bg-white p-5">
@@ -257,6 +375,18 @@ export function CheckoutForm() {
                 <li key={error}>{error}</li>
               ))}
             </ul>
+            {insufficientItems.length > 0 ? (
+              <ul className="mt-3 space-y-1 rounded-lg bg-white/70 p-3 text-rose-800">
+                {insufficientItems.map((item) => (
+                  <li key={item.menuItemId}>
+                    <span className="font-semibold">{item.name}</span>: pediste {item.requested},{" "}
+                    {item.available > 0
+                      ? `solo hay ${item.available} disponible(s); ajustamos la cantidad.`
+                      : "no hay ingredientes disponibles; lo quitamos del carrito."}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
         ) : null}
       </div>

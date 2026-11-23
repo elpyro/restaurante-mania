@@ -1,4 +1,6 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'dart:io';
+
+import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
@@ -291,6 +293,58 @@ class ConnectivityBadge extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class MenuItemImage extends StatelessWidget {
+  const MenuItemImage({
+    super.key,
+    required this.imageUrl,
+    required this.emoji,
+    this.size = 44,
+    this.borderRadius = 12,
+    this.emojiFontSize,
+  });
+
+  final String imageUrl;
+  final String emoji;
+  final double size;
+  final double borderRadius;
+  final double? emojiFontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = imageUrl.trim();
+    final emojiStyle = TextStyle(fontSize: emojiFontSize ?? size * 0.52);
+    Widget fallback() => Center(child: Text(emoji, style: emojiStyle));
+
+    final content = url.isEmpty
+        ? fallback()
+        : (url.startsWith('http://') || url.startsWith('https://'))
+            ? Image.network(
+                url,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => fallback(),
+              )
+            : Image.file(
+                File(url),
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => fallback(),
+              );
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(borderRadius),
+      child: Container(
+        width: size,
+        height: size,
+        color: const Color(0xFFFFF7ED),
+        child: content,
       ),
     );
   }

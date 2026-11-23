@@ -12,13 +12,11 @@ import {
 } from "@/lib/types";
 import { whatsappUrl } from "@/lib/site";
 
-const timeline: OrderStatus[] = [
-  "pending",
-  "confirmed",
-  "preparing",
-  "ready",
-  "delivered",
-];
+function timelineFor(type: Order["type"]): OrderStatus[] {
+  return type === "delivery"
+    ? ["pending", "confirmed", "preparing", "ready", "sent"]
+    : ["pending", "confirmed", "preparing", "ready", "delivered"];
+}
 
 function readStoredOrder(id: string): Order | null {
   try {
@@ -39,26 +37,36 @@ export function OrderConfirmation({ id }: { id: string }) {
 
   useEffect(() => {
     let cancelled = false;
+
+    const fetchOrder = async () => {
+      try {
+        const response = await fetch(`/api/orders/${encodeURIComponent(id)}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const payload = (await response.json()) as { order?: Order };
+        if (!cancelled && payload.order) setOrder(payload.order);
+      } catch {
+        // Mantener el último estado conocido si falla el polling.
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
     const stored = readStoredOrder(id);
     if (stored) {
       setOrder(stored);
       setLoading(false);
     }
-    fetch(`/api/orders/${encodeURIComponent(id)}`)
-      .then(async (response) => {
-        if (!response.ok) return null;
-        const payload = (await response.json()) as { order?: Order };
-        return payload.order ?? null;
-      })
-      .then((remote) => {
-        if (!cancelled && remote) setOrder(remote);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+
+    void fetchOrder();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void fetchOrder();
+    }, 8000);
+
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, [id]);
 
@@ -97,8 +105,14 @@ export function OrderConfirmation({ id }: { id: string }) {
     );
   }
 
+  const timeline = timelineFor(order.type);
   const currentIndex = timeline.indexOf(order.status);
   const cancelled = order.status === "cancelled";
+  const allDone =
+    !cancelled &&
+    (order.status === "sent" ||
+      order.status === "delivered" ||
+      currentIndex === timeline.length - 1);
   const message = `Hola, acabo de hacer el pedido ${order.code} a nombre de ${order.customerName}. Total: ${formatCOP(order.total)}.`;
 
   return (
@@ -149,7 +163,7 @@ export function OrderConfirmation({ id }: { id: string }) {
         ) : (
           <ol className="mt-4 grid gap-3 sm:grid-cols-5">
             {timeline.map((status, index) => {
-              const done = index <= currentIndex;
+              const done = allDone || index <= currentIndex;
               return (
                 <li key={status} className="flex items-center gap-2 sm:flex-col sm:text-center">
                   <span
@@ -185,8 +199,18 @@ export function OrderConfirmation({ id }: { id: string }) {
           <ul className="mt-3 divide-y divide-stone-100 text-sm">
             {order.items.map((item) => (
               <li key={item.menuItemId} className="flex justify-between gap-3 py-2">
-                <span className="text-ink-700">
-                  {item.quantity} × {item.emoji} {item.name}
+                <span className="flex items-center gap-2 text-ink-700">
+                  {item.imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={item.imageUrl}
+                      alt={item.name}
+                      className="h-9 w-9 rounded-lg object-cover"
+                    />
+                  ) : (
+                    <span className="text-xl">{item.emoji}</span>
+                  )}
+                  {item.quantity} × {item.name}
                 </span>
                 <span className="whitespace-nowrap font-medium text-ink-900">
                   {formatCOP(item.price * item.quantity)}
@@ -216,6 +240,12 @@ export function OrderConfirmation({ id }: { id: string }) {
               <div className="flex justify-between gap-3">
                 <dt className="text-ink-500">Mesa</dt>
                 <dd className="font-medium text-ink-900">{order.tableNumber}</dd>
+              </div>
+            ) : null}
+            {order.deliveryAddress ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-ink-500">Dirección</dt>
+                <dd className="text-right font-medium text-ink-900">{order.deliveryAddress}</dd>
               </div>
             ) : null}
             <div className="flex justify-between gap-3">

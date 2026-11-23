@@ -11,6 +11,7 @@ export type OrderStatus =
   | "confirmed"
   | "preparing"
   | "ready"
+  | "sent"
   | "delivered"
   | "cancelled";
 
@@ -52,13 +53,14 @@ export function computeTotals(lines: PricedLine[], taxRate = TAX_RATE): Totals {
 
 /** Transiciones de estado permitidas para cada rol. */
 export const ROLE_TRANSITIONS: Record<string, OrderStatus[]> = {
-  cook: ["preparing", "ready"],
-  waiter: ["confirmed", "delivered"],
-  cashier: ["confirmed", "delivered", "cancelled"],
+  cook: ["preparing", "ready", "sent"],
+  waiter: ["confirmed", "delivered", "sent"],
+  cashier: ["confirmed", "delivered", "cancelled", "sent"],
   admin: [
     "confirmed",
     "preparing",
     "ready",
+    "sent",
     "delivered",
     "cancelled",
   ],
@@ -69,6 +71,7 @@ const NEXT_STATUS: Record<OrderStatus, OrderStatus | null> = {
   confirmed: "preparing",
   preparing: "ready",
   ready: "delivered",
+  sent: null,
   delivered: null,
   cancelled: null,
 };
@@ -77,17 +80,32 @@ export function nextStatus(current: OrderStatus): OrderStatus | null {
   return NEXT_STATUS[current] ?? null;
 }
 
+export function nextStatusFor(
+  current: OrderStatus,
+  type: OrderType,
+): OrderStatus | null {
+  if (current === "ready") {
+    return type === "delivery" ? "sent" : "delivered";
+  }
+  return NEXT_STATUS[current] ?? null;
+}
+
 export function canTransition(
   role: string | undefined,
   current: OrderStatus,
   target: OrderStatus,
+  type?: OrderType,
 ): boolean {
   if (!role) return false;
   const allowed = ROLE_TRANSITIONS[role];
   if (!allowed) return false;
   if (current === target) return false;
-  if (current === "delivered" || current === "cancelled") return false;
+  if (current === "delivered" || current === "cancelled" || current === "sent") {
+    return false;
+  }
   if (target === "cancelled") return role === "admin" || role === "cashier";
+  if (target === "sent" && type && type !== "delivery") return false;
+  if (target === "delivered" && type === "delivery") return false;
   return allowed.includes(target);
 }
 

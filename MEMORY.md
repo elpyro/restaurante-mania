@@ -64,12 +64,16 @@ Queda documentado aquÃ­ por ser un cambio de arquitectura respecto al plan.
 featured, prepMinutes, calories`
 
 ### `orders`
-`id, code, customerName, customerPhone, type ('pickup'|'delivery'|'table'),
-tableNumber (null salvo type='table'), items[{menuItemId,name,price,quantity,emoji}],
-subtotal, tax, total, status, paymentStatus, paymentMethod, notes, source,
-createdAt, updatedAt`
+`id, code, customerName, customerPhone, deliveryAddress (string, obligatorio si type='delivery'),
+type ('pickup'|'delivery'|'table'), tableNumber (null salvo type='table'),
+items[{menuItemId,name,price,quantity,emoji}], subtotal, tax, total, status,
+paymentStatus, paymentMethod, notes, source, createdAt, updatedAt`
 
-Estados: `pending â†’ confirmed â†’ preparing â†’ ready â†’ delivered`, mÃ¡s `cancelled`.
+Estados: `pending → confirmed → preparing → ready → delivered` para pickup/mesa, y
+`pending → confirmed → preparing → ready → sent` para domicilio (`sent` reemplaza
+`delivered` en domicilios). `cancelled` aplica a cualquier tipo. Todos los roles
+pueden marcar `sent` en domicilios activos desde cualquier estado; la UI pide
+confirmación si se saltan estados intermedios.
 
 ### `tables`
 `id, number, status ('libre'|'ocupada'|'esperando_pedido'|'pidiendo_cuenta'),
@@ -181,7 +185,8 @@ esquema, rutas nuevas o modificaciones de permisos.
 - Pantalla «Inventario» (admin) con CRUD, stock mínimo y alerta de stock bajo.
 
 ### Mesas y cliente
-- Al crear un pedido de mesa la mesa pasa a ocupada (no esperandoPedido).
+- Al crear un pedido de mesa la mesa pasa a esperandoPedido (no ocupada) hasta
+  que el pedido se pone en preparación.
 - Los datos del cliente son opcionales en mesa; si falta el nombre se usa
   Mesa N. Pickup/delivery siguen exigiendo nombre y teléfono.
 
@@ -190,8 +195,41 @@ esquema, rutas nuevas o modificaciones de permisos.
   se muestran en el detalle del pedido para esos roles.
 - La receta no se expone en la web pública.
 
+### Auditoría por pedido
+- Nuevo modelo OrderAuditEntry (acción, timestamp, actorId, actorName, detalle)
+  persistido en Order.auditLog; viaja con el pedido en la cola offline.
+- Se registra: creación, edición, agregar productos, cambios de estado,
+  cancelación, inventario descontado/repuesto, pago, cobro grupal, liberar mesa,
+  sincronización e importación desde la web.
+- Pedidos antiguos se hidratan al cargar con una entrada inicial; el detalle
+  muestra el timeline en orden reverso.
+
+### Fotos de platos
+- MenuItem, CartLine y OrderItem (app y web) incorporan imageUrl opcional.
+- Widget MenuItemImage con fallback a emoji si no hay imagen o falla la carga.
+- Seed de app y web usa URLs de Unsplash (requieren conexión); el admin permite
+  pegar una URL o subir un archivo local.
+- La web muestra fotos en catálogo, detalle, carrito y confirmación; el og:image
+  del plato usa su foto cuando está disponible.
+
 ### Firebase
 - Reglas: colección ingredients (lectura pública, escritura admin) y
   pedidos de mesa con cliente opcional.
 - Functions: placeOrder acepta cliente opcional y marca la mesa ocupada;
   updateOrderStatus descuenta/reponer inventario al preparar/cancelar.
+
+### Disponibilidad y límites por ingredientes
+- Un plato con receta queda **agotado por insumos** cuando algún ingrediente de su receta tiene stock <= 0; vuelve a disponible al reponer stock (si el estado manual no es unavailable).
+- App: RestaurantRepository.isMenuItemEffectivelyAvailable/availableAdditionalServings/_validateCartStock; vailableMenuItems filtra por disponibilidad efectiva; admin muestra "Agotado (sin insumos)" y deshabilita toggle; nuevo pedido bloquea agregar más de lo preparable.
+- Validación de stock en app al crear/editar/agregar items a pedido (ddItemsToOrder valida delta si ya descontado, total resultante si no).
+- Web: MenuItem.recipe/maxServings opcionales; getMenu() carga ingredientes en Firestore y calcula maxServings; carrito/botón/stepper respetan límite; createOrder valida consumo de ingredientes en servidor cuando Firestore está configurado. En modo demo sin inventario, no se aplica límite por falta de datos.
+
+### CRM (admin app)
+- Modelo `CustomerRecord` (`app/lib/core/models/customer.dart`) con teléfono normalizado, etiquetas, notas, métricas y fechas; persiste en SharedPreferences (`rm_customers_v1`).
+- Solo clientes con teléfono válido (>=7 dígitos) aparecen en CRM. Se reconstruyen/actualizan desde pedidos y se upsert al crear/importar/cambiar pedidos.
+- `CrmScreen`: búsqueda, orden (recientes/nombre/gasto/pedidos), exportar Excel vía `excel`+`share_plus`, detalle con etiquetas, notas, WhatsApp (`wa.me`), crear pedido con datos precargados (`NewOrderScreen` prefill) e historial.
+- Sync CRM por API web: `GET/POST /api/customers` (Firestore REST, `setDocument`), repo hace pull/push best-effort como con pedidos. Reglas Firestore incluyen colección `customers` (staff read/create/update, admin delete).
+
+### Stock en web
+- `web/src/lib/seed.ts` incluye `demoIngredientStocks` y `demoRecipes`; `seedMenu()` calcula `maxServings` y marca agotado si no hay insumos.
+- Validación exhaustiva: `getInsufficientItems` en `orders.ts`, endpoint `POST /api/orders/validate`, `CheckoutForm` pre-valida antes de crear pedido, muestra faltantes y reduce/quita del carrito; `createOrder`/API devuelven `insufficientItems`. Si falla la verificación de stock, la validación falla cerrada. En demo el stock no se descuenta por pedido.

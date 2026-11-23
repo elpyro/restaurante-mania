@@ -5,7 +5,10 @@ import { useCart } from "./CartProvider";
 import type { MenuItem } from "@/lib/types";
 
 interface Props {
-  item: Pick<MenuItem, "id" | "name" | "price" | "emoji" | "status">;
+  item: Pick<
+    MenuItem,
+    "id" | "name" | "price" | "emoji" | "imageUrl" | "status" | "maxServings"
+  >;
   quantity?: number;
   className?: string;
   label?: string;
@@ -17,29 +20,51 @@ export function AddToCartButton({
   className,
   label = "Agregar",
 }: Props) {
-  const { add } = useCart();
+  const { add, lines } = useCart();
   const [added, setAdded] = useState(false);
-  const disabled = item.status === "unavailable";
+  const [limitedMsg, setLimitedMsg] = useState(false);
+  const line = lines.find((l) => l.menuItemId === item.id);
+  const max = item.maxServings ?? line?.maxServings ?? null;
+  const atMax = typeof max === "number" && (line?.quantity ?? 0) >= max;
+  const disabled = item.status === "unavailable" || atMax;
 
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => {
-        add(item, quantity);
-        setAdded(true);
-        window.setTimeout(() => setAdded(false), 1400);
-      }}
-      className={
-        className ??
-        `inline-flex items-center justify-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold transition ${
-          disabled
-            ? "cursor-not-allowed bg-stone-200 text-stone-500"
-            : "bg-brand-600 text-white hover:bg-brand-700 active:scale-[0.98]"
-        }`
-      }
-    >
-      {disabled ? "No disponible" : added ? "¡Agregado! ✓" : `+ ${label}`}
-    </button>
+    <div className="inline-flex flex-col items-end gap-1">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          const result = add(item, quantity);
+          if (result.added) {
+            setAdded(true);
+            window.setTimeout(() => setAdded(false), 1400);
+          } else if (result.limited || atMax) {
+            setLimitedMsg(true);
+            window.setTimeout(() => setLimitedMsg(false), 2200);
+          }
+        }}
+        className={
+          className ??
+          `inline-flex items-center justify-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold transition ${
+            disabled
+              ? "cursor-not-allowed bg-stone-200 text-stone-500"
+              : "bg-brand-600 text-white hover:bg-brand-700 active:scale-[0.98]"
+          }`
+        }
+      >
+        {item.status === "unavailable"
+          ? "No disponible"
+          : atMax
+            ? "Límite por insumos"
+            : added
+              ? "¡Agregado! ✓"
+              : `+ ${label}`}
+      </button>
+      {limitedMsg && !atMax ? (
+        <span className="text-[11px] font-medium text-amber-700">
+          Sin ingredientes para más unidades
+        </span>
+      ) : null}
+    </div>
   );
 }

@@ -43,7 +43,7 @@ void main() {
     expect(find.text('Ventas hoy'), findsOneWidget);
     expect(find.text('Nuevo pedido'), findsOneWidget);
     expect(find.text('Pedidos'), findsWidgets);
-    expect(find.text('Acciones rápidas'), findsOneWidget);
+    expect(find.text('Ventas últimos 7 días'), findsOneWidget);
   });
 
   testWidgets('permite iniciar sesión con correo y contraseña',

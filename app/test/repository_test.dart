@@ -95,6 +95,7 @@ void main() {
       lines: cart(),
       customerName: 'Cliente Offline',
       customerPhone: '310 000 0000',
+      deliveryAddress: 'Calle 10 # 20-30, Medellín',
       type: OrderType.delivery,
       paymentMethod: PaymentMethod.cash,
     );
@@ -123,7 +124,7 @@ void main() {
       paymentMethod: PaymentMethod.card,
     );
     expect(repository.tableByNumber(6)?.status,
-        TableStatus.ocupada);
+        TableStatus.esperandoPedido);
     expect(repository.tableByNumber(6)?.currentOrderId, order.id);
 
     await repository.markOrderPaid(order.id);

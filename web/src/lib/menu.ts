@@ -1,8 +1,8 @@
 import { cache } from "react";
-import { seedCategories, seedMenuItems } from "./seed";
+import { demoIngredientStocks, demoRecipes, seedCategories, seedMenuItems } from "./seed";
 import { slugify } from "./format";
 import { isFirestoreConfigured, listDocuments } from "./firebase/rest";
-import type { Category, MenuItem, MenuItemStatus } from "./types";
+import type { Category, MenuItem, MenuItemStatus, RecipeIngredient } from "./types";
 
 const VALID_STATUS: MenuItemStatus[] = ["available", "unavailable", "limited"];
 
@@ -20,6 +20,36 @@ function asStringArray(value: unknown): string[] {
     : [];
 }
 
+function asRecipe(value: unknown): RecipeIngredient[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const row = entry as Record<string, unknown>;
+      const ingredientId = asString(row.ingredientId);
+      const quantity = asNumber(row.quantity);
+      if (!ingredientId || quantity <= 0) return null;
+      return { ingredientId, quantity };
+    })
+    .filter((entry): entry is RecipeIngredient => entry !== null);
+}
+
+function computeMaxServings(
+  recipe: RecipeIngredient[],
+  stocks: Map<string, number> | null,
+): number | null {
+  if (!stocks || recipe.length === 0) return null;
+  let max = Number.POSITIVE_INFINITY;
+  for (const line of recipe) {
+    const stock = stocks.get(line.ingredientId);
+    if (stock === undefined) continue;
+    const canMake = stock <= 0 ? 0 : Math.floor(stock / line.quantity);
+    if (canMake < max) max = canMake;
+  }
+  if (!Number.isFinite(max)) return null;
+  return Math.max(0, max);
+}
+
 function mapCategory(doc: { id: string; data: Record<string, unknown> }): Category {
   const name = asString(doc.data.name, "Categoría");
   return {
@@ -35,11 +65,15 @@ function mapCategory(doc: { id: string; data: Record<string, unknown> }): Catego
 function mapMenuItem(
   doc: { id: string; data: Record<string, unknown> },
   categories: Category[],
+  stocks: Map<string, number> | null = null,
 ): MenuItem {
   const name = asString(doc.data.name, "Plato");
   const categoryId = asString(doc.data.categoryId);
   const category = categories.find((entry) => entry.id === categoryId);
   const rawStatus = asString(doc.data.status, "available") as MenuItemStatus;
+  const recipe = asRecipe(doc.data.recipe);
+  const maxServings = computeMaxServings(recipe, stocks);
+  const status = VALID_STATUS.includes(rawStatus) ? rawStatus : "available";
   return {
     id: doc.id,
     name,
@@ -48,7 +82,12 @@ function mapMenuItem(
     price: asNumber(doc.data.price),
     categoryId,
     categorySlug: category?.slug ?? asString(doc.data.categorySlug, "otros"),
-    status: VALID_STATUS.includes(rawStatus) ? rawStatus : "available",
+    status:
+      status === "unavailable"
+        ? status
+        : maxServings === 0
+          ? "unavailable"
+          : status,
     ingredients: asStringArray(doc.data.ingredients),
     allergens: asStringArray(doc.data.allergens),
     emoji: asString(doc.data.emoji, "🍽️"),
@@ -58,6 +97,8 @@ function mapMenuItem(
     sku: asString(doc.data.sku),
     imageUrl: asString(doc.data.imageUrl),
     videoUrl: asString(doc.data.videoUrl),
+    recipe,
+    maxServings,
   };
 }
 
@@ -68,9 +109,25 @@ export interface MenuData {
 }
 
 function seedMenu(): MenuData {
+  const stocks = new Map(Object.entries(demoIngredientStocks));
+  const items = seedMenuItems.map((item) => {
+    const recipe = item.recipe ?? demoRecipes[item.id] ?? [];
+    const maxServings = computeMaxServings(recipe, stocks);
+    return {
+      ...item,
+      recipe,
+      maxServings,
+      status:
+        item.status === "unavailable"
+          ? item.status
+          : maxServings === 0
+            ? "unavailable"
+            : item.status,
+    };
+  });
   return {
     categories: [...seedCategories].sort((a, b) => a.order - b.order),
-    items: [...seedMenuItems].sort((a, b) => a.name.localeCompare(b.name)),
+    items: items.sort((a, b) => a.name.localeCompare(b.name)),
     source: "demo",
   };
 }
@@ -78,9 +135,25 @@ function seedMenu(): MenuData {
 async function loadMenu(): Promise<MenuData> {
   if (!isFirestoreConfigured()) return seedMenu();
   try {
-    const categories = await listDocuments("categories", mapCategory);
-    const items = await listDocuments("menuItems", (doc) =>
-      mapMenuItem(doc, categories),
+    const [categories, ingredientDocs] = await Promise.all([
+      listDocuments("categories", mapCategory, 30),
+      listDocuments(
+        "ingredients",
+        (doc) => ({
+          id: doc.id,
+          stock: asNumber(doc.data.stock, 0),
+        }),
+        15,
+      ).catch(() => []),
+    ]);
+    const stocks =
+      ingredientDocs.length > 0
+        ? new Map(ingredientDocs.map((i) => [i.id, i.stock]))
+        : null;
+    const items = await listDocuments(
+      "menuItems",
+      (doc) => mapMenuItem(doc, categories, stocks),
+      15,
     );
     if (categories.length === 0 || items.length === 0) return seedMenu();
     categories.sort((a, b) => a.order - b.order);

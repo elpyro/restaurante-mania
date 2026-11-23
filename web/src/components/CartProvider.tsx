@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -27,9 +28,11 @@ interface CartContextValue {
   totals: CartTotals;
   ready: boolean;
   add: (
-    item: Pick<MenuItem, "id" | "name" | "price" | "emoji">,
+    item: Pick<MenuItem, "id" | "name" | "price" | "emoji" | "imageUrl"> & {
+      maxServings?: number | null;
+    },
     quantity?: number,
-  ) => void;
+  ) => { added: boolean; limited: boolean };
   setQuantity: (menuItemId: string, quantity: number) => void;
   remove: (menuItemId: string) => void;
   clear: () => void;
@@ -52,6 +55,7 @@ function readStorage(): CartLine[] {
 export function CartProvider({ children }: { children: ReactNode }) {
   const [lines, setLines] = useState<CartLine[]>([]);
   const [ready, setReady] = useState(false);
+  const linesRef = useRef<CartLine[]>([]);
 
   useEffect(() => {
     setLines(readStorage());
@@ -59,6 +63,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    linesRef.current = lines;
     if (!ready) return;
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(lines));
@@ -68,8 +73,20 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [lines, ready]);
 
   const add = useCallback(
-    (item: Pick<MenuItem, "id" | "name" | "price" | "emoji">, quantity = 1) => {
-      setLines((current) => addLine(current, item, quantity));
+    (
+      item: Pick<MenuItem, "id" | "name" | "price" | "emoji" | "imageUrl"> & {
+        maxServings?: number | null;
+      },
+      quantity = 1,
+    ) => {
+      const current = linesRef.current;
+      const next = addLine(current, item, quantity);
+      const added = next !== current;
+      const line = next.find((l) => l.menuItemId === item.id);
+      const max = line?.maxServings ?? item.maxServings ?? null;
+      const limited = typeof max === "number" && (line?.quantity ?? 0) >= max;
+      if (added) setLines(next);
+      return { added, limited };
     },
     [],
   );

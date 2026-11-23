@@ -9,6 +9,7 @@ Color orderStatusColor(OrderStatus status) => switch (status) {
       OrderStatus.confirmed => const Color(0xFF2563EB),
       OrderStatus.preparing => AppTheme.brand,
       OrderStatus.ready => AppTheme.success,
+      OrderStatus.sent => const Color(0xFF0EA5E9),
       OrderStatus.delivered => const Color(0xFF57534E),
       OrderStatus.cancelled => AppTheme.danger,
     };
@@ -18,6 +19,7 @@ IconData orderStatusIcon(OrderStatus status) => switch (status) {
       OrderStatus.confirmed => Icons.check_circle_outline_rounded,
       OrderStatus.preparing => Icons.soup_kitchen_rounded,
       OrderStatus.ready => Icons.room_service_rounded,
+      OrderStatus.sent => Icons.local_shipping_outlined,
       OrderStatus.delivered => Icons.done_all_rounded,
       OrderStatus.cancelled => Icons.cancel_outlined,
     };

@@ -28,7 +28,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ order }, { status: 201 });
   } catch (error) {
     if (error instanceof OrderValidationError) {
-      return NextResponse.json({ errors: error.errors }, { status: 400 });
+      return NextResponse.json(
+        { errors: error.errors, insufficientItems: error.insufficientItems },
+        { status: 400 },
+      );
     }
     console.error("[api/orders] Error creando pedido:", error);
     return NextResponse.json(

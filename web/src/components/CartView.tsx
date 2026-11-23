@@ -45,9 +45,18 @@ export function CartView() {
             key={line.menuItemId}
             className="flex items-center gap-4 rounded-2xl border border-stone-200 bg-white p-4"
           >
-            <span className="grid h-16 w-16 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-brand-100 to-amber-50 text-3xl">
-              {line.emoji}
-            </span>
+            {line.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={line.imageUrl}
+                alt={line.name}
+                className="h-16 w-16 shrink-0 rounded-xl object-cover"
+              />
+            ) : (
+              <span className="grid h-16 w-16 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-brand-100 to-amber-50 text-3xl">
+                {line.emoji}
+              </span>
+            )}
             <div className="min-w-0 flex-1">
               <h3 className="truncate font-semibold text-ink-900">{line.name}</h3>
               <p className="text-sm text-ink-500">{formatCOP(line.price)} c/u</p>
@@ -62,8 +71,12 @@ export function CartView() {
             <div className="flex flex-col items-end gap-2">
               <QuantityStepper
                 value={line.quantity}
+                max={typeof line.maxServings === "number" ? Math.max(1, line.maxServings) : 99}
                 onChange={(quantity) => setQuantity(line.menuItemId, quantity)}
               />
+              {typeof line.maxServings === "number" && line.quantity >= line.maxServings ? (
+                <p className="text-[11px] font-medium text-amber-700">Máx. por insumos</p>
+              ) : null}
               <p className="text-sm font-bold text-ink-900">
                 {formatCOP(line.price * line.quantity)}
               </p>

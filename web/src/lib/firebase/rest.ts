@@ -153,3 +153,28 @@ export async function createDocument(
   const document = (await response.json()) as FirestoreDocument;
   return docId(document);
 }
+
+export async function setDocument(
+  collection: string,
+  id: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const config = readConfig();
+  if (!config) throw new Error("Firestore no está configurado");
+  const fields = encodeFields(data);
+  const mask = Object.keys(fields)
+    .map((f) => `updateMask.fieldPaths=${encodeURIComponent(f)}`)
+    .join("&");
+  const url = `${baseUrl(config)}/${collection}/${encodeURIComponent(id)}?key=${config.apiKey}&${mask}`;
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields }),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Firestore PATCH ${collection}/${id} respondió ${response.status}: ${await response.text()}`,
+    );
+  }
+}

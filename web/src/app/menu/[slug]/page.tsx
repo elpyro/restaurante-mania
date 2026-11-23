@@ -38,7 +38,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       url: `/menu/${item.slug}`,
       images: [
         {
-          url: "/og.svg",
+          url: item.imageUrl ?? "/og.svg",
           width: 1200,
           height: 630,
           alt: `${item.name} — ${siteConfig.name}`,
@@ -92,7 +92,16 @@ export default async function DishPage({ params }: Props) {
 
       <div className="grid gap-8 lg:grid-cols-2">
         <div className="relative grid min-h-72 place-items-center overflow-hidden rounded-3xl border border-stone-200 bg-gradient-to-br from-brand-100 via-amber-50 to-emerald-100 text-[10rem] shadow-card">
-          <span>{item.emoji}</span>
+          {item.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={item.imageUrl}
+              alt={item.name}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <span>{item.emoji}</span>
+          )}
           {item.featured ? (
             <span className="absolute left-5 top-5 rounded-full bg-white/85 px-3 py-1 text-xs font-bold uppercase tracking-wide text-brand-700 shadow-sm">
               Favorito de la casa

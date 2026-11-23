@@ -3,6 +3,7 @@ enum OrderStatus {
   confirmed('Confirmado'),
   preparing('En preparación'),
   ready('Listo'),
+  sent('Enviado'),
   delivered('Entregado'),
   cancelled('Cancelado');
 
@@ -15,14 +16,32 @@ enum OrderStatus {
         orElse: () => OrderStatus.pending,
       );
 
-  bool get isActive => this != OrderStatus.delivered && this != OrderStatus.cancelled;
+  bool get isActive =>
+      this != OrderStatus.delivered &&
+      this != OrderStatus.sent &&
+      this != OrderStatus.cancelled;
 
   OrderStatus? get next => switch (this) {
         OrderStatus.pending => OrderStatus.confirmed,
         OrderStatus.confirmed => OrderStatus.preparing,
         OrderStatus.preparing => OrderStatus.ready,
         OrderStatus.ready => OrderStatus.delivered,
-        OrderStatus.delivered || OrderStatus.cancelled => null,
+        OrderStatus.sent ||
+        OrderStatus.delivered ||
+        OrderStatus.cancelled =>
+          null,
+      };
+
+  OrderStatus? nextFor(OrderType type) => switch (this) {
+        OrderStatus.pending => OrderStatus.confirmed,
+        OrderStatus.confirmed => OrderStatus.preparing,
+        OrderStatus.preparing => OrderStatus.ready,
+        OrderStatus.ready =>
+          type == OrderType.delivery ? OrderStatus.sent : OrderStatus.delivered,
+        OrderStatus.sent ||
+        OrderStatus.delivered ||
+        OrderStatus.cancelled =>
+          null,
       };
 }
 
@@ -74,6 +93,64 @@ enum PaymentStatus {
       );
 }
 
+class OrderPayment {
+  const OrderPayment({
+    required this.method,
+    required this.amount,
+    this.note = '',
+  });
+
+  final PaymentMethod method;
+  final double amount;
+  final String note;
+
+  Map<String, dynamic> toJson() => {
+        'method': method.name,
+        'amount': amount,
+        'note': note,
+      };
+
+  factory OrderPayment.fromJson(Map<String, dynamic> json) => OrderPayment(
+        method: PaymentMethod.fromName(json['method'] as String?),
+        amount: (json['amount'] as num?)?.toDouble() ?? 0,
+        note: json['note'] as String? ?? '',
+      );
+}
+
+class OrderAuditEntry {
+  const OrderAuditEntry({
+    required this.action,
+    required this.timestamp,
+    this.actorId,
+    this.actorName,
+    this.detail = '',
+  });
+
+  final String action;
+  final DateTime timestamp;
+  final String? actorId;
+  final String? actorName;
+  final String detail;
+
+  Map<String, dynamic> toJson() => {
+        'action': action,
+        'timestamp': timestamp.toIso8601String(),
+        'actorId': actorId,
+        'actorName': actorName,
+        'detail': detail,
+      };
+
+  factory OrderAuditEntry.fromJson(Map<String, dynamic> json) =>
+      OrderAuditEntry(
+        action: json['action'] as String? ?? '',
+        timestamp: DateTime.tryParse(json['timestamp'] as String? ?? '') ??
+            DateTime.now(),
+        actorId: json['actorId'] as String?,
+        actorName: json['actorName'] as String?,
+        detail: json['detail'] as String? ?? '',
+      );
+}
+
 class OrderItem {
   const OrderItem({
     required this.menuItemId,
@@ -81,6 +158,7 @@ class OrderItem {
     required this.price,
     required this.quantity,
     required this.emoji,
+    this.imageUrl = '',
   });
 
   final String menuItemId;
@@ -88,6 +166,7 @@ class OrderItem {
   final double price;
   final int quantity;
   final String emoji;
+  final String imageUrl;
 
   double get subtotal => price * quantity;
 
@@ -97,6 +176,7 @@ class OrderItem {
         'price': price,
         'quantity': quantity,
         'emoji': emoji,
+        'imageUrl': imageUrl,
       };
 
   factory OrderItem.fromJson(Map<String, dynamic> json) => OrderItem(
@@ -105,6 +185,7 @@ class OrderItem {
         price: (json['price'] as num?)?.toDouble() ?? 0,
         quantity: (json['quantity'] as num?)?.toInt() ?? 1,
         emoji: json['emoji'] as String? ?? '🍽️',
+        imageUrl: json['imageUrl'] as String? ?? '',
       );
 }
 
@@ -114,6 +195,7 @@ class Order {
     required this.code,
     required this.customerName,
     required this.customerPhone,
+    this.deliveryAddress = '',
     required this.type,
     required this.tableNumber,
     required this.items,
@@ -123,6 +205,7 @@ class Order {
     required this.status,
     required this.paymentStatus,
     required this.paymentMethod,
+    this.payments = const [],
     required this.notes,
     required this.createdAt,
     required this.updatedAt,
@@ -133,12 +216,14 @@ class Order {
     this.createdByName,
     this.updatedBy,
     this.updatedByName,
+    this.auditLog = const [],
   });
 
   final String id;
   final String code;
   final String customerName;
   final String customerPhone;
+  final String deliveryAddress;
   final OrderType type;
   final int? tableNumber;
   final List<OrderItem> items;
@@ -148,6 +233,7 @@ class Order {
   final OrderStatus status;
   final PaymentStatus paymentStatus;
   final PaymentMethod paymentMethod;
+  final List<OrderPayment> payments;
   final String notes;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -162,12 +248,14 @@ class Order {
   final String? createdByName;
   final String? updatedBy;
   final String? updatedByName;
+  final List<OrderAuditEntry> auditLog;
 
   int get itemCount => items.fold(0, (sum, item) => sum + item.quantity);
 
   Order copyWith({
     String? customerName,
     String? customerPhone,
+    String? deliveryAddress,
     OrderType? type,
     int? tableNumber,
     bool clearTableNumber = false,
@@ -178,6 +266,7 @@ class Order {
     OrderStatus? status,
     PaymentStatus? paymentStatus,
     PaymentMethod? paymentMethod,
+    List<OrderPayment>? payments,
     String? notes,
     DateTime? updatedAt,
     bool? synced,
@@ -186,12 +275,14 @@ class Order {
     String? createdByName,
     String? updatedBy,
     String? updatedByName,
+    List<OrderAuditEntry>? auditLog,
   }) {
     return Order(
       id: id,
       code: code,
       customerName: customerName ?? this.customerName,
       customerPhone: customerPhone ?? this.customerPhone,
+      deliveryAddress: deliveryAddress ?? this.deliveryAddress,
       type: type ?? this.type,
       tableNumber: clearTableNumber ? null : (tableNumber ?? this.tableNumber),
       items: items ?? this.items,
@@ -201,6 +292,7 @@ class Order {
       status: status ?? this.status,
       paymentStatus: paymentStatus ?? this.paymentStatus,
       paymentMethod: paymentMethod ?? this.paymentMethod,
+      payments: payments ?? this.payments,
       notes: notes ?? this.notes,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -211,6 +303,7 @@ class Order {
       createdByName: createdByName ?? this.createdByName,
       updatedBy: updatedBy ?? this.updatedBy,
       updatedByName: updatedByName ?? this.updatedByName,
+      auditLog: auditLog ?? this.auditLog,
     );
   }
 
@@ -219,6 +312,7 @@ class Order {
         'code': code,
         'customerName': customerName,
         'customerPhone': customerPhone,
+        'deliveryAddress': deliveryAddress,
         'type': type.name,
         'tableNumber': tableNumber,
         'items': items.map((item) => item.toJson()).toList(),
@@ -228,6 +322,7 @@ class Order {
         'status': status.name,
         'paymentStatus': paymentStatus.name,
         'paymentMethod': paymentMethod.name,
+        'payments': payments.map((p) => p.toJson()).toList(),
         'notes': notes,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
@@ -238,6 +333,7 @@ class Order {
         'createdByName': createdByName,
         'updatedBy': updatedBy,
         'updatedByName': updatedByName,
+        'auditLog': auditLog.map((e) => e.toJson()).toList(),
       };
 
   factory Order.fromJson(Map<String, dynamic> json) => Order(
@@ -245,6 +341,7 @@ class Order {
         code: json['code'] as String? ?? '',
         customerName: json['customerName'] as String? ?? '',
         customerPhone: json['customerPhone'] as String? ?? '',
+        deliveryAddress: json['deliveryAddress'] as String? ?? '',
         type: OrderType.fromName(json['type'] as String?),
         tableNumber: (json['tableNumber'] as num?)?.toInt(),
         items: (json['items'] as List<dynamic>? ?? const [])
@@ -257,6 +354,10 @@ class Order {
         status: OrderStatus.fromName(json['status'] as String?),
         paymentStatus: PaymentStatus.fromName(json['paymentStatus'] as String?),
         paymentMethod: PaymentMethod.fromName(json['paymentMethod'] as String?),
+        payments: (json['payments'] as List<dynamic>? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(OrderPayment.fromJson)
+            .toList(),
         notes: json['notes'] as String? ?? '',
         createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
             DateTime.now(),
@@ -269,6 +370,10 @@ class Order {
         createdByName: json['createdByName'] as String?,
         updatedBy: json['updatedBy'] as String?,
         updatedByName: json['updatedByName'] as String?,
+        auditLog: (json['auditLog'] as List<dynamic>? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(OrderAuditEntry.fromJson)
+            .toList(),
       );
 }
 
@@ -279,6 +384,7 @@ class CartLine {
     required this.price,
     required this.quantity,
     required this.emoji,
+    this.imageUrl = '',
   });
 
   final String menuItemId;
@@ -286,6 +392,7 @@ class CartLine {
   final double price;
   final int quantity;
   final String emoji;
+  final String imageUrl;
 
   double get total => price * quantity;
 
@@ -295,5 +402,6 @@ class CartLine {
         price: price,
         quantity: quantity ?? this.quantity,
         emoji: emoji,
+        imageUrl: imageUrl,
       );
 }

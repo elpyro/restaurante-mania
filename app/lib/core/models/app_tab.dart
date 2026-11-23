@@ -1,1 +1,1 @@
-enum AppTab { dashboard, orders, tables, menu, reports, more }
+enum AppTab { dashboard, orders, tables, menu, reports, more, crm }

@@ -47,6 +47,7 @@ interface PlaceOrderItem {
 interface PlaceOrderPayload {
   customerName: string;
   customerPhone: string;
+  deliveryAddress?: string;
   type: "pickup" | "delivery" | "table";
   tableNumber?: number | null;
   paymentMethod: "cash" | "card" | "nequi" | "daviplata";
@@ -85,6 +86,9 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
   const errors: string[] = [];
 
   const isTable = payload.type === "table";
+  const isDelivery = payload.type === "delivery";
+  const deliveryAddress =
+    typeof payload.deliveryAddress === "string" ? payload.deliveryAddress.trim() : "";
   if (isTable) {
     if (
       payload.customerName !== undefined &&
@@ -118,6 +122,13 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
   }
   if (payload.type === "table" && !isValidTableNumber(payload.tableNumber)) {
     errors.push("El número de mesa debe estar entre 1 y 100.");
+  }
+  if (isDelivery) {
+    if (deliveryAddress.length < 5 || deliveryAddress.length > 160) {
+      errors.push("La dirección de domicilio debe tener entre 5 y 160 caracteres.");
+    }
+  } else if (deliveryAddress.length > 160) {
+    errors.push("La dirección no puede superar 160 caracteres.");
   }
   const notes = typeof payload.notes === "string" ? payload.notes.trim() : "";
   if (notes.length > 300) {
@@ -218,6 +229,7 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
     code,
     customerName: resolvedCustomerName,
     customerPhone: resolvedCustomerPhone,
+    deliveryAddress: isDelivery ? deliveryAddress : "",
     type: payload.type,
     tableNumber: payload.type === "table" ? payload.tableNumber ?? null : null,
     items: lines,
@@ -301,9 +313,10 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
 
     const data = snapshot.data() ?? {};
     const current = data.status as OrderStatus;
+    const orderType = data.type as "pickup" | "delivery" | "table" | undefined;
     const items = Array.isArray(data.items) ? data.items : [];
 
-    if (!canTransition(role, current, target as OrderStatus)) {
+    if (!canTransition(role, current, target as OrderStatus, orderType)) {
       throw new HttpsError(
         "permission-denied",
         `No puedes pasar de "${current}" a "${target}" con el rol ${role}.`,
@@ -316,16 +329,22 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
       lastChangedBy: request.auth?.uid ?? null,
     };
 
-    if (target === "delivered") {
+    if (target === "delivered" || target === "sent") {
       patch.paymentStatus = "paid";
     }
     if (target === "cancelled") {
       patch.paymentStatus = "refunded";
     }
 
-    // Inventario: descontar al pasar a preparación, reponer al cancelar.
+    // Inventario: descontar al pasar a preparación/listo/enviado/entregado, reponer al cancelar.
     const deducted = data.inventoryDeducted === true;
-    if (target === "preparing" && !deducted) {
+    const shouldDeduct =
+      !deducted &&
+      (target === "preparing" ||
+        target === "ready" ||
+        target === "sent" ||
+        target === "delivered");
+    if (shouldDeduct) {
       const menuIds = [
         ...new Set(
           items
@@ -431,7 +450,7 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
     const tableNumber = data.tableNumber;
     if (
       typeof tableNumber === "number" &&
-      (target === "delivered" || target === "cancelled")
+      (target === "delivered" || target === "sent" || target === "cancelled")
     ) {
       const tableQuery = await db
         .collection("tables")
