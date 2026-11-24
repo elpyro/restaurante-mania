@@ -1,4 +1,4 @@
-﻿rules_version = '2';
+rules_version = '2';
 
 // =============================================================================
 // Reglas de seguridad de Cloud Firestore — Restaurante Manía
@@ -185,10 +185,44 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly([
           'id', 'name', 'phone', 'normalizedPhone', 'address', 'tags',
           'notes', 'createdAt', 'updatedAt', 'lastOrderAt', 'orderCount',
-          'totalSpent', 'lastType'
+          'totalSpent', 'lastType', 'addresses', 'visitCount', 'visitHistory'
         ])
         && request.resource.data.phone is string
         && request.resource.data.phone.size() >= 7;
+      allow delete: if isAdmin();
+    }
+
+    // ---------------------------------------------------------------------
+    // Visitas originadas en la web pública. Cualquier visitante puede crear
+    // su propia visita; el listado es solo para personal del restaurante.
+    // ---------------------------------------------------------------------
+    match /webVisits/{visitId} {
+      allow get, list: if isStaff();
+      allow create: if request.resource.data.keys().hasOnly([
+          'id', 'occurredAt', 'dayKey', 'registered', 'customerName',
+          'customerPhone', 'normalizedPhone', 'referenceLabel',
+          'referenceUrl', 'referrer'
+        ])
+        && request.resource.data.keys().hasAll([
+          'id', 'occurredAt', 'dayKey', 'registered', 'referenceLabel',
+          'referenceUrl'
+        ])
+        && request.resource.data.id is string
+        && request.resource.data.id.size() <= 80
+        && request.resource.data.occurredAt is string
+        && request.resource.data.dayKey is string
+        && request.resource.data.registered is bool
+        && request.resource.data.referenceUrl is string
+        && request.resource.data.referenceUrl.size() <= 500
+        && request.resource.data.referenceLabel is string
+        && request.resource.data.referenceLabel.size() <= 160
+        && (!('customerName' in request.resource.data)
+            || request.resource.data.customerName is string)
+        && (!('customerPhone' in request.resource.data)
+            || request.resource.data.customerPhone is string)
+        && (!('normalizedPhone' in request.resource.data)
+            || request.resource.data.normalizedPhone is string);
+      allow update: if isStaff();
       allow delete: if isAdmin();
     }
 

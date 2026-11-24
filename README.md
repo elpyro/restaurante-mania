@@ -93,6 +93,17 @@ Emuladores:
 firebase emulators:start --only auth,firestore,functions
 ```
 
+Proyecto real configurado: `restaurante-mania-e47a0`. Para migrar los datos
+demo una vez (idempotente):
+
+```bash
+node firebase/scripts/migrate-demo-to-firestore.mjs
+```
+
+El script usa `firebase/service-account.json` (no versionado). Para que la web
+y la app lean/escriban colecciones privadas en producción, define
+`FIREBASE_SERVICE_ACCOUNT_JSON` como el mismo JSON en una sola línea.
+
 ---
 
 ## Flujo funcional
@@ -133,8 +144,9 @@ firebase emulators:start --only auth,firestore,functions
 
 ## Limitaciones conocidas
 
-- Sin credenciales de Firebase, la web y la app usan datos demo; el camino real
-  de Firestore no se ha ejecutado end-to-end.
+- Sin credenciales de Firebase, la web y la app usan datos demo; con el proyecto
+  real configurado ambas comparten Firestore (catálogo, pedidos, clientes y
+  visitas).
 - El APK está firmado con la clave debug de Flutter; para publicar hay que
   generar un keystore.
 - Notificaciones push (FCM) y WhatsApp Cloud API quedan pendientes; hoy se usa

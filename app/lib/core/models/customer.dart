@@ -14,6 +14,9 @@ class CustomerRecord {
     required this.orderCount,
     required this.totalSpent,
     required this.lastType,
+    this.addresses = const [],
+    this.visitCount = 0,
+    this.visitHistory = const {},
   });
 
   final String id;
@@ -28,6 +31,9 @@ class CustomerRecord {
   final int orderCount;
   final double totalSpent;
   final OrderType lastType;
+  final List<String> addresses;
+  final int visitCount;
+  final Map<String, int> visitHistory; // yyyy-MM-dd -> count
 
   String get normalizedPhone => phone.replaceAll(RegExp(r'\D'), '');
 
@@ -45,6 +51,9 @@ class CustomerRecord {
     int? orderCount,
     double? totalSpent,
     OrderType? lastType,
+    List<String>? addresses,
+    int? visitCount,
+    Map<String, int>? visitHistory,
   }) {
     return CustomerRecord(
       id: id,
@@ -59,6 +68,9 @@ class CustomerRecord {
       orderCount: orderCount ?? this.orderCount,
       totalSpent: totalSpent ?? this.totalSpent,
       lastType: lastType ?? this.lastType,
+      addresses: addresses ?? this.addresses,
+      visitCount: visitCount ?? this.visitCount,
+      visitHistory: visitHistory ?? this.visitHistory,
     );
   }
 
@@ -75,6 +87,9 @@ class CustomerRecord {
         'orderCount': orderCount,
         'totalSpent': totalSpent,
         'lastType': lastType.name,
+        'addresses': addresses,
+        'visitCount': visitCount,
+        'visitHistory': visitHistory,
       };
 
   factory CustomerRecord.fromJson(Map<String, dynamic> json) {
@@ -85,6 +100,22 @@ class CustomerRecord {
     }
 
     final now = DateTime.now();
+    final rawHistory = json['visitHistory'];
+    final visitHistory = <String, int>{};
+    if (rawHistory is Map) {
+      for (final entry in rawHistory.entries) {
+        final key = entry.key.toString();
+        final value = entry.value;
+        if (value is num) visitHistory[key] = value.toInt();
+      }
+    }
+    final addresses = (json['addresses'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final visitCount = (json['visitCount'] as num?)?.toInt() ??
+        visitHistory.values.fold<int>(0, (s, v) => s + v);
     return CustomerRecord(
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? '',
@@ -103,6 +134,9 @@ class CustomerRecord {
         (t) => t.name == json['lastType'],
         orElse: () => OrderType.pickup,
       ),
+      addresses: addresses,
+      visitCount: visitCount,
+      visitHistory: visitHistory,
     );
   }
 }

@@ -1,0 +1,10 @@
+[build]
+  base = "web"
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Next.js 16 usa el adaptador de Netlify automáticamente (OpenNext).
+# No fijamos @netlify/plugin-nextjs para recibir actualizaciones de seguridad.

@@ -18,6 +18,9 @@ type CustomerPayload = {
   orderCount?: number;
   totalSpent?: number;
   lastType?: string;
+  addresses?: unknown;
+  visitCount?: number;
+  visitHistory?: unknown;
 };
 
 function normalizePhone(value: string): string {
@@ -31,6 +34,13 @@ export async function GET() {
   try {
     const customers = await listDocuments("customers", (doc) => {
       const d = doc.data as Record<string, unknown>;
+      const rawHistory = d.visitHistory;
+      const visitHistory: Record<string, number> = {};
+      if (rawHistory && typeof rawHistory === "object" && !Array.isArray(rawHistory)) {
+        for (const [k, v] of Object.entries(rawHistory as Record<string, unknown>)) {
+          if (typeof v === "number" && Number.isFinite(v)) visitHistory[k] = Math.max(0, Math.floor(v));
+        }
+      }
       return {
         id: String(d.id ?? doc.id),
         name: String(d.name ?? ""),
@@ -45,6 +55,9 @@ export async function GET() {
         orderCount: typeof d.orderCount === "number" ? d.orderCount : Number(d.orderCount ?? 0),
         totalSpent: typeof d.totalSpent === "number" ? d.totalSpent : Number(d.totalSpent ?? 0),
         lastType: String(d.lastType ?? "pickup"),
+        addresses: Array.isArray(d.addresses) ? d.addresses.filter((a): a is string => typeof a === "string") : [],
+        visitCount: typeof d.visitCount === "number" ? d.visitCount : Number(d.visitCount ?? 0),
+        visitHistory,
       };
     }, 0);
     return NextResponse.json(
@@ -75,6 +88,13 @@ export async function POST(request: Request) {
   }
   const id = String(input.id ?? `cus_${normalized}`);
   const now = new Date().toISOString();
+  const rawHistory = input.visitHistory;
+  const visitHistory: Record<string, number> = {};
+  if (rawHistory && typeof rawHistory === "object" && !Array.isArray(rawHistory)) {
+    for (const [k, v] of Object.entries(rawHistory as Record<string, unknown>)) {
+      if (typeof v === "number" && Number.isFinite(v)) visitHistory[k] = Math.max(0, Math.floor(v));
+    }
+  }
   const record = {
     id,
     name: String(input.name ?? "").trim(),
@@ -89,6 +109,9 @@ export async function POST(request: Request) {
     orderCount: Math.max(0, Number(input.orderCount ?? 0) || 0),
     totalSpent: Math.max(0, Number(input.totalSpent ?? 0) || 0),
     lastType: ["pickup", "delivery", "table"].includes(String(input.lastType)) ? String(input.lastType) : "pickup",
+    addresses: Array.isArray(input.addresses) ? input.addresses.filter((a): a is string => typeof a === "string").slice(0, 20) : [],
+    visitCount: Math.max(0, Number(input.visitCount ?? 0) || 0),
+    visitHistory,
   };
   try {
     await setDocument("customers", id, record);

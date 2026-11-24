@@ -1,4 +1,4 @@
-﻿# MEMORY.md â€” Resumen Vivo de Decisiones TÃ©cnicas
+# MEMORY.md â€” Resumen Vivo de Decisiones TÃ©cnicas
 
 > Ãšltima actualizaciÃ³n: 2026-11-22
 
@@ -178,7 +178,9 @@ esquema, rutas nuevas o modificaciones de permisos.
 
 ### Inventario e ingredientes
 - Nuevo modelo Ingredient + RecipeIngredient; MenuItem incorpora sku,
-  imageUrl, ideoUrl, ecipeSteps y ecipe.
+  imageUrl, ideoUrl,
+ecipeSteps y
+ecipe.
 - SeedData incluye 43 insumos y recetas por los 13 platos.
 - Al pasar un pedido a preparing se descuenta el inventario automáticamente
   (una sola vez, vía inventoryDeducted); se repone si se cancela.
@@ -191,7 +193,8 @@ esquema, rutas nuevas o modificaciones de permisos.
   Mesa N. Pickup/delivery siguen exigiendo nombre y teléfono.
 
 ### Receta visible al cocinero
-- ole.canViewRecipe (admin/cocinero). La receta estructurada y los pasos
+-
+ole.canViewRecipe (admin/cocinero). La receta estructurada y los pasos
   se muestran en el detalle del pedido para esos roles.
 - La receta no se expone en la web pública.
 
@@ -225,11 +228,23 @@ esquema, rutas nuevas o modificaciones de permisos.
 - Web: MenuItem.recipe/maxServings opcionales; getMenu() carga ingredientes en Firestore y calcula maxServings; carrito/botón/stepper respetan límite; createOrder valida consumo de ingredientes en servidor cuando Firestore está configurado. En modo demo sin inventario, no se aplica límite por falta de datos.
 
 ### CRM (admin app)
-- Modelo `CustomerRecord` (`app/lib/core/models/customer.dart`) con teléfono normalizado, etiquetas, notas, métricas y fechas; persiste en SharedPreferences (`rm_customers_v1`).
-- Solo clientes con teléfono válido (>=7 dígitos) aparecen en CRM. Se reconstruyen/actualizan desde pedidos y se upsert al crear/importar/cambiar pedidos.
-- `CrmScreen`: búsqueda, orden (recientes/nombre/gasto/pedidos), exportar Excel vía `excel`+`share_plus`, detalle con etiquetas, notas, WhatsApp (`wa.me`), crear pedido con datos precargados (`NewOrderScreen` prefill) e historial.
-- Sync CRM por API web: `GET/POST /api/customers` (Firestore REST, `setDocument`), repo hace pull/push best-effort como con pedidos. Reglas Firestore incluyen colección `customers` (staff read/create/update, admin delete).
+- Modelo `CustomerRecord` (`app/lib/core/models/customer.dart`) con teléfono normalizado, etiquetas, notas, métricas, fechas y direcciones usadas (`addresses`); persiste en SharedPreferences (`rm_customers_v1`). Los campos antiguos `visitCount`/`visitHistory` se conservan por compatibilidad pero ya no se registran manualmente.
+- Solo clientes con teléfono válido (>=7 dígitos) aparecen en CRM. Se reconstruyen/actualizan desde pedidos y se upsert al crear/importar/cambiar pedidos; direcciones de entrega se acumulan en `addresses`.
+- `CrmScreen` tiene dos paneles: **Clientes** (búsqueda, orden, exportar Excel, detalle con etiquetas/notas/WhatsApp/crear pedido/historial) y **Visitas**. El panel Visitas muestra contador de visitas de hoy (originadas en la web), separación registrados/anonímicos, lista de registrados con nombre y enlace de referencia, y al tocar el contador abre el historial agrupado por día.
+- Modelo `WebVisit` (`app/lib/core/models/web_visit.dart`) con timestamp, `dayKey` (America/Bogota), flag registrado, nombre/teléfono opcionales y `referenceUrl`/`referenceLabel`. Persiste en SharedPreferences `rm_web_visits_v1` y se descarga vía `GET /api/visits` en el polling de la app.
+- Web: `VisitTracker` global en `layout.tsx` registra cada navegación del cliente (con dedupe por URL/sesión) usando `rm_customer_profile_v1` para clasificar registrado vs anónimo. API `POST /api/visits` escribe en Firestore `webVisits` (o store en memoria en modo demo); `firestore.rules` permite crear visitas públicamente y listarlas solo para staff.
+- Sync CRM por API web: `GET/POST /api/customers` (Firestore REST, `setDocument`), repo hace pull/push best-effort. Reglas Firestore `customers` permiten campos de direcciones/visitas.
+- Web: perfil local `rm_customer_profile_v1` guarda nombre/teléfono/dirección/direcciones usadas; `/cuenta` muestra cliente registrado, direcciones usadas (solo lectura) e historial de pedidos del dispositivo; checkout permite cambiar dirección en nuevo pedido y recuerda direcciones.
 
 ### Stock en web
 - `web/src/lib/seed.ts` incluye `demoIngredientStocks` y `demoRecipes`; `seedMenu()` calcula `maxServings` y marca agotado si no hay insumos.
 - Validación exhaustiva: `getInsufficientItems` en `orders.ts`, endpoint `POST /api/orders/validate`, `CheckoutForm` pre-valida antes de crear pedido, muestra faltantes y reduce/quita del carrito; `createOrder`/API devuelven `insufficientItems`. Si falla la verificación de stock, la validación falla cerrada. En demo el stock no se descuenta por pedido.
+
+### Conexión a Firebase real (Nov 2026)
+- Proyecto Firebase activo: `restaurante-mania-e47a0` (App Web `1:815344581484:web:d29a716690981d3f375149`). `firebase/.firebaserc` apunta a ese proyecto; `firebase/service-account.json` es local/privado (cuenta `firebase-web-admin@restaurante-mania-e47a0.iam.gserviceaccount.com`, rol `datastore.user`) y NO se versiona.
+- Reglas e índices desplegados: `firebase deploy --only firestore:rules,firestore:indexes`. Se eliminó un índice single-field innecesario en `tables` y se quitó BOM de `firestore.rules`.
+- `web/src/lib/firebase/rest.ts` usa OAuth2 JWT firmado con la cuenta de servicio (`FIREBASE_SERVICE_ACCOUNT_JSON`) para las llamadas Firestore REST; así el servidor puede leer/escribir `customers`, `orders` y `webVisits` sin depender de reglas públicas. Si no hay cuenta de servicio, cae al API key para lecturas públicas.
+- `orders.ts` ahora lista/lee/actualiza pedidos desde Firestore cuando hay configuración real (incluye pedidos `source: app` migrados); el modo demo sigue usando `web/.data/orders.json`.
+- Migración idempotente ejecutada con `firebase/scripts/migrate-demo-to-firestore.mjs`: 4 categorías, 13 platos, 43 ingredientes, 10 mesas, configuración del restaurante, 36 pedidos (28 web + 8 app), 28 visitas reconstruidas desde pedidos web y 10 clientes derivados de pedidos. Las visitas de navegación anónimas del demo estaban solo en memoria del servidor y no se pudieron recuperar.
+- Estado local actual: web en `http://localhost:3001` apuntando a Firestore real; `adb reverse tcp:3001 tcp:3001` activo; APK recompilada con `WEB_API_URL=http://localhost:3001`.
+- Netlify no desplegado aún: `netlify.toml` preparado con `base = "web"`, build `npm run build` y adaptador automático de Next.js 16. Falta iniciar sesión Netlify y definir variables de entorno (incluyendo `FIREBASE_SERVICE_ACCOUNT_JSON` y `NEXT_PUBLIC_*`).

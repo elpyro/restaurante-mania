@@ -21,7 +21,7 @@ class OrdersScreen extends StatefulWidget {
 
 class _OrdersScreenState extends State<OrdersScreen> {
   final _searchController = TextEditingController();
-  String _filter = 'active';
+  String _filter = 'toCollect';
 
   @override
   void dispose() {
@@ -31,7 +31,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   bool _matchesFilter(Order order) {
     return switch (_filter) {
-      'active' => order.status.isActive,
+      'toCollect' => order.paymentStatus == PaymentStatus.pending && order.status != OrderStatus.cancelled,
       'pending' => order.status == OrderStatus.pending,
       'preparing' => order.status == OrderStatus.preparing,
       'ready' => order.status == OrderStatus.ready,
@@ -457,8 +457,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   onSelected: (value) => setState(() => _filter = value),
                 ),
                 _FilterChip(
-                  label: 'Activos',
-                  value: 'active',
+                  label: 'Por cobrar',
+                  value: 'toCollect',
                   selected: _filter,
                   onSelected: (value) => setState(() => _filter = value),
                 ),

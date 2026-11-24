@@ -137,11 +137,11 @@ class _KpiGrid extends StatelessWidget {
             onTap: () => onNavigate(AppTab.reports),
           ),
           StatCard(
-            label: 'Pedidos activos',
-            value: '${repository.activeOrders.length}',
-            icon: Icons.receipt_long_outlined,
+            label: 'Pedidos por cobrar',
+            value: '${repository.ordersToCollect.length}',
+            icon: Icons.payments_outlined,
             accent: AppTheme.warning,
-            subtitle: '${repository.pendingCount} pendientes',
+            subtitle: '${repository.ordersToCollect.length} pendientes de pago',
             onTap: () => onNavigate(AppTab.orders),
           ),
           StatCard(
@@ -189,9 +189,9 @@ class _KpiGrid extends StatelessWidget {
             onTap: () => onNavigate(AppTab.reports),
           ),
           StatCard(
-            label: 'Pedidos activos',
-            value: '${repository.activeOrders.length}',
-            icon: Icons.receipt_long_outlined,
+            label: 'Pedidos por cobrar',
+            value: '${repository.ordersToCollect.length}',
+            icon: Icons.payments_outlined,
             accent: AppTheme.warning,
             onTap: () => onNavigate(AppTab.orders),
           ),
@@ -225,9 +225,10 @@ class _KpiGrid extends StatelessWidget {
             onTap: () => onNavigate(AppTab.tables),
           ),
           StatCard(
-            label: 'Pedidos activos',
-            value: '${repository.activeOrders.length}',
-            icon: Icons.receipt_long_outlined,
+            label: 'Pedidos por cobrar',
+            value: '${repository.ordersToCollect.length}',
+            icon: Icons.payments_outlined,
+            accent: AppTheme.warning,
             onTap: () => onNavigate(AppTab.orders),
           ),
           StatCard(

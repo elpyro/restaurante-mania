@@ -76,7 +76,7 @@ export interface Order {
   notes: string;
   createdAt: string;
   updatedAt: string;
-  source: "web";
+  source: "web" | "app";
 }
 
 export interface CartLine {

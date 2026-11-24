@@ -52,6 +52,8 @@ app/ios/Runner.xcodeproj/xcuserdata/
 firebase/functions/lib/
 firebase/functions/node_modules/
 firebase/.firebaserc
+firebase/service-account.json
+firebase/scripts/.migration-token.json
 firebase-debug.log
 firestore-debug.log
 ui-debug.log

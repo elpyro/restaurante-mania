@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useCart } from "./CartProvider";
 import { siteConfig } from "@/lib/site";
 
@@ -9,11 +10,25 @@ const links = [
   { href: "/", label: "Inicio" },
   { href: "/menu", label: "Menú" },
   { href: "/cart", label: "Carrito" },
+  { href: "/cuenta", label: "Mi cuenta" },
 ];
 
 export function Header() {
   const pathname = usePathname();
   const { count, ready } = useCart();
+  const [hasProfile, setHasProfile] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("rm_customer_profile_v1");
+      if (!raw) return;
+      const p = JSON.parse(raw) as { customerPhone?: string; customerName?: string };
+      const phone = (p.customerPhone ?? "").replace(/\D/g, "");
+      if (phone.length >= 7 || (p.customerName ?? "").trim().length >= 2) setHasProfile(true);
+    } catch {
+      /* ignore */
+    }
+  }, [pathname]);
 
   return (
     <header className="sticky top-0 z-40 border-b border-stone-200/70 bg-stone-50/90 backdrop-blur">
@@ -46,6 +61,9 @@ export function Header() {
                   <span className="ml-1.5 inline-grid h-5 min-w-5 place-items-center rounded-full bg-brand-600 px-1 text-[11px] font-bold text-white">
                     {count}
                   </span>
+                ) : null}
+                {link.href === "/cuenta" && hasProfile ? (
+                  <span className="ml-1.5 inline-block h-2 w-2 rounded-full bg-emerald-500" aria-label="Cliente registrado" />
                 ) : null}
               </Link>
             );

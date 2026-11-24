@@ -64,11 +64,6 @@
         { "fieldPath": "role", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "tables",
-      "queryScope": "COLLECTION",
-      "fields": [{ "fieldPath": "status", "order": "ASCENDING" }]
     }
   ],
   "fieldOverrides": []

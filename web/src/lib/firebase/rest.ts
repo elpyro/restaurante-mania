@@ -1,3 +1,5 @@
+import { webcrypto } from "node:crypto";
+
 type FsValue =
   | { stringValue: string }
   | { integerValue: string }
@@ -17,6 +19,19 @@ export interface FirestoreDoc<T = Record<string, unknown>> {
   id: string;
   data: T;
 }
+
+interface ServiceAccount {
+  client_email: string;
+  private_key: string;
+}
+
+type TokenCache = { token: string; expiresAt: number };
+
+const FIRESTORE_SCOPE =
+  "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/cloud-platform";
+
+let tokenCache: TokenCache | null = null;
+let tokenInFlight: Promise<string> | null = null;
 
 function encodeValue(value: unknown): FsValue {
   if (value === null || value === undefined) return { nullValue: null };
@@ -84,6 +99,106 @@ export function isFirestoreConfigured(): boolean {
   return readConfig() !== null;
 }
 
+function readServiceAccount(): ServiceAccount | null {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<ServiceAccount>;
+    if (!parsed.client_email || !parsed.private_key) return null;
+    return { client_email: parsed.client_email, private_key: parsed.private_key };
+  } catch {
+    return null;
+  }
+}
+
+function base64url(value: string | Uint8Array): string {
+  return Buffer.from(value).toString("base64url");
+}
+
+function pemToDer(pem: string): Uint8Array {
+  const body = pem
+    .replace(/-----BEGIN [^-]+-----/g, "")
+    .replace(/-----END [^-]+-----/g, "")
+    .replace(/\s/g, "");
+  return new Uint8Array(Buffer.from(body, "base64"));
+}
+
+async function googleAccessToken(account: ServiceAccount): Promise<string> {
+  if (tokenCache && tokenCache.expiresAt > Date.now() + 60_000) {
+    return tokenCache.token;
+  }
+  if (tokenInFlight) return tokenInFlight;
+
+  tokenInFlight = (async () => {
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const header = { alg: "RS256", typ: "JWT" };
+    const claims = {
+      iss: account.client_email,
+      scope: FIRESTORE_SCOPE,
+      aud: "https://oauth2.googleapis.com/token",
+      iat: issuedAt,
+      exp: issuedAt + 3600,
+    };
+    const unsigned = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claims))}`;
+    const key = await webcrypto.subtle.importKey(
+      "pkcs8",
+      pemToDer(account.private_key),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const signature = await webcrypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      key,
+      Buffer.from(unsigned),
+    );
+    const assertion = `${unsigned}.${base64url(new Uint8Array(signature))}`;
+    const response = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion,
+      }),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(`Google OAuth respondió ${response.status}`);
+    }
+    const payload = (await response.json()) as {
+      access_token?: string;
+      expires_in?: number;
+    };
+    if (!payload.access_token) throw new Error("Google OAuth sin access_token");
+    tokenCache = {
+      token: payload.access_token,
+      expiresAt: Date.now() + (payload.expires_in ?? 3600) * 1000,
+    };
+    return payload.access_token;
+  })();
+
+  try {
+    return await tokenInFlight;
+  } finally {
+    tokenInFlight = null;
+  }
+}
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const account = readServiceAccount();
+  if (!account) return headers;
+  try {
+    const token = await googleAccessToken(account);
+    headers.Authorization = `Bearer ${token}`;
+  } catch (error) {
+    console.warn("[firebase/rest] No se pudo obtener token de servicio:", error);
+  }
+  return headers;
+}
+
 function baseUrl(config: { apiKey: string; projectId: string }): string {
   return `https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/(default)/documents`;
 }
@@ -100,7 +215,10 @@ export async function listDocuments<T>(
   const config = readConfig();
   if (!config) return [];
   const url = `${baseUrl(config)}/${collection}?key=${config.apiKey}&pageSize=200`;
-  const response = await fetch(url, { next: { revalidate } });
+  const response = await fetch(url, {
+    headers: await authHeaders(),
+    next: { revalidate },
+  });
   if (!response.ok) {
     throw new Error(
       `Firestore ${collection} respondió ${response.status}: ${await response.text()}`,
@@ -123,7 +241,10 @@ export async function getDocument<T>(
   const config = readConfig();
   if (!config) return null;
   const url = `${baseUrl(config)}/${collection}/${encodeURIComponent(id)}?key=${config.apiKey}`;
-  const response = await fetch(url, { next: { revalidate } });
+  const response = await fetch(url, {
+    headers: await authHeaders(),
+    next: { revalidate },
+  });
   if (response.status === 404) return null;
   if (!response.ok) {
     throw new Error(`Firestore GET ${collection}/${id} respondió ${response.status}`);
@@ -141,7 +262,7 @@ export async function createDocument(
   const url = `${baseUrl(config)}/${collection}?key=${config.apiKey}`;
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(),
     body: JSON.stringify({ fields: encodeFields(data) }),
     cache: "no-store",
   });
@@ -168,7 +289,7 @@ export async function setDocument(
   const url = `${baseUrl(config)}/${collection}/${encodeURIComponent(id)}?key=${config.apiKey}&${mask}`;
   const response = await fetch(url, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(),
     body: JSON.stringify({ fields }),
     cache: "no-store",
   });

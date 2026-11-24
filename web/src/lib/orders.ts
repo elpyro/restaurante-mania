@@ -1,7 +1,13 @@
 import { cartTotals } from "./cart";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
-import { createDocument, getDocument, isFirestoreConfigured, listDocuments } from "./firebase/rest";
+import {
+  createDocument,
+  getDocument,
+  isFirestoreConfigured,
+  listDocuments,
+  setDocument,
+} from "./firebase/rest";
 import { getMenu } from "./menu";
 import { demoIngredientStocks } from "./seed";
 import type {
@@ -187,6 +193,48 @@ function demoOrders(): Map<string, Order> {
     globalStore.__restauranteOrders = new Map();
   }
   return globalStore.__restauranteOrders;
+}
+
+function mapOrderDoc(doc: {
+  id: string;
+  data: Record<string, unknown>;
+}): Order {
+  const d = doc.data;
+  const items: OrderItem[] = Array.isArray(d.items)
+    ? d.items
+        .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+        .map((entry) => ({
+          menuItemId: String(entry.menuItemId ?? ""),
+          name: String(entry.name ?? ""),
+          price: Number(entry.price ?? 0),
+          quantity: Number(entry.quantity ?? 0),
+          emoji: String(entry.emoji ?? ""),
+          imageUrl: String(entry.imageUrl ?? ""),
+        }))
+    : [];
+  return {
+    id: String(d.id ?? doc.id),
+    code: String(d.code ?? ""),
+    customerName: String(d.customerName ?? ""),
+    customerPhone: String(d.customerPhone ?? ""),
+    deliveryAddress: String(d.deliveryAddress ?? ""),
+    type: (String(d.type ?? "pickup") as Order["type"]),
+    tableNumber:
+      typeof d.tableNumber === "number" && Number.isFinite(d.tableNumber)
+        ? Math.trunc(d.tableNumber)
+        : null,
+    items,
+    subtotal: Number(d.subtotal ?? 0),
+    tax: Number(d.tax ?? 0),
+    total: Number(d.total ?? 0),
+    status: String(d.status ?? "pending") as Order["status"],
+    paymentStatus: String(d.paymentStatus ?? "pending") as Order["paymentStatus"],
+    paymentMethod: String(d.paymentMethod ?? "cash") as Order["paymentMethod"],
+    notes: String(d.notes ?? ""),
+    createdAt: String(d.createdAt ?? new Date().toISOString()),
+    updatedAt: String(d.updatedAt ?? d.createdAt ?? new Date().toISOString()),
+    source: d.source === "app" ? "app" : "web",
+  };
 }
 
 const DATA_DIR = path.join(process.cwd(), ".data");
@@ -433,18 +481,15 @@ export async function createOrder(raw: unknown): Promise<Order> {
 export async function getOrderById(id: string): Promise<Order | null> {
   await loadFromDisk();
   const demo = demoOrders().get(id);
-  if (demo) return demo;
+  if (demo && !isFirestoreConfigured()) return demo;
   if (!isFirestoreConfigured()) return null;
   try {
     const data = await getDocument<Record<string, unknown>>("orders", id);
-    if (!data) return null;
-    return {
-      ...(data as unknown as Order),
-      id,
-    };
-  } catch {
-    return null;
+    if (data) return mapOrderDoc({ id, data });
+  } catch (error) {
+    console.warn("[orders] No se pudo leer el pedido de Firestore:", error);
   }
+  return demo ?? null;
 }
 
 export function listDemoOrders(): Order[] {
@@ -455,6 +500,16 @@ export function listDemoOrders(): Order[] {
 
 export async function listOrders(): Promise<Order[]> {
   await loadFromDisk();
+  if (isFirestoreConfigured()) {
+    try {
+      const orders = await listDocuments("orders", mapOrderDoc, 0);
+      return orders.sort(
+        (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+      );
+    } catch (error) {
+      console.warn("[orders] Firestore no disponible, usando pedidos locales:", error);
+    }
+  }
   return listDemoOrders();
 }
 
@@ -474,7 +529,9 @@ export async function updateOrder(
   patch: { status?: OrderStatus; paymentStatus?: PaymentStatus },
 ): Promise<Order | null> {
   await loadFromDisk();
-  const current = demoOrders().get(id);
+  const cached = demoOrders().get(id);
+  const current =
+    cached ?? (isFirestoreConfigured() ? await getOrderById(id) : null);
   if (!current) return null;
 
   const next: Order = { ...current };
@@ -491,6 +548,15 @@ export async function updateOrder(
     next.paymentStatus = patch.paymentStatus;
   }
   next.updatedAt = new Date().toISOString();
+
+  if (isFirestoreConfigured()) {
+    try {
+      await setDocument("orders", id, next as unknown as Record<string, unknown>);
+    } catch (error) {
+      console.error("[orders] No se pudo actualizar Firestore:", error);
+      throw error;
+    }
+  }
 
   demoOrders().set(id, next);
   await persistOrdersToDisk();

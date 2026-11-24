@@ -35,6 +35,7 @@ export function CheckoutForm() {
   const [errors, setErrors] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [savedAddresses, setSavedAddresses] = useState<string[]>([]);
   const [insufficientItems, setInsufficientItems] = useState<
     Array<{ menuItemId: string; name: string; requested: number; available: number }>
   >([]);
@@ -47,10 +48,18 @@ export function CheckoutForm() {
         customerName?: string;
         customerPhone?: string;
         deliveryAddress?: string;
+        addresses?: string[];
       };
       if (profile.customerName) setCustomerName(profile.customerName);
       if (profile.customerPhone) setCustomerPhone(profile.customerPhone);
       if (profile.deliveryAddress) setDeliveryAddress(profile.deliveryAddress);
+      if (Array.isArray(profile.addresses)) {
+        setSavedAddresses(
+          profile.addresses.filter((a): a is string => typeof a === "string" && a.trim().length > 0),
+        );
+      } else if (profile.deliveryAddress?.trim()) {
+        setSavedAddresses([profile.deliveryAddress.trim()]);
+      }
       if (profile.customerPhone) setProfileLoaded(true);
     } catch {
       /* ignorar perfil inválido */
@@ -212,15 +221,21 @@ export function CheckoutForm() {
         window.localStorage.setItem("rm_last_order_id", order.id);
         const phoneDigits = customerPhone.replace(/\D/g, "");
         if (phoneDigits.length >= 7 || customerName.trim().length >= 2) {
+          const addr = deliveryAddress.trim();
+          const nextAddresses = addr
+            ? [addr, ...savedAddresses.filter((a) => a.toLowerCase() !== addr.toLowerCase())].slice(0, 10)
+            : savedAddresses;
           window.localStorage.setItem(
             CUSTOMER_PROFILE_KEY,
             JSON.stringify({
               customerName: customerName.trim(),
               customerPhone: customerPhone.trim(),
-              deliveryAddress: deliveryAddress.trim(),
+              deliveryAddress: addr,
+              addresses: nextAddresses,
               updatedAt: new Date().toISOString(),
             }),
           );
+          setSavedAddresses(nextAddresses);
         }
       } catch {
         /* el pedido ya fue creado en el servidor */
@@ -327,6 +342,27 @@ export function CheckoutForm() {
                 autoComplete="street-address"
                 maxLength={160}
               />
+              {savedAddresses.length > 0 ? (
+                <div className="mt-2">
+                  <p className="mb-1 text-xs font-medium text-ink-500">Direcciones usadas:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {savedAddresses.map((addr) => (
+                      <button
+                        key={addr}
+                        type="button"
+                        onClick={() => setDeliveryAddress(addr)}
+                        className={`rounded-full border px-3 py-1 text-xs ${
+                          deliveryAddress.trim().toLowerCase() === addr.toLowerCase()
+                            ? "border-brand-500 bg-brand-50 text-brand-700"
+                            : "border-stone-300 text-ink-600 hover:border-stone-400"
+                        }`}
+                      >
+                        {addr}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </label>
           ) : null}
         </section>

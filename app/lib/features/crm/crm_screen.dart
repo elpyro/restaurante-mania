@@ -10,12 +10,15 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/data/repository.dart';
 import '../../core/models/customer.dart';
 import '../../core/models/order.dart';
+import '../../core/models/web_visit.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/common.dart';
 import '../orders/new_order_screen.dart';
 
 enum _CrmSort { recent, name, spent, orders }
+
+enum _CrmPanel { customers, visits }
 
 class CrmScreen extends StatefulWidget {
   const CrmScreen({super.key});
@@ -28,6 +31,9 @@ class _CrmScreenState extends State<CrmScreen> {
   final _search = TextEditingController();
   String _query = '';
   _CrmSort _sort = _CrmSort.recent;
+  _CrmPanel _panel = _CrmPanel.customers;
+  bool _showVisitHistory = false;
+  bool _refreshingVisits = false;
   bool _exporting = false;
 
   @override
@@ -119,139 +125,332 @@ class _CrmScreenState extends State<CrmScreen> {
   @override
   Widget build(BuildContext context) {
     final repo = context.watch<RestaurantRepository>();
-    final customers = _filtered(repo.crmCustomers);
-    final total = repo.crmCustomers.where((c) => c.hasPhone).length;
-    final repeat = repo.crmCustomers.where((c) => c.hasPhone && c.orderCount > 1).length;
-    final withTags = repo.crmCustomers.where((c) => c.hasPhone && c.tags.isNotEmpty).length;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
         children: [
-          GridView.count(
-            crossAxisCount: 3,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1.25,
+          Row(
             children: [
-              StatCard(
-                label: 'Clientes',
-                value: '$total',
-                icon: Icons.people_outline_rounded,
-                accent: const Color(0xFF2563EB),
+              Expanded(
+                child: _PanelChip(
+                  label: 'Clientes',
+                  icon: Icons.people_outline_rounded,
+                  selected: _panel == _CrmPanel.customers,
+                  onTap: () => setState(() {
+                    _panel = _CrmPanel.customers;
+                    _showVisitHistory = false;
+                  }),
+                ),
               ),
-              StatCard(
-                label: 'Recurrentes',
-                value: '$repeat',
-                icon: Icons.repeat_rounded,
-                accent: AppTheme.brand,
-              ),
-              StatCard(
-                label: 'Con etiquetas',
-                value: '$withTags',
-                icon: Icons.label_outline_rounded,
-                accent: AppTheme.success,
+              const SizedBox(width: 8),
+              Expanded(
+                child: _PanelChip(
+                  label: 'Visitas',
+                  icon: Icons.visibility_outlined,
+                  badge: '${repo.todayWebVisitCount}',
+                  selected: _panel == _CrmPanel.visits,
+                  onTap: () => setState(() => _panel = _CrmPanel.visits),
+                ),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _search,
-                  onChanged: (v) => setState(() => _query = v.trim()),
-                  decoration: InputDecoration(
-                    hintText: 'Buscar nombre, teléfono, etiqueta...',
-                    prefixIcon: const Icon(Icons.search_rounded),
-                    suffixIcon: _query.isEmpty
-                        ? null
-                        : IconButton(
-                            onPressed: () {
-                              _search.clear();
-                              setState(() => _query = '');
-                            },
-                            icon: const Icon(Icons.close_rounded),
-                          ),
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: const BorderSide(color: Color(0xFFEDEAE6)),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: const BorderSide(color: Color(0xFFEDEAE6)),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              PopupMenuButton<_CrmSort>(
-                tooltip: 'Ordenar',
-                initialValue: _sort,
-                onSelected: (v) => setState(() => _sort = v),
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: _CrmSort.recent, child: Text('Más recientes')),
-                  PopupMenuItem(value: _CrmSort.name, child: Text('Nombre')),
-                  PopupMenuItem(value: _CrmSort.spent, child: Text('Mayor gasto')),
-                  PopupMenuItem(value: _CrmSort.orders, child: Text('Más pedidos')),
-                ],
-                child: Container(
-                  height: 52,
-                  width: 52,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFEDEAE6)),
-                  ),
-                  child: const Icon(Icons.sort_rounded, color: AppTheme.ink),
-                ),
-              ),
-              const SizedBox(width: 8),
-              InkWell(
-                onTap: _exporting ? null : () => _exportExcel(customers),
-                borderRadius: BorderRadius.circular(14),
-                child: Container(
-                  height: 52,
-                  width: 52,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFEDEAE6)),
-                  ),
-                  child: _exporting
-                      ? const Padding(
-                          padding: EdgeInsets.all(14),
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.download_rounded, color: AppTheme.ink),
-                ),
-              ),
-            ],
-          ),
-          const SectionHeader(title: 'Clientes con teléfono'),
-          if (customers.isEmpty)
-            const EmptyState(
-              icon: Icons.person_search_outlined,
-              title: 'Sin clientes',
-              message:
-                  'Solo aparecen clientes con número telefónico registrado en pedidos.',
-            )
+          if (_panel == _CrmPanel.customers)
+            ..._buildCustomersPanel(context, repo)
           else
-            ...customers.map((c) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: _CustomerCard(
-                    customer: c,
-                    onTap: () => _openDetail(context, c),
-                  ),
-                )),
+            ..._buildVisitsPanel(repo),
         ],
       ),
     );
+  }
+
+  List<Widget> _buildCustomersPanel(
+    BuildContext context,
+    RestaurantRepository repo,
+  ) {
+    final customers = _filtered(repo.crmCustomers);
+    final total = repo.crmCustomers.where((c) => c.hasPhone).length;
+    final repeat =
+        repo.crmCustomers.where((c) => c.hasPhone && c.orderCount > 1).length;
+    final withTags = repo.crmCustomers
+        .where((c) => c.hasPhone && c.tags.isNotEmpty)
+        .length;
+
+    return [
+      GridView.count(
+        crossAxisCount: 3,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 1.25,
+        children: [
+          StatCard(
+            label: 'Clientes',
+            value: '$total',
+            icon: Icons.people_outline_rounded,
+            accent: const Color(0xFF2563EB),
+          ),
+          StatCard(
+            label: 'Recurrentes',
+            value: '$repeat',
+            icon: Icons.repeat_rounded,
+            accent: AppTheme.brand,
+          ),
+          StatCard(
+            label: 'Con etiquetas',
+            value: '$withTags',
+            icon: Icons.label_outline_rounded,
+            accent: AppTheme.success,
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _search,
+              onChanged: (v) => setState(() => _query = v.trim()),
+              decoration: InputDecoration(
+                hintText: 'Buscar nombre, teléfono, etiqueta...',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
+                          _search.clear();
+                          setState(() => _query = '');
+                        },
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: Color(0xFFEDEAE6)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: const BorderSide(color: Color(0xFFEDEAE6)),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          PopupMenuButton<_CrmSort>(
+            tooltip: 'Ordenar',
+            initialValue: _sort,
+            onSelected: (v) => setState(() => _sort = v),
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: _CrmSort.recent, child: Text('Más recientes')),
+              PopupMenuItem(value: _CrmSort.name, child: Text('Nombre')),
+              PopupMenuItem(value: _CrmSort.spent, child: Text('Mayor gasto')),
+              PopupMenuItem(value: _CrmSort.orders, child: Text('Más pedidos')),
+            ],
+            child: Container(
+              height: 52,
+              width: 52,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFEDEAE6)),
+              ),
+              child: const Icon(Icons.sort_rounded, color: AppTheme.ink),
+            ),
+          ),
+          const SizedBox(width: 8),
+          InkWell(
+            onTap: _exporting ? null : () => _exportExcel(customers),
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              height: 52,
+              width: 52,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFEDEAE6)),
+              ),
+              child: _exporting
+                  ? const Padding(
+                      padding: EdgeInsets.all(14),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.download_rounded, color: AppTheme.ink),
+            ),
+          ),
+        ],
+      ),
+      const SectionHeader(title: 'Clientes con teléfono'),
+      if (customers.isEmpty)
+        const EmptyState(
+          icon: Icons.person_search_outlined,
+          title: 'Sin clientes',
+          message:
+              'Solo aparecen clientes con número telefónico registrado en pedidos.',
+        )
+      else
+        ...customers.map((c) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _CustomerCard(
+                customer: c,
+                onTap: () => _openDetail(context, c),
+              ),
+            )),
+    ];
+  }
+
+  List<Widget> _buildVisitsPanel(RestaurantRepository repo) {
+    if (_showVisitHistory) return _buildVisitHistory(repo);
+
+    final today = repo.todayWebVisits;
+    final registered = today.where((v) => v.registered).toList();
+    final anonymous = today.where((v) => !v.registered).toList();
+
+    return [
+      _VisitCounterCard(
+        count: today.length,
+        onTap: () => setState(() => _showVisitHistory = true),
+      ),
+      const SizedBox(height: 10),
+      GridView.count(
+        crossAxisCount: 2,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 1.5,
+        children: [
+          StatCard(
+            label: 'Registrados hoy',
+            value: '${registered.length}',
+            icon: Icons.verified_user_outlined,
+            accent: const Color(0xFF2563EB),
+          ),
+          StatCard(
+            label: 'Anónimos hoy',
+            value: '${anonymous.length}',
+            icon: Icons.person_off_outlined,
+            accent: AppTheme.brand,
+          ),
+        ],
+      ),
+      const SizedBox(height: 14),
+      const SectionHeader(title: 'Clientes registrados'),
+      if (registered.isEmpty)
+        const EmptyState(
+          icon: Icons.verified_user_outlined,
+          title: 'Sin visitas registradas hoy',
+          message: 'Los clientes con perfil en la web aparecerán aquí.',
+        )
+      else
+        ...registered.map(
+          (visit) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _VisitTile(visit: visit),
+          ),
+        ),
+      const SizedBox(height: 8),
+      const SectionHeader(title: 'Clientes anónimos'),
+      if (anonymous.isEmpty)
+        const EmptyState(
+          icon: Icons.person_off_outlined,
+          title: 'Sin visitas anónimas hoy',
+          message: 'Las visitas sin perfil guardado aparecerán aquí.',
+        )
+      else
+        ...anonymous.map(
+          (visit) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _VisitTile(visit: visit),
+          ),
+        ),
+    ];
+  }
+
+  List<Widget> _buildVisitHistory(RestaurantRepository repo) {
+    final byDay = repo.webVisitsByDay;
+    final firstDay = byDay.keys.firstOrNull;
+    return [
+      Row(
+        children: [
+          IconButton(
+            onPressed: () => setState(() => _showVisitHistory = false),
+            icon: const Icon(Icons.arrow_back_rounded),
+            tooltip: 'Volver a visitas de hoy',
+          ),
+          const Expanded(
+            child: Text(
+              'Historial diario',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppTheme.ink),
+            ),
+          ),
+          IconButton(
+            onPressed: _refreshingVisits
+                ? null
+                : () async {
+                    setState(() => _refreshingVisits = true);
+                    await repo.pullServerVisits();
+                    if (mounted) setState(() => _refreshingVisits = false);
+                  },
+            icon: _refreshingVisits
+                ? const SizedBox(
+                    height: 18,
+                    width: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh_rounded),
+            tooltip: 'Actualizar visitas',
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      if (byDay.isEmpty)
+        const EmptyState(
+          icon: Icons.calendar_month_outlined,
+          title: 'Sin historial de visitas',
+          message: 'Las visitas realizadas en la web se agruparán por día aquí.',
+        )
+      else
+        ...byDay.entries.map((entry) {
+          final visits = entry.value;
+          final registered = visits.where((v) => v.registered).length;
+          return Card(
+            margin: const EdgeInsets.only(bottom: 10),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: ExpansionTile(
+              initiallyExpanded: entry.key == firstDay,
+              leading: const Icon(Icons.event_outlined, color: AppTheme.brand),
+              title: Text(
+                entry.key,
+                style: const TextStyle(fontWeight: FontWeight.w800, color: AppTheme.ink),
+              ),
+              subtitle: Text(
+                '${visits.length} visita${visits.length == 1 ? '' : 's'} · $registered registrados · ${visits.length - registered} anónimos',
+                style: const TextStyle(fontSize: 11.5, color: Color(0xFF78716C)),
+              ),
+              children: [
+                ...visits.take(40).map(
+                      (visit) => Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                        child: _VisitTile(visit: visit),
+                      ),
+                    ),
+                if (visits.length > 40)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text(
+                      'Y ${visits.length - 40} visitas más de este día',
+                      style: const TextStyle(fontSize: 11, color: Color(0xFF78716C)),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        }),
+    ];
   }
 
   void _openDetail(BuildContext context, CustomerRecord customer) {
@@ -514,6 +713,15 @@ class _CustomerDetailSheetState extends State<_CustomerDetailSheet> {
                 ),
                 _InfoRow(icon: Icons.location_on_outlined, label: 'Dirección', value: customer.address.isNotEmpty ? customer.address : 'No registrada'),
                 _InfoRow(icon: Icons.history_rounded, label: 'Cliente desde', value: formatDateTime(customer.createdAt)),
+                if (customer.addresses.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  const Text('Direcciones usadas', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF57534E))),
+                  const SizedBox(height: 4),
+                  ...customer.addresses.map((a) => Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Text('• $a', style: const TextStyle(fontSize: 12, color: Color(0xFF78716C))),
+                      )),
+                ],
                 const SizedBox(height: 16),
                 const SectionHeader(title: 'Etiquetas'),
                 Wrap(
@@ -696,6 +904,250 @@ class _InfoRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _PanelChip extends StatelessWidget {
+  const _PanelChip({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+    this.badge,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+  final String? badge;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          height: 52,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: selected ? AppTheme.brand : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? AppTheme.brand : const Color(0xFFEDEAE6),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 18,
+                color: selected ? Colors.white : AppTheme.ink,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: selected ? Colors.white : AppTheme.ink,
+                ),
+              ),
+              if (badge != null) ...[
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? Colors.white.withValues(alpha: 0.22)
+                        : AppTheme.brand.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    badge!,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: selected ? Colors.white : AppTheme.brandDark,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VisitCounterCard extends StatelessWidget {
+  const _VisitCounterCard({required this.count, required this.onTap});
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: AppTheme.brand,
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(Icons.visibility_rounded, color: Colors.white),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Visitas de hoy',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white.withValues(alpha: 0.85),
+                      ),
+                    ),
+                    Text(
+                      '$count',
+                      style: const TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        height: 1.1,
+                      ),
+                    ),
+                    Text(
+                      'Toca para ver el historial diario',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: Colors.white.withValues(alpha: 0.8),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: Colors.white),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VisitTile extends StatelessWidget {
+  const _VisitTile({required this.visit});
+
+  final WebVisit visit;
+
+  @override
+  Widget build(BuildContext context) {
+    final canOpen = visit.safeReferenceUrl.isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFEDEAE6)),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 19,
+            backgroundColor: visit.registered
+                ? const Color(0xFF2563EB).withValues(alpha: 0.12)
+                : AppTheme.brand.withValues(alpha: 0.12),
+            child: Icon(
+              visit.registered
+                  ? Icons.verified_user_outlined
+                  : Icons.person_outline_rounded,
+              size: 18,
+              color: visit.registered ? const Color(0xFF2563EB) : AppTheme.brandDark,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  visit.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.ink,
+                  ),
+                ),
+                if (visit.registered && visit.customerPhone.isNotEmpty)
+                  Text(
+                    visit.customerPhone,
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF78716C)),
+                  ),
+                Text(
+                  formatDateTime(visit.occurredAt),
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF78716C)),
+                ),
+                const SizedBox(height: 4),
+                InkWell(
+                  onTap: canOpen ? () => _launchReference(visit.referenceUrl) : null,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.link_rounded,
+                        size: 13,
+                        color: canOpen ? AppTheme.brandDark : const Color(0xFFA8A29E),
+                      ),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          visit.referenceLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: canOpen ? AppTheme.brandDark : const Color(0xFFA8A29E),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _launchReference(String url) async {
+  final uri = Uri.tryParse(url);
+  if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) return;
+  if (await canLaunchUrl(uri)) {
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 }
 

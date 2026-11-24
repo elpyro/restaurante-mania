@@ -16,6 +16,7 @@ import '../models/order.dart';
 import '../models/restaurant_settings.dart';
 import '../models/restaurant_table.dart';
 import '../models/role.dart';
+import '../models/web_visit.dart';
 import '../services/connectivity_service.dart';
 import '../utils/formatters.dart';
 import 'seed_data.dart';
@@ -56,6 +57,7 @@ class RestaurantRepository extends ChangeNotifier {
     required List<Order> orders,
     required List<RestaurantTable> tables,
     required List<CustomerRecord> customers,
+    required List<WebVisit> webVisits,
     required RestaurantSettings settings,
     required AppUser? currentUser,
     required DateTime? lastSync,
@@ -69,6 +71,7 @@ class RestaurantRepository extends ChangeNotifier {
         _orders = orders,
         _tables = tables,
         _customers = customers,
+        _webVisits = webVisits,
         _settings = settings,
         _currentUser = currentUser,
         _lastSync = lastSync,
@@ -86,6 +89,7 @@ class RestaurantRepository extends ChangeNotifier {
   static const _kLastSync = 'rm_last_sync_v1';
   static const _kServerUrl = 'rm_server_url_v1';
   static const _kCustomers = 'rm_customers_v1';
+  static const _kWebVisits = 'rm_web_visits_v1';
 
   /// URL de la web pública para importar los pedidos creados en línea.
   /// Se puede cambiar desde Configuración o con
@@ -107,6 +111,7 @@ class RestaurantRepository extends ChangeNotifier {
   List<Order> _orders;
   List<RestaurantTable> _tables;
   List<CustomerRecord> _customers;
+  List<WebVisit> _webVisits;
   RestaurantSettings _settings;
   AppUser? _currentUser;
   DateTime? _lastSync;
@@ -168,6 +173,7 @@ class RestaurantRepository extends ChangeNotifier {
       _kCustomers,
       CustomerRecord.fromJson,
     );
+    final webVisits = _readList(prefs, _kWebVisits, WebVisit.fromJson);
 
     final repository = RestaurantRepository._(
       prefs: prefs,
@@ -185,6 +191,7 @@ class RestaurantRepository extends ChangeNotifier {
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
       tables: tables.isEmpty ? SeedData.tables() : tables,
       customers: customers,
+      webVisits: webVisits,
       settings: settings,
       currentUser: currentUser,
       lastSync: lastSync,
@@ -442,10 +449,12 @@ class RestaurantRepository extends ChangeNotifier {
       if (isOnline) {
         unawaited(pullServerOrders());
         unawaited(pullServerCustomers());
+        unawaited(pullServerVisits());
       }
     });
     unawaited(pullServerOrders());
     unawaited(pullServerCustomers());
+    unawaited(pullServerVisits());
   }
 
   /// Prueba la conexión con la API de la web pública.
@@ -688,6 +697,54 @@ class RestaurantRepository extends ChangeNotifier {
       }
     } catch (_) {
       // Best-effort.
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// Descarga las visitas registradas por la web pública.
+  ///
+  /// Las visitas se identifican por `id`, por lo que reprocesar el feed no
+  /// duplica contadores. Los datos quedan en SharedPreferences para que el
+  /// panel CRM funcione también sin conexión.
+  Future<int> pullServerVisits() async {
+    if (_serverUrl.isEmpty) return 0;
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final request = await client.getUrl(Uri.parse('$_serverUrl/api/visits'));
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final response = await request.close();
+      if (response.statusCode != 200) {
+        await response.drain<void>();
+        return 0;
+      }
+      final body = await utf8.decoder.bind(response).join();
+      final decoded = jsonDecode(body);
+      final rawList = decoded is Map<String, dynamic> ? decoded['visits'] : null;
+      if (rawList is! List) return 0;
+
+      final existingIds = _webVisits.map((v) => v.id).toSet();
+      final imported = <WebVisit>[];
+      for (final raw in rawList) {
+        if (raw is! Map<String, dynamic>) continue;
+        final visit = WebVisit.fromJson(raw);
+        if (visit.id.isEmpty || existingIds.contains(visit.id)) continue;
+        existingIds.add(visit.id);
+        imported.add(visit);
+      }
+      if (imported.isEmpty) return 0;
+
+      _webVisits = [..._webVisits, ...imported]
+        ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
+      if (_webVisits.length > 2000) {
+        _webVisits = _webVisits.take(2000).toList();
+      }
+      await _persistWebVisits();
+      notifyListeners();
+      return imported.length;
+    } catch (_) {
+      return 0;
     } finally {
       client.close(force: true);
     }
@@ -966,6 +1023,13 @@ class RestaurantRepository extends ChangeNotifier {
 
   List<Order> get activeOrders =>
       _orders.where((order) => order.status.isActive).toList();
+
+  /// Pedidos pendientes por cobrar (no cancelados).
+  List<Order> get ordersToCollect => _orders
+      .where((order) =>
+          order.paymentStatus == PaymentStatus.pending &&
+          order.status != OrderStatus.cancelled)
+      .toList();
 
   Order? orderById(String id) {
     final matches = _orders.where((order) => order.id == id);
@@ -1862,6 +1926,13 @@ class RestaurantRepository extends ChangeNotifier {
     );
   }
 
+  Future<void> _persistWebVisits() async {
+    await _prefs.setString(
+      _kWebVisits,
+      jsonEncode(_webVisits.map((v) => v.toJson()).toList()),
+    );
+  }
+
   List<CustomerRecord> get crmCustomers => _customers
       .where((c) => c.hasPhone)
       .toList()
@@ -1890,6 +1961,56 @@ class RestaurantRepository extends ChangeNotifier {
     await _pushCustomerToServer(updated);
   }
 
+  // ---------------------------------------------------------------------------
+  // Visitas originadas en la web
+  // ---------------------------------------------------------------------------
+
+  static String _todayKey() {
+    final now = DateTime.now();
+    return '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
+
+  List<WebVisit> get webVisits => List.unmodifiable(_webVisits);
+
+  List<WebVisit> get todayWebVisits => webVisitsForDay(_todayKey());
+
+  int get todayWebVisitCount => todayWebVisits.length;
+
+  List<WebVisit> webVisitsForDay(String dayKey) {
+    final list = _webVisits.where((v) => v.dayKey == dayKey).toList()
+      ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
+    return list;
+  }
+
+  List<WebVisit> get registeredWebVisits =>
+      _webVisits.where((v) => v.registered).toList()
+        ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
+
+  List<WebVisit> get anonymousWebVisits =>
+      _webVisits.where((v) => !v.registered).toList()
+        ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
+
+  /// Historial agrupado por día, del más reciente al más antiguo.
+  Map<String, List<WebVisit>> get webVisitsByDay {
+    final grouped = <String, List<WebVisit>>{};
+    for (final visit in _webVisits) {
+      grouped.putIfAbsent(visit.dayKey, () => []).add(visit);
+    }
+    final sortedKeys = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
+    return {
+      for (final key in sortedKeys)
+        key: (grouped[key]!..sort((a, b) => b.occurredAt.compareTo(a.occurredAt)))
+    };
+  }
+
+  List<String> _mergeAddresses(List<String> existing, String address) {
+    final clean = address.trim();
+    if (clean.isEmpty) return existing;
+    final exists = existing.any((a) => a.toLowerCase() == clean.toLowerCase());
+    if (exists) return existing;
+    return [...existing, clean];
+  }
+
   void _upsertCustomerFromOrder(Order order) {
     final normalized = order.customerPhone.replaceAll(RegExp(r'\D'), '');
     if (normalized.length < 7) return;
@@ -1913,6 +2034,7 @@ class RestaurantRepository extends ChangeNotifier {
           orderCount: 1,
           totalSpent: order.status == OrderStatus.cancelled ? 0 : order.total,
           lastType: order.type,
+          addresses: address.isEmpty ? const [] : [address],
         ),
       ];
       return;
@@ -1938,6 +2060,7 @@ class RestaurantRepository extends ChangeNotifier {
           ? order.customerPhone.trim()
           : current.phone,
       address: address.isNotEmpty ? address : current.address,
+      addresses: _mergeAddresses(current.addresses, address),
       updatedAt: now,
       createdAt:
           first.createdAt.isBefore(current.createdAt) ? first.createdAt : current.createdAt,
@@ -1975,6 +2098,7 @@ class RestaurantRepository extends ChangeNotifier {
           orderCount: 1,
           totalSpent: order.status == OrderStatus.cancelled ? 0 : order.total,
           lastType: order.type,
+          addresses: address.isEmpty ? const [] : [address],
         );
       } else {
         final isLast = !order.createdAt.isBefore(current.lastOrderAt);
@@ -1985,6 +2109,7 @@ class RestaurantRepository extends ChangeNotifier {
               ? order.customerPhone.trim()
               : current.phone,
           address: address.isNotEmpty ? address : current.address,
+          addresses: _mergeAddresses(current.addresses, address),
           createdAt: isFirst ? order.createdAt : current.createdAt,
           lastOrderAt: isLast ? order.createdAt : current.lastOrderAt,
           orderCount: current.orderCount + 1,
