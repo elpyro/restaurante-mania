@@ -2,6 +2,8 @@ import type { MetadataRoute } from "next";
 import { getPublicMenu } from "@/lib/menu";
 import { absoluteUrl } from "@/lib/site";
 
+export const dynamic = "force-dynamic";
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const { items } = await getPublicMenu();
   const now = new Date();

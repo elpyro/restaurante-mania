@@ -2,7 +2,7 @@ import { formatCOP } from "@/lib/format";
 import { getPublicMenu } from "@/lib/menu";
 import { siteConfig } from "@/lib/site";
 
-export const revalidate = 3600;
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   const { categories, items, source } = await getPublicMenu();

@@ -6,6 +6,8 @@ import { getFeaturedItems, getPublicMenu } from "@/lib/menu";
 import { restaurantJsonLd, websiteJsonLd } from "@/lib/seo";
 import { siteConfig, whatsappUrl } from "@/lib/site";
 
+export const dynamic = "force-dynamic";
+
 export default async function HomePage() {
   const [{ categories, items, source }, featured] = await Promise.all([
     getPublicMenu(),

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getPublicMenu } from "@/lib/menu";
 
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   const menu = await getPublicMenu();
@@ -13,6 +13,6 @@ export async function GET() {
       categories: menu.categories,
       items: menu.items,
     },
-    { headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300" } },
+    { headers: { "Cache-Control": "no-store" } },
   );
 }

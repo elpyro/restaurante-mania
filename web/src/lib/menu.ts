@@ -1,10 +1,16 @@
 import { cache } from "react";
 import { demoIngredientStocks, demoRecipes, seedCategories, seedMenuItems } from "./seed";
 import { slugify } from "./format";
-import { isFirestoreConfigured, listDocuments } from "./firebase/rest";
+import {
+  getDocument,
+  isFirestoreConfigured,
+  listDocuments,
+  setDocument,
+} from "./firebase/rest";
 import type { Category, MenuItem, MenuItemStatus, RecipeIngredient } from "./types";
 
 const VALID_STATUS: MenuItemStatus[] = ["available", "unavailable", "limited"];
+const WRITABLE_STATUS: MenuItemStatus[] = ["available", "unavailable"];
 
 function asString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
@@ -143,7 +149,7 @@ async function loadMenu(): Promise<MenuData> {
           id: doc.id,
           stock: asNumber(doc.data.stock, 0),
         }),
-        15,
+        0,
       ).catch(() => []),
     ]);
     const stocks =
@@ -153,7 +159,7 @@ async function loadMenu(): Promise<MenuData> {
     const items = await listDocuments(
       "menuItems",
       (doc) => mapMenuItem(doc, categories, stocks),
-      15,
+      0,
     );
     if (categories.length === 0 || items.length === 0) return seedMenu();
     categories.sort((a, b) => a.order - b.order);
@@ -174,6 +180,34 @@ async function loadMenu(): Promise<MenuData> {
 }
 
 export const getMenu = cache(loadMenu);
+
+export type WritableMenuItemStatus = Extract<
+  MenuItemStatus,
+  "available" | "unavailable"
+>;
+
+/** Actualiza el estado real del plato en Firestore (catálogo compartido). */
+export async function setMenuItemStatus(
+  id: string,
+  status: unknown,
+): Promise<{ id: string; status: WritableMenuItemStatus } | null> {
+  const documentId = id.trim();
+  if (!documentId || !WRITABLE_STATUS.includes(status as WritableMenuItemStatus)) {
+    return null;
+  }
+  if (!isFirestoreConfigured()) return null;
+
+  const next = status as WritableMenuItemStatus;
+  const existing = await getDocument<Record<string, unknown>>(
+    "menuItems",
+    documentId,
+    0,
+  );
+  if (!existing) return null;
+
+  await setDocument("menuItems", documentId, { status: next });
+  return { id: documentId, status: next };
+}
 
 export function isAvailable(menuItem: MenuItem): boolean {
   return menuItem.status !== "unavailable";

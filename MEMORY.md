@@ -1,6 +1,6 @@
 # MEMORY.md â€” Resumen Vivo de Decisiones TÃ©cnicas
 
-> Ãšltima actualizaciÃ³n: 2026-11-22
+> Última actualización: 2026-11-24
 
 ## Stack Real Entregado
 
@@ -255,3 +255,13 @@ ole.canViewRecipe (admin/cocinero). La receta estructurada y los pasos
 - Las visitas históricas sin `visitorId` se deduplican en la API por `dayKey + teléfono normalizado` (registered) o por id (anónimas). La app reemplaza su copia local con el feed canónico, eliminando duplicados antiguos al sincronizar.
 - Verificado en local contra Firestore real: `/api/visits` pasó de 40 a 14 visitas canónicas (7 para 2026-11-24); `/api/menu` pasó de 13 a 12 platos y ya no expone `item-cazuela-mariscos`; `POST /api/orders/validate` con `stockOnly` rechaza ese plato por falta de ingredientes y acepta `item-empanadas`.
 - Checks: `npm run -s typecheck`, `npm run -s test` (27 tests) y `flutter analyze --no-fatal-infos` OK.
+
+### Sincronización de disponibilidad del menú (Nov 2026)
+- Causa del reporte "limonada agotada se pudo comprar": `toggleAvailability()` de la app solo escribía `SharedPreferences` (`rm_menu_items_v1`); nunca tocaba Firestore. La web lee Firestore, por eso seguía viendo `item-limonada-coco` como `available`. No apuntaba a otro proyecto: `/api/health` reporta `mode=firestore`, el pedido con 2 limonadas se creó en `restaurante-mania-e47a0` y el documento real tenía `status: "available"`.
+- Nuevo contrato: `PATCH /api/menu/[id]` con `{ "status": "available" | "unavailable" }`. Valida el estado, verifica que el plato exista y escribe solo el campo `status` en `menuItems/<id>` mediante `setDocument` (REST + cuenta de servicio). La web no usa secretos en cliente.
+- La app hace push del toggle a ese endpoint y mantiene una cola local `rm_pending_menu_statuses_v1` para cambios offline; al reconectar o cada 12 s hace flush. `pullServerMenuStatus()` reconcilia el estado local con `GET /api/menu/status` (feed interno de los 13 platos, incluidos agotados; `/api/menu` es público y no los devuelve), dando prioridad a los cambios pendientes de envío. `resetDemoData()` limpia la cola.
+- Para evitar ventanas de venta con datos viejos, `/api/menu`, `/api/orders/validate`, home, `/menu`, detalle, `llms.txt` y `sitemap.xml` son dinámicos (`force-dynamic`); las lecturas de platos/insumos en `menu.ts` usan `revalidate: 0`. `getPublicMenu()` sigue ocultando agotados y el checkout los rechaza.
+- Estado actual corregido: `menuItems/item-limonada-coco.status = "unavailable"` en Firestore real. `/api/menu` pasó de 12 a 11 platos y ya no expone la limonada; `POST /api/orders/validate` con `stockOnly` para ese plato devuelve 400.
+- APK release recompilada con `--dart-define=WEB_API_URL=http://localhost:3001`, instalada en `a791bc16`; `adb reverse tcp:3001 tcp:3001` activo. La app al iniciar ya consulta `/api/menu` (visible en logs del servidor) y bajará el estado agotado.
+- Checks tras el cambios: `npm run -s typecheck`, `npm run -s test` (30 tests), `flutter analyze --no-fatal-infos`, `flutter test` (22 tests) y `npm run -s build` OK, sin advertencias de render estático.
+

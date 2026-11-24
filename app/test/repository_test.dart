@@ -145,6 +145,11 @@ void main() {
     await repository.toggleAvailability(item.id);
     expect(repository.menuItems.first.isAvailable, isFalse);
 
+    final prefs = await SharedPreferences.getInstance();
+    final pending = prefs.getString('rm_pending_menu_statuses_v1');
+    expect(pending, contains(item.id));
+    expect(pending, contains('unavailable'));
+
     final reloaded =
         await RestaurantRepository.load(watchConnectivity: false);
     addTearDown(reloaded.dispose);

@@ -58,10 +58,12 @@ class RestaurantRepository extends ChangeNotifier {
     required List<RestaurantTable> tables,
     required List<CustomerRecord> customers,
     required List<WebVisit> webVisits,
+    required Map<String, String> pendingMenuStatuses,
     required RestaurantSettings settings,
     required AppUser? currentUser,
     required DateTime? lastSync,
     required String serverUrl,
+    required bool webSyncEnabled,
   })  : _prefs = prefs,
         _connectivity = connectivity,
         _ownsConnectivity = ownsConnectivity,
@@ -72,10 +74,12 @@ class RestaurantRepository extends ChangeNotifier {
         _tables = tables,
         _customers = customers,
         _webVisits = webVisits,
+        _pendingMenuStatuses = pendingMenuStatuses,
         _settings = settings,
         _currentUser = currentUser,
         _lastSync = lastSync,
-        _serverUrl = serverUrl {
+        _serverUrl = serverUrl,
+        _webSyncEnabled = webSyncEnabled {
     _connectivity.online.addListener(_onConnectivityChanged);
   }
 
@@ -90,6 +94,7 @@ class RestaurantRepository extends ChangeNotifier {
   static const _kServerUrl = 'rm_server_url_v1';
   static const _kCustomers = 'rm_customers_v1';
   static const _kWebVisits = 'rm_web_visits_v1';
+  static const _kPendingMenuStatuses = 'rm_pending_menu_statuses_v1';
 
   /// URL de la web pública para importar los pedidos creados en línea.
   /// Se puede cambiar desde Configuración o con
@@ -118,6 +123,9 @@ class RestaurantRepository extends ChangeNotifier {
   String _serverUrl;
   bool _syncing = false;
   bool _pullingServerOrders = false;
+  bool _flushingMenuStatuses = false;
+  final bool _webSyncEnabled;
+  Map<String, String> _pendingMenuStatuses = {};
   Future<void>? _syncFuture;
   Timer? _webPollTimer;
 
@@ -174,6 +182,7 @@ class RestaurantRepository extends ChangeNotifier {
       CustomerRecord.fromJson,
     );
     final webVisits = _readList(prefs, _kWebVisits, WebVisit.fromJson);
+    final pendingMenuStatuses = _readPendingMenuStatuses(prefs);
 
     final repository = RestaurantRepository._(
       prefs: prefs,
@@ -192,10 +201,12 @@ class RestaurantRepository extends ChangeNotifier {
       tables: tables.isEmpty ? SeedData.tables() : tables,
       customers: customers,
       webVisits: webVisits,
+      pendingMenuStatuses: pendingMenuStatuses,
       settings: settings,
       currentUser: currentUser,
       lastSync: lastSync,
       serverUrl: serverUrl,
+      webSyncEnabled: watchConnectivity,
     );
 
     repository._rebuildCustomersFromOrders(persist: customers.isEmpty);
@@ -311,6 +322,28 @@ class RestaurantRepository extends ChangeNotifier {
     }
   }
 
+  static Map<String, String> _readPendingMenuStatuses(
+    SharedPreferences prefs,
+  ) {
+    final raw = prefs.getString(_kPendingMenuStatuses);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return {};
+      return Map.fromEntries(
+        decoded.entries
+            .where(
+              (entry) =>
+                  entry.value is String &&
+                  (entry.value == 'available' || entry.value == 'unavailable'),
+            )
+            .map((entry) => MapEntry(entry.key, entry.value as String)),
+      );
+    } catch (_) {
+      return {};
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Sesión y usuarios
   // ---------------------------------------------------------------------------
@@ -361,6 +394,9 @@ class RestaurantRepository extends ChangeNotifier {
     notifyListeners();
     if (isOnline && pendingSyncCount > 0) {
       syncPendingOrders();
+    }
+    if (isOnline && _webSyncEnabled) {
+      unawaited(_flushPendingMenuStatuses());
     }
   }
 
@@ -450,11 +486,15 @@ class RestaurantRepository extends ChangeNotifier {
         unawaited(pullServerOrders());
         unawaited(pullServerCustomers());
         unawaited(pullServerVisits());
+        unawaited(pullServerMenuStatus());
+        unawaited(_flushPendingMenuStatuses());
       }
     });
     unawaited(pullServerOrders());
     unawaited(pullServerCustomers());
     unawaited(pullServerVisits());
+    unawaited(pullServerMenuStatus());
+    unawaited(_flushPendingMenuStatuses());
   }
 
   /// Prueba la conexión con la API de la web pública.
@@ -748,6 +788,94 @@ class RestaurantRepository extends ChangeNotifier {
     }
   }
 
+  Future<bool> _pushMenuItemStatusToServer(String itemId, String status) async {
+    if (_serverUrl.isEmpty) return false;
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final request = await client.patchUrl(
+        Uri.parse('$_serverUrl/api/menu/${Uri.encodeComponent(itemId)}'),
+      );
+      request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      request.write(jsonEncode({'status': status}));
+      final response = await request.close();
+      await response.drain<void>();
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (_) {
+      return false;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// Envía a la web los cambios de disponibilidad hechos sin conexión.
+  Future<void> _flushPendingMenuStatuses() async {
+    if (!_webSyncEnabled || !isOnline || _flushingMenuStatuses) return;
+    if (_pendingMenuStatuses.isEmpty) return;
+    _flushingMenuStatuses = true;
+    try {
+      final snapshot = Map<String, String>.from(_pendingMenuStatuses);
+      for (final entry in snapshot.entries) {
+        final sent = await _pushMenuItemStatusToServer(entry.key, entry.value);
+        if (sent && _pendingMenuStatuses[entry.key] == entry.value) {
+          _pendingMenuStatuses.remove(entry.key);
+          await _persistPendingMenuStatuses();
+        }
+      }
+    } finally {
+      _flushingMenuStatuses = false;
+    }
+  }
+
+  /// Reconcilia la disponibilidad local con el catálogo publicado por la web.
+  ///
+  /// Los cambios pendientes de envío tienen prioridad para no sobrescribir un
+  /// toggle offline que todavía no llegó a Firestore.
+  Future<int> pullServerMenuStatus() async {
+    if (!_webSyncEnabled || _serverUrl.isEmpty) return 0;
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final request =
+          await client.getUrl(Uri.parse('$_serverUrl/api/menu/status'));
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final response = await request.close();
+      if (response.statusCode != 200) {
+        await response.drain<void>();
+        return 0;
+      }
+      final body = await utf8.decoder.bind(response).join();
+      final decoded = jsonDecode(body);
+      final rawList = decoded is Map<String, dynamic> ? decoded['items'] : null;
+      if (rawList is! List) return 0;
+
+      var changes = 0;
+      for (final raw in rawList) {
+        if (raw is! Map<String, dynamic>) continue;
+        final id = raw['id'] as String?;
+        final status = raw['status'] as String?;
+        if (id == null || id.isEmpty || status == null) continue;
+        if (_pendingMenuStatuses.containsKey(id)) continue;
+        final index = _items.indexWhere((item) => item.id == id);
+        if (index < 0) continue;
+        final remoteStatus = MenuItemStatus.fromName(status);
+        if (_items[index].status == remoteStatus) continue;
+        _items[index] = _items[index].copyWith(status: remoteStatus);
+        changes++;
+      }
+      if (changes > 0) {
+        await _persistItems();
+        notifyListeners();
+      }
+      return changes;
+    } catch (_) {
+      return 0;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Inventario
   // ---------------------------------------------------------------------------
@@ -1004,7 +1132,13 @@ class RestaurantRepository extends ChangeNotifier {
         : MenuItemStatus.unavailable;
     _items[index] = item.copyWith(status: next);
     await _persistItems();
+
+    // La web pública lee Firestore: el toggle debe llegar al catálogo
+    // compartido, con cola local para cambios hechos offline.
+    _pendingMenuStatuses[itemId] = next.name;
+    await _persistPendingMenuStatuses();
     notifyListeners();
+    if (_webSyncEnabled) unawaited(_flushPendingMenuStatuses());
   }
 
   Future<void> deleteMenuItem(String itemId) async {
@@ -1840,6 +1974,8 @@ class RestaurantRepository extends ChangeNotifier {
     await _prefs.remove(_kSettings);
     await _prefs.remove(_kSession);
     await _prefs.remove(_kLastSync);
+    await _prefs.remove(_kPendingMenuStatuses);
+    _pendingMenuStatuses = {};
     _categories = [...SeedData.categories];
     _items = SeedData.menuItemsWithRecipes();
     _ingredients = [...SeedData.ingredients];
@@ -1928,6 +2064,13 @@ class RestaurantRepository extends ChangeNotifier {
     await _prefs.setString(
       _kWebVisits,
       jsonEncode(_webVisits.map((v) => v.toJson()).toList()),
+    );
+  }
+
+  Future<void> _persistPendingMenuStatuses() async {
+    await _prefs.setString(
+      _kPendingMenuStatuses,
+      jsonEncode(_pendingMenuStatuses),
     );
   }
 

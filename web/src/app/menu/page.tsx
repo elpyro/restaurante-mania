@@ -5,6 +5,8 @@ import { getPublicMenu } from "@/lib/menu";
 import { breadcrumbJsonLd, menuJsonLd } from "@/lib/seo";
 import { siteConfig } from "@/lib/site";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Menú completo",
   description:
