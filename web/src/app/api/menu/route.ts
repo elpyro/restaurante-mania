@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { getMenu } from "@/lib/menu";
+import { getPublicMenu } from "@/lib/menu";
 
 export const revalidate = 60;
 
 export async function GET() {
-  const menu = await getMenu();
+  const menu = await getPublicMenu();
   return NextResponse.json(
     {
       restaurant: "Restaurante Manía",

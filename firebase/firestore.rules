@@ -199,7 +199,7 @@ service cloud.firestore {
     match /webVisits/{visitId} {
       allow get, list: if isStaff();
       allow create: if request.resource.data.keys().hasOnly([
-          'id', 'occurredAt', 'dayKey', 'registered', 'customerName',
+          'id', 'visitorId', 'occurredAt', 'dayKey', 'registered', 'customerName',
           'customerPhone', 'normalizedPhone', 'referenceLabel',
           'referenceUrl', 'referrer'
         ])
@@ -209,6 +209,9 @@ service cloud.firestore {
         ])
         && request.resource.data.id is string
         && request.resource.data.id.size() <= 80
+        && (!('visitorId' in request.resource.data)
+            || (request.resource.data.visitorId is string
+                && request.resource.data.visitorId.size() <= 120))
         && request.resource.data.occurredAt is string
         && request.resource.data.dayKey is string
         && request.resource.data.registered is bool

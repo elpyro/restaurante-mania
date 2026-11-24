@@ -2,16 +2,16 @@
 import { JsonLd } from "@/components/JsonLd";
 import { MenuItemCard } from "@/components/MenuItemCard";
 import { formatCOP } from "@/lib/format";
-import { getFeaturedItems, getMenu } from "@/lib/menu";
+import { getFeaturedItems, getPublicMenu } from "@/lib/menu";
 import { restaurantJsonLd, websiteJsonLd } from "@/lib/seo";
 import { siteConfig, whatsappUrl } from "@/lib/site";
 
 export default async function HomePage() {
   const [{ categories, items, source }, featured] = await Promise.all([
-    getMenu(),
+    getPublicMenu(),
     getFeaturedItems(6),
   ]);
-  const availableCount = items.filter((item) => item.status !== "unavailable").length;
+  const availableCount = items.length;
 
   return (
     <>

@@ -175,22 +175,30 @@ async function loadMenu(): Promise<MenuData> {
 
 export const getMenu = cache(loadMenu);
 
+export function isAvailable(menuItem: MenuItem): boolean {
+  return menuItem.status !== "unavailable";
+}
+
+/** Catálogo público: los platos agotados nunca se muestran ni se indexan. */
+export const getPublicMenu = cache(async (): Promise<MenuData> => {
+  const menu = await getMenu();
+  return { ...menu, items: menu.items.filter(isAvailable) };
+});
+
 export async function getMenuItemBySlug(slug: string): Promise<MenuItem | null> {
-  const { items } = await getMenu();
+  const { items } = await getPublicMenu();
   return items.find((item) => item.slug === slug) ?? null;
 }
 
 export async function getFeaturedItems(limit = 6): Promise<MenuItem[]> {
-  const { items } = await getMenu();
-  const featured = items.filter(
-    (item) => item.featured && item.status !== "unavailable",
-  );
+  const { items } = await getPublicMenu();
+  const featured = items.filter((item) => item.featured);
   const pool = featured.length >= limit ? featured : items;
   return pool.slice(0, limit);
 }
 
 export async function getItemsByCategory(slug: string): Promise<MenuItem[]> {
-  const { items } = await getMenu();
+  const { items } = await getPublicMenu();
   return items.filter((item) => item.categorySlug === slug);
 }
 

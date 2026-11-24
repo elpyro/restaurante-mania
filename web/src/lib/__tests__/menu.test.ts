@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { seedCategories, seedMenuItems } from "../seed";
-import { searchMenuItems } from "../menu";
+import { getPublicMenu, searchMenuItems } from "../menu";
 import { breadcrumbJsonLd, menuJsonLd, restaurantJsonLd } from "../seo";
 
 describe("búsqueda de menú", () => {
@@ -22,6 +22,12 @@ describe("búsqueda de menú", () => {
 
   it("devuelve vacío cuando no hay coincidencias", () => {
     expect(searchMenuItems(seedMenuItems, "sushi")).toHaveLength(0);
+  });
+
+  it("oculta los platos sin ingredientes del catálogo público", async () => {
+    const { items } = await getPublicMenu();
+    expect(items.map((item) => item.id)).not.toContain("item-cazuela-mariscos");
+    expect(items.every((item) => item.status !== "unavailable")).toBe(true);
   });
 });
 

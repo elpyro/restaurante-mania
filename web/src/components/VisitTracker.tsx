@@ -2,15 +2,41 @@
 
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
+import { dayKeyFor, visitDocumentId } from "@/lib/visit-identity";
 
 const PROFILE_KEY = "rm_customer_profile_v1";
-const DEDUPE_KEY = "rm_web_visit_tracker_v1";
-const DEDUPE_MS = 30_000;
+const VISITOR_KEY = "rm_web_visitor_id_v1";
+const STATE_KEY = "rm_web_visit_state_v1";
 
 type Profile = {
   customerName?: string;
   customerPhone?: string;
 };
+
+type VisitState = {
+  dayKey: string;
+  identityKey: string;
+  trackedAt?: string;
+};
+
+let fallbackVisitorId = "";
+
+function readJson<T>(key: string): T | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeJson(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* almacenamiento bloqueado: el conteo sigue siendo best-effort */
+  }
+}
 
 function loadProfile(): Profile | null {
   try {
@@ -29,36 +55,76 @@ function loadProfile(): Profile | null {
   }
 }
 
-function newId(): string {
-  const random = globalThis.crypto?.randomUUID?.();
-  return `vis_${Date.now()}_${random ?? Math.random().toString(36).slice(2, 10)}`;
+function getVisitorId(): string {
+  try {
+    const stored = window.localStorage.getItem(VISITOR_KEY) ?? "";
+    if (/^visitor_[a-zA-Z0-9_-]{8,}$/.test(stored)) return stored;
+    const random = globalThis.crypto?.randomUUID?.();
+    const created = `visitor_${random ?? `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`}`;
+    window.localStorage.setItem(VISITOR_KEY, created);
+    return created;
+  } catch {
+    if (!fallbackVisitorId) {
+      fallbackVisitorId = `visitor_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    }
+    return fallbackVisitorId;
+  }
 }
 
-function alreadyTracked(url: string): boolean {
-  try {
-    const raw = window.sessionStorage.getItem(DEDUPE_KEY);
-    const history = (raw ? JSON.parse(raw) : {}) as Record<string, number>;
-    const last = history[url] ?? 0;
-    if (Date.now() - last < DEDUPE_MS) return true;
-    history[url] = Date.now();
-    window.sessionStorage.setItem(DEDUPE_KEY, JSON.stringify(history));
-    return false;
-  } catch {
+function identityKeyFor(profile: Profile | null, dayKey: string): string {
+  const state = readJson<VisitState>(STATE_KEY);
+  if (
+    state?.dayKey === dayKey &&
+    typeof state.identityKey === "string" &&
+    state.identityKey.length >= 8
+  ) {
+    return state.identityKey;
+  }
+  const digits = (profile?.customerPhone ?? "").replace(/\D/g, "");
+  const identityKey = digits.length >= 7 ? `phone:${digits}` : getVisitorId();
+  writeJson(STATE_KEY, { dayKey, identityKey } satisfies VisitState);
+  return identityKey;
+}
+
+function markTracked(dayKey: string, identityKey: string): boolean {
+  const state = readJson<VisitState>(STATE_KEY);
+  if (
+    state?.dayKey === dayKey &&
+    state.identityKey === identityKey &&
+    typeof state.trackedAt === "string"
+  ) {
     return false;
   }
+  writeJson(STATE_KEY, {
+    ...state,
+    dayKey,
+    identityKey,
+    trackedAt: new Date().toISOString(),
+  } satisfies VisitState);
+  return true;
+}
+
+function unmarkTracked(dayKey: string, identityKey: string): void {
+  const state = readJson<VisitState>(STATE_KEY);
+  if (state?.dayKey !== dayKey || state.identityKey !== identityKey) return;
+  writeJson(STATE_KEY, { dayKey, identityKey } satisfies VisitState);
 }
 
 export function VisitTracker() {
   const pathname = usePathname();
 
   useEffect(() => {
-    const referenceUrl = window.location.href;
-    if (alreadyTracked(referenceUrl)) return;
-
+    const dayKey = dayKeyFor(new Date());
     const profile = loadProfile();
+    const identityKey = identityKeyFor(profile, dayKey);
+    if (!markTracked(dayKey, identityKey)) return;
+
+    const referenceUrl = window.location.href;
     const phone = (profile?.customerPhone ?? "").replace(/\D/g, "");
     const body = JSON.stringify({
-      id: newId(),
+      id: visitDocumentId(identityKey, dayKey),
+      visitorId: identityKey,
+      dayKey,
       occurredAt: new Date().toISOString(),
       registered: !!profile,
       customerName: profile?.customerName ?? "",
@@ -74,9 +140,13 @@ export function VisitTracker() {
       headers: { "Content-Type": "application/json" },
       body,
       keepalive: true,
-    }).catch(() => {
-      // El contador es best-effort: no debe afectar la navegación del cliente.
-    });
+    })
+      .then((response) => {
+        if (!response.ok) unmarkTracked(dayKey, identityKey);
+      })
+      .catch(() => {
+        unmarkTracked(dayKey, identityKey);
+      });
   }, [pathname]);
 
   return null;

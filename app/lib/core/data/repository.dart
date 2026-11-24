@@ -704,9 +704,9 @@ class RestaurantRepository extends ChangeNotifier {
 
   /// Descarga las visitas registradas por la web pública.
   ///
-  /// Las visitas se identifican por `id`, por lo que reprocesar el feed no
-  /// duplica contadores. Los datos quedan en SharedPreferences para que el
-  /// panel CRM funcione también sin conexión.
+  /// El feed es la fuente de verdad: se reemplaza la copia local para eliminar
+  /// duplicados históricos y se deduplica por cliente/día. Los datos quedan en
+  /// SharedPreferences para que el panel CRM funcione también sin conexión.
   Future<int> pullServerVisits() async {
     if (_serverUrl.isEmpty) return 0;
     final client = HttpClient()
@@ -724,18 +724,16 @@ class RestaurantRepository extends ChangeNotifier {
       final rawList = decoded is Map<String, dynamic> ? decoded['visits'] : null;
       if (rawList is! List) return 0;
 
-      final existingIds = _webVisits.map((v) => v.id).toSet();
+      final seen = <String>{};
       final imported = <WebVisit>[];
       for (final raw in rawList) {
         if (raw is! Map<String, dynamic>) continue;
         final visit = WebVisit.fromJson(raw);
-        if (visit.id.isEmpty || existingIds.contains(visit.id)) continue;
-        existingIds.add(visit.id);
+        if (visit.id.isEmpty || !seen.add(visit.dedupeKey)) continue;
         imported.add(visit);
       }
-      if (imported.isEmpty) return 0;
 
-      _webVisits = [..._webVisits, ...imported]
+      _webVisits = imported
         ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
       if (_webVisits.length > 2000) {
         _webVisits = _webVisits.take(2000).toList();

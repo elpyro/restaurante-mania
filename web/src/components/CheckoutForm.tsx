@@ -22,6 +22,13 @@ const paymentOptions: Array<{ value: PaymentMethod; label: string }> = [
 
 const CUSTOMER_PROFILE_KEY = "rm_customer_profile_v1";
 
+type InsufficientItem = {
+  menuItemId: string;
+  name: string;
+  requested: number;
+  available: number;
+};
+
 export function CheckoutForm() {
   const router = useRouter();
   const { lines, totals, ready, clear, setQuantity, remove } = useCart();
@@ -36,9 +43,10 @@ export function CheckoutForm() {
   const [submitting, setSubmitting] = useState(false);
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [savedAddresses, setSavedAddresses] = useState<string[]>([]);
-  const [insufficientItems, setInsufficientItems] = useState<
-    Array<{ menuItemId: string; name: string; requested: number; available: number }>
-  >([]);
+  const [insufficientItems, setInsufficientItems] = useState<InsufficientItem[]>([]);
+  const [stockInsufficient, setStockInsufficient] = useState<InsufficientItem[]>([]);
+  const [stockErrors, setStockErrors] = useState<string[]>([]);
+  const [stockChecking, setStockChecking] = useState(false);
 
   useEffect(() => {
     try {
@@ -65,6 +73,53 @@ export function CheckoutForm() {
       /* ignorar perfil inválido */
     }
   }, []);
+
+  // Verificación temprana: bloquea el botón de confirmación en cuanto el
+  // carrito cambia, sin esperar a que el cliente intente enviar el pedido.
+  useEffect(() => {
+    if (!ready || lines.length === 0) {
+      setStockInsufficient([]);
+      setStockErrors([]);
+      setStockChecking(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setStockChecking(true);
+      try {
+        const response = await fetch("/api/orders/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            stockOnly: true,
+            items: lines.map((line) => ({
+              menuItemId: line.menuItemId,
+              quantity: line.quantity,
+            })),
+          }),
+          signal: controller.signal,
+        });
+        const data = (await response.json()) as {
+          errors?: string[];
+          insufficientItems?: InsufficientItem[];
+        };
+        if (controller.signal.aborted) return;
+        setStockInsufficient(data.insufficientItems ?? []);
+        setStockErrors(data.errors ?? []);
+      } catch {
+        if (!controller.signal.aborted) {
+          setStockInsufficient([]);
+          setStockErrors([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) setStockChecking(false);
+      }
+    }, 300);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [ready, lines]);
 
   if (!ready) {
     return <div className="h-64 animate-pulse rounded-2xl bg-stone-200" />;
@@ -124,6 +179,8 @@ export function CheckoutForm() {
     items: Array<{ menuItemId: string; name: string; requested: number; available: number }>,
   ) {
     setInsufficientItems(items);
+    setStockInsufficient([]);
+    setStockErrors([]);
     for (const item of items) {
       if (item.available > 0) setQuantity(item.menuItemId, item.available);
       else remove(item.menuItemId);
@@ -240,6 +297,8 @@ export function CheckoutForm() {
       } catch {
         /* el pedido ya fue creado en el servidor */
       }
+      setStockInsufficient([]);
+      setStockErrors([]);
       clear();
       router.push(`/order/${order.id}`);
     } catch {
@@ -400,6 +459,44 @@ export function CheckoutForm() {
           </label>
         </section>
 
+        {stockErrors.length > 0 || stockInsufficient.length > 0 ? (
+          <div
+            role="alert"
+            className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+          >
+            <p className="font-semibold">Revisa la disponibilidad antes de confirmar</p>
+            {stockErrors.length > 0 ? (
+              <ul className="mt-2 list-inside list-disc">
+                {stockErrors.map((error) => (
+                  <li key={error}>{error}</li>
+                ))}
+              </ul>
+            ) : null}
+            <ul className="mt-2 space-y-1">
+              {stockInsufficient.map((item) => (
+                <li key={item.menuItemId}>
+                  <span className="font-semibold">{item.name}</span>: pediste {item.requested},{" "}
+                  {item.available > 0
+                    ? `solo puedes pedir ${item.available}.`
+                    : "no queda disponibilidad."}
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => {
+                applyInsufficientItems(stockInsufficient);
+                setErrors([
+                  "Ajustamos el carrito con la cantidad disponible. Revisa y confirma de nuevo.",
+                ]);
+              }}
+              className="mt-3 rounded-full bg-amber-700 px-4 py-2 text-xs font-bold text-white hover:bg-amber-800"
+            >
+              Ajustar carrito automáticamente
+            </button>
+          </div>
+        ) : null}
+
         {errors.length > 0 ? (
           <div
             role="alert"
@@ -447,10 +544,21 @@ export function CheckoutForm() {
         </div>
         <button
           type="submit"
-          disabled={submitting}
-          className="mt-5 w-full rounded-full bg-brand-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-brand-700 disabled:cursor-wait disabled:opacity-60"
+          disabled={
+            submitting ||
+            stockChecking ||
+            stockInsufficient.length > 0 ||
+            stockErrors.length > 0
+          }
+          className="mt-5 w-full rounded-full bg-brand-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {submitting ? "Enviando pedido..." : "Confirmar pedido"}
+          {stockInsufficient.length > 0 || stockErrors.length > 0
+            ? "Ajusta tu carrito"
+            : stockChecking
+              ? "Verificando ingredientes..."
+              : submitting
+                ? "Enviando pedido..."
+                : "Confirmar pedido"}
         </button>
         <p className="mt-3 text-center text-xs text-ink-500">
           Al confirmar aceptas que te contactemos por WhatsApp.

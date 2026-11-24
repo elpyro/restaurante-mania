@@ -1,11 +1,11 @@
 import { formatCOP } from "@/lib/format";
-import { getMenu } from "@/lib/menu";
+import { getPublicMenu } from "@/lib/menu";
 import { siteConfig } from "@/lib/site";
 
 export const revalidate = 3600;
 
 export async function GET() {
-  const { categories, items, source } = await getMenu();
+  const { categories, items, source } = await getPublicMenu();
   const lines: string[] = [
     `# ${siteConfig.name}`,
     "",

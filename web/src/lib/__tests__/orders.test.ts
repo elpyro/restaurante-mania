@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateOrderInput } from "../orders";
+import { validateOrderInput, validateOrderItems } from "../orders";
 
 const base = {
   customerName: "Ana Pérez",
@@ -66,5 +66,16 @@ describe("validación de pedidos", () => {
   it("rechaza cuerpos que no son objetos", () => {
     expect(validateOrderInput(null).ok).toBe(false);
     expect(validateOrderInput("pedido").ok).toBe(false);
+  });
+
+  it("valida el carrito para la comprobación temprana de stock", () => {
+    const result = validateOrderItems([
+      { menuItemId: "item-empanadas", quantity: 2 },
+    ]);
+    expect(result.ok).toBe(true);
+    expect(validateOrderItems([]).ok).toBe(false);
+    expect(
+      validateOrderItems([{ menuItemId: "item-empanadas", quantity: 0 }]).ok,
+    ).toBe(false);
   });
 });

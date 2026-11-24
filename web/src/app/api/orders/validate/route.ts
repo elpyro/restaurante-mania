@@ -1,6 +1,11 @@
 ﻿import { NextResponse } from "next/server";
 import { getMenu } from "@/lib/menu";
-import { getInsufficientItems, validateOrderInput } from "@/lib/orders";
+import {
+  getInsufficientItems,
+  validateOrderInput,
+  validateOrderItems,
+  type OrderInputItem,
+} from "@/lib/orders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,17 +21,33 @@ export async function POST(request: Request) {
     );
   }
 
-  const validation = validateOrderInput(body);
-  if (!validation.ok) {
-    return NextResponse.json(
-      { ok: false, errors: validation.errors, insufficientItems: [] },
-      { status: 400 },
-    );
+  const payload = (body ?? {}) as Record<string, unknown>;
+  const stockOnly = payload.stockOnly === true;
+  let items: OrderInputItem[];
+
+  if (stockOnly) {
+    const validation = validateOrderItems(payload.items);
+    if (!validation.ok) {
+      return NextResponse.json(
+        { ok: false, errors: validation.errors, insufficientItems: [] },
+        { status: 400 },
+      );
+    }
+    items = validation.items;
+  } else {
+    const validation = validateOrderInput(body);
+    if (!validation.ok) {
+      return NextResponse.json(
+        { ok: false, errors: validation.errors, insufficientItems: [] },
+        { status: 400 },
+      );
+    }
+    items = validation.value.items;
   }
 
   const { items: menuItems } = await getMenu();
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
-  const unavailable = validation.value.items
+  const unavailable = items
     .map((line) => {
       const item = menuById.get(line.menuItemId);
       if (!item) return `${line.menuItemId} no existe`;
@@ -43,10 +64,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const insufficientItems = await getInsufficientItems(
-      validation.value.items,
-      menuById,
-    );
+    const insufficientItems = await getInsufficientItems(items, menuById);
     if (insufficientItems.length > 0) {
       return NextResponse.json(
         {

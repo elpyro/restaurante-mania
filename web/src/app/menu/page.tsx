@@ -1,7 +1,7 @@
 ﻿import type { Metadata } from "next";
 import { JsonLd } from "@/components/JsonLd";
 import { MenuBrowser } from "@/components/MenuBrowser";
-import { getMenu } from "@/lib/menu";
+import { getPublicMenu } from "@/lib/menu";
 import { breadcrumbJsonLd, menuJsonLd } from "@/lib/seo";
 import { siteConfig } from "@/lib/site";
 
@@ -25,7 +25,7 @@ export default async function MenuPage({
   searchParams: Promise<{ q?: string }>;
 }) {
   const [{ categories, items, source }, params] = await Promise.all([
-    getMenu(),
+    getPublicMenu(),
     searchParams,
   ]);
 

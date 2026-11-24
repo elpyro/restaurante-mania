@@ -43,8 +43,50 @@ export type ValidationResult =
   | { ok: true; value: OrderInput }
   | { ok: false; errors: string[] };
 
+export type ItemsValidationResult =
+  | { ok: true; items: OrderInputItem[] }
+  | { ok: false; errors: string[] };
+
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+export function validateOrderItems(raw: unknown): ItemsValidationResult {
+  const errors: string[] = [];
+  const rawItems = Array.isArray(raw) ? raw : [];
+  if (rawItems.length === 0 || rawItems.length > 50) {
+    errors.push("El pedido debe tener entre 1 y 50 productos.");
+  }
+
+  const items: OrderInputItem[] = [];
+  const quantities = new Map<string, number>();
+  for (const rawItem of rawItems) {
+    if (!rawItem || typeof rawItem !== "object") {
+      errors.push("Hay un producto con formato inválido.");
+      continue;
+    }
+    const entry = rawItem as Record<string, unknown>;
+    const menuItemId = text(entry.menuItemId);
+    const quantity = Number(entry.quantity);
+    if (!menuItemId) {
+      errors.push("Hay un producto sin identificador.");
+      continue;
+    }
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
+      errors.push("Las cantidades deben ser enteros entre 1 y 20.");
+      continue;
+    }
+    const next = (quantities.get(menuItemId) ?? 0) + quantity;
+    if (next > 20) {
+      errors.push("La cantidad total por producto no puede superar 20.");
+      continue;
+    }
+    quantities.set(menuItemId, next);
+    items.push({ menuItemId, quantity });
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, items };
 }
 
 export function validateOrderInput(raw: unknown): ValidationResult {
@@ -111,37 +153,9 @@ export function validateOrderInput(raw: unknown): ValidationResult {
     errors.push("Las notas no pueden superar 300 caracteres.");
   }
 
-  const rawItems = Array.isArray(body.items) ? body.items : [];
-  if (rawItems.length === 0 || rawItems.length > 50) {
-    errors.push("El pedido debe tener entre 1 y 50 productos.");
-  }
-
-  const items: OrderInputItem[] = [];
-  const quantities = new Map<string, number>();
-  for (const rawItem of rawItems) {
-    if (!rawItem || typeof rawItem !== "object") {
-      errors.push("Hay un producto con formato inválido.");
-      continue;
-    }
-    const entry = rawItem as Record<string, unknown>;
-    const menuItemId = text(entry.menuItemId);
-    const quantity = Number(entry.quantity);
-    if (!menuItemId) {
-      errors.push("Hay un producto sin identificador.");
-      continue;
-    }
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
-      errors.push("Las cantidades deben ser enteros entre 1 y 20.");
-      continue;
-    }
-    const next = (quantities.get(menuItemId) ?? 0) + quantity;
-    if (next > 20) {
-      errors.push("La cantidad total por producto no puede superar 20.");
-      continue;
-    }
-    quantities.set(menuItemId, next);
-    items.push({ menuItemId, quantity });
-  }
+  const itemsResult = validateOrderItems(body.items);
+  if (!itemsResult.ok) errors.push(...itemsResult.errors);
+  const items = itemsResult.ok ? itemsResult.items : [];
 
   if (errors.length > 0) return { ok: false, errors };
 

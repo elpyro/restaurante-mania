@@ -1,6 +1,7 @@
 class WebVisit {
   const WebVisit({
     required this.id,
+    this.visitorId = '',
     required this.occurredAt,
     required this.dayKey,
     required this.registered,
@@ -13,6 +14,7 @@ class WebVisit {
   });
 
   final String id;
+  final String visitorId; // identidad local/teléfono del cliente en la web
   final DateTime occurredAt;
   final String dayKey; // yyyy-MM-dd (America/Bogota)
   final bool registered;
@@ -37,8 +39,19 @@ class WebVisit {
     return '';
   }
 
+  /// Clave estable para deduplicar visitas del mismo cliente en un día.
+  String get dedupeKey {
+    final identity = visitorId.trim().isNotEmpty
+        ? visitorId.trim()
+        : (registered && normalizedPhone.trim().isNotEmpty
+            ? 'phone:${normalizedPhone.trim()}'
+            : 'id:$id');
+    return '$dayKey|$identity';
+  }
+
   Map<String, dynamic> toJson() => {
         'id': id,
+        'visitorId': visitorId,
         'occurredAt': occurredAt.toIso8601String(),
         'dayKey': dayKey,
         'registered': registered,
@@ -65,6 +78,7 @@ class WebVisit {
     }
     return WebVisit(
       id: json['id'] as String? ?? '',
+      visitorId: json['visitorId'] as String? ?? '',
       occurredAt: occurredAt,
       dayKey: json['dayKey'] as String? ?? _dayKeyFrom(occurredAt),
       registered: json['registered'] is bool

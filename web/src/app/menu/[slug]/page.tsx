@@ -5,8 +5,7 @@ import { AddToCartButton } from "@/components/AddToCartButton";
 import { JsonLd } from "@/components/JsonLd";
 import { MenuItemCard } from "@/components/MenuItemCard";
 import { formatCOP } from "@/lib/format";
-import { getMenu } from "@/lib/menu";
-import { seedMenuItems } from "@/lib/seed";
+import { getPublicMenu } from "@/lib/menu";
 import { breadcrumbJsonLd, menuItemJsonLd } from "@/lib/seo";
 import { siteConfig, whatsappUrl } from "@/lib/site";
 
@@ -17,12 +16,13 @@ interface Props {
 export const dynamicParams = true;
 
 export async function generateStaticParams() {
-  return seedMenuItems.map((item) => ({ slug: item.slug }));
+  const { items } = await getPublicMenu();
+  return items.map((item) => ({ slug: item.slug }));
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const { items } = await getMenu();
+  const { items } = await getPublicMenu();
   const item = items.find((entry) => entry.slug === slug);
   if (!item) {
     return { title: "Plato no encontrado", robots: { index: false } };
@@ -51,7 +51,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function DishPage({ params }: Props) {
   const { slug } = await params;
-  const { categories, items } = await getMenu();
+  const { categories, items } = await getPublicMenu();
   const item = items.find((entry) => entry.slug === slug);
   if (!item) notFound();
 

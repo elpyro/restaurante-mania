@@ -4,6 +4,7 @@ import {
   listDocuments,
   setDocument,
 } from "@/lib/firebase/rest";
+import { normalizeDayKey, visitDocumentId } from "@/lib/visit-identity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +15,7 @@ const MAX_RESPONSE = 500;
 
 type VisitPayload = {
   id?: string;
+  visitorId?: string;
   occurredAt?: string;
   dayKey?: string;
   registered?: boolean | string;
@@ -27,6 +29,7 @@ type VisitPayload = {
 
 type StoredVisit = {
   id: string;
+  visitorId: string;
   occurredAt: string;
   dayKey: string;
   registered: boolean;
@@ -50,18 +53,6 @@ const demoStore =
 
 function text(value: unknown, max = 160): string {
   return String(value ?? "").trim().slice(0, max);
-}
-
-function dayKeyFor(date: Date): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Bogota",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const get = (type: string) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
 function absoluteUrl(value: string, request: Request): string {
@@ -98,6 +89,7 @@ function mapDoc(doc: { id: string; data: Record<string, unknown> }): StoredVisit
   const d = doc.data;
   return {
     id: String(d.id ?? doc.id),
+    visitorId: text(d.visitorId, 120),
     occurredAt: String(d.occurredAt ?? new Date().toISOString()),
     dayKey: String(d.dayKey ?? ""),
     registered: d.registered === true || d.registered === "true",
@@ -110,8 +102,29 @@ function mapDoc(doc: { id: string; data: Record<string, unknown> }): StoredVisit
   };
 }
 
+function identityKey(visit: StoredVisit): string {
+  if (visit.visitorId) return visit.visitorId;
+  if (visit.registered && visit.normalizedPhone) {
+    return `phone:${visit.normalizedPhone}`;
+  }
+  return `id:${visit.id}`;
+}
+
+/**
+ * Una sola visita por identidad/día. Para documentos antiguos sin `visitorId`
+ * usamos el teléfono normalizado; los anónimos se conservan tal cual.
+ */
 function sorted(visits: StoredVisit[]): StoredVisit[] {
-  return [...visits]
+  const seen = new Set<string>();
+  const firstPerDay = [...visits]
+    .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+    .filter((visit) => {
+      const key = `${visit.dayKey}|${identityKey(visit)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  return firstPerDay
     .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
     .slice(0, MAX_RESPONSE);
 }
@@ -163,12 +176,15 @@ export async function POST(request: Request) {
     text(input.customerName).length >= 2 ||
     text(input.customerPhone).replace(/\D/g, "").length >= 7;
 
+  const visitorId = text(input.visitorId, 120);
+  const dayKey = normalizeDayKey(input.dayKey, occurredAt);
   const visit: StoredVisit = {
-    id: text(input.id, 80) || `vis_${occurredAt.getTime()}_${Math.random().toString(36).slice(2, 8)}`,
+    id: visitorId
+      ? visitDocumentId(visitorId, dayKey)
+      : text(input.id, 80) || `vis_${occurredAt.getTime()}_${Math.random().toString(36).slice(2, 8)}`,
+    visitorId,
     occurredAt: occurredAt.toISOString(),
-    dayKey: /^\d{4}-\d{2}-\d{2}$/.test(text(input.dayKey, 10))
-      ? text(input.dayKey, 10)
-      : dayKeyFor(occurredAt),
+    dayKey,
     registered,
     customerName: registered ? text(input.customerName) : "",
     customerPhone: registered ? text(input.customerPhone, 30) : "",
