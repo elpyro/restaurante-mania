@@ -44,7 +44,7 @@ class OrderDetailScreen extends StatelessWidget {
           appBar: AppBar(
             title: Text(order.code),
             actions: [
-              if ((role.canCreateOrders && repository.canEditOrder(order)) || (role.canCancelOrders && order.status.isActive))
+              if ((role.canCreateOrders && repository.canEditOrder(order)) || order.status.isActive)
                 PopupMenuButton<String>(
                   onSelected: (value) async {
                     if (value == 'edit') {
@@ -96,7 +96,7 @@ class OrderDetailScreen extends StatelessWidget {
                           ],
                         ),
                       ),
-                    if (role.canCancelOrders && order.status.isActive)
+                    if (order.status.isActive)
                       const PopupMenuItem<String>(
                         value: 'cancel',
                         child: Row(
@@ -614,6 +614,55 @@ class OrderDetailScreen extends StatelessWidget {
                       },
                       icon: const Icon(Icons.local_shipping_outlined, size: 17),
                       label: const Text('Marcar enviado'),
+                    ),
+                  if (order.status.isActive)
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.danger,
+                        side: BorderSide(
+                          color: AppTheme.danger.withValues(alpha: 0.55),
+                        ),
+                      ),
+                      onPressed: () async {
+                        final confirmed = await showDialog<bool>(
+                          context: context,
+                          builder: (dialogContext) => AlertDialog(
+                            title: const Text('Cancelar pedido'),
+                            content: Text(
+                              '¿Cancelar el pedido ${order.code}? '
+                              'Los ingredientes descontados volverán al inventario.',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.of(dialogContext).pop(false),
+                                child: const Text('Volver'),
+                              ),
+                              FilledButton(
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: AppTheme.danger,
+                                ),
+                                onPressed: () =>
+                                    Navigator.of(dialogContext).pop(true),
+                                child: const Text('Sí, cancelar'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirmed != true || !context.mounted) return;
+                        await repository.cancelOrder(order.id);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Pedido cancelado. Ingredientes repuestos.',
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.cancel_outlined, size: 17),
+                      label: const Text('Cancelar pedido'),
                     ),
                   if (target != null)
                     FilledButton.icon(

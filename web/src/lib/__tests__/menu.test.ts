@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { seedCategories, seedMenuItems } from "../seed";
-import { getPublicMenu, searchMenuItems } from "../menu";
+import { getPublicMenu, isAvailable, searchMenuItems } from "../menu";
 import { breadcrumbJsonLd, menuJsonLd, restaurantJsonLd } from "../seo";
 
 describe("búsqueda de menú", () => {
@@ -27,7 +27,13 @@ describe("búsqueda de menú", () => {
   it("oculta los platos sin ingredientes del catálogo público", async () => {
     const { items } = await getPublicMenu();
     expect(items.map((item) => item.id)).not.toContain("item-cazuela-mariscos");
-    expect(items.every((item) => item.status !== "unavailable")).toBe(true);
+    expect(items.every((item) => isAvailable(item))).toBe(true);
+  });
+
+  it("considera no vendible un plato agotado por insumos aunque su estado sea available", () => {
+    const item = { ...seedMenuItems[0], status: "available" as const, maxServings: 0 };
+    expect(isAvailable(item)).toBe(false);
+    expect(isAvailable({ ...item, maxServings: 1 })).toBe(true);
   });
 });
 

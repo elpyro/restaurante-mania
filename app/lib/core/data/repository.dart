@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart' hide Category;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/app_user.dart';
+import '../models/cash_shift.dart';
 import '../models/category.dart';
 import '../models/customer.dart';
 import '../models/ingredient.dart';
@@ -40,6 +41,52 @@ class DailySales {
   final double total;
 }
 
+/// Granularidad del gráfico de ventas. Un turno se ve por horas; los rangos
+/// largos se agrupan para no dibujar 90 barras en una pantalla de teléfono.
+enum SalesBucket { hour, day, week, month }
+
+/// Reconcilia el inventario local con el feed publicado por la web.
+///
+/// La web es la fuente de verdad de `stock`, `minStock`, `name` y `unit`.
+/// Los insumos con cambios pendientes de subir ganan (offline-first) y no se
+/// borran aunque ya no estén en el servidor. El `cost` es local: la web no lo
+/// publica, así que se conserva.
+@visibleForTesting
+List<Ingredient> mergeServerIngredients(
+  List<Ingredient> local,
+  List<Ingredient> remote,
+  Set<String> pendingIds,
+) {
+  final remoteById = <String, Ingredient>{
+    for (final ingredient in remote) ingredient.id: ingredient,
+  };
+  final merged = <Ingredient>[];
+
+  for (final ingredient in local) {
+    if (pendingIds.contains(ingredient.id)) {
+      merged.add(ingredient);
+      continue;
+    }
+    final server = remoteById[ingredient.id];
+    if (server == null) continue;
+    merged.add(
+      ingredient.copyWith(
+        name: server.name,
+        unit: server.unit,
+        stock: server.stock,
+        minStock: server.minStock,
+      ),
+    );
+  }
+
+  final localIds = merged.map((ingredient) => ingredient.id).toSet();
+  for (final ingredient in remote) {
+    if (localIds.contains(ingredient.id)) continue;
+    merged.add(ingredient);
+  }
+  return merged;
+}
+
 /// Repositorio offline-first.
 ///
 /// Persiste todo en SharedPreferences y mantiene una cola de pedidos sin
@@ -58,28 +105,38 @@ class RestaurantRepository extends ChangeNotifier {
     required List<RestaurantTable> tables,
     required List<CustomerRecord> customers,
     required List<WebVisit> webVisits,
-    required Map<String, String> pendingMenuStatuses,
+    required Map<String, Map<String, dynamic>> pendingMenuStatuses,
+    required Map<String, Map<String, dynamic>> pendingIngredientStocks,
+    required CashShift activeShift,
+    required List<CashShift> closedShifts,
+    required Map<String, Map<String, dynamic>> pendingCashShiftClosures,
     required RestaurantSettings settings,
     required AppUser? currentUser,
+    required List<AppUser> users,
     required DateTime? lastSync,
     required String serverUrl,
     required bool webSyncEnabled,
-  })  : _prefs = prefs,
-        _connectivity = connectivity,
-        _ownsConnectivity = ownsConnectivity,
-        _categories = categories,
-        _items = items,
-        _ingredients = ingredients,
-        _orders = orders,
-        _tables = tables,
-        _customers = customers,
-        _webVisits = webVisits,
-        _pendingMenuStatuses = pendingMenuStatuses,
-        _settings = settings,
-        _currentUser = currentUser,
-        _lastSync = lastSync,
-        _serverUrl = serverUrl,
-        _webSyncEnabled = webSyncEnabled {
+  }) : _prefs = prefs,
+       _connectivity = connectivity,
+       _ownsConnectivity = ownsConnectivity,
+       _categories = categories,
+       _items = items,
+       _ingredients = ingredients,
+       _orders = orders,
+       _tables = tables,
+       _customers = customers,
+       _webVisits = webVisits,
+       _pendingMenuStatuses = pendingMenuStatuses,
+       _pendingIngredientStocks = pendingIngredientStocks,
+       _activeShift = activeShift,
+       _closedShifts = closedShifts,
+       _pendingCashShiftClosures = pendingCashShiftClosures,
+       _settings = settings,
+       _currentUser = currentUser,
+       _users = users,
+       _lastSync = lastSync,
+       _serverUrl = serverUrl,
+       _webSyncEnabled = webSyncEnabled {
     _connectivity.online.addListener(_onConnectivityChanged);
   }
 
@@ -90,11 +147,16 @@ class RestaurantRepository extends ChangeNotifier {
   static const _kTables = 'rm_tables_v1';
   static const _kSettings = 'rm_settings_v1';
   static const _kSession = 'rm_session_v1';
+  static const _kUsers = 'rm_users_v1';
   static const _kLastSync = 'rm_last_sync_v1';
   static const _kServerUrl = 'rm_server_url_v1';
   static const _kCustomers = 'rm_customers_v1';
   static const _kWebVisits = 'rm_web_visits_v1';
   static const _kPendingMenuStatuses = 'rm_pending_menu_statuses_v1';
+  static const _kPendingIngredientStocks = 'rm_pending_ingredient_stocks_v1';
+  static const _kActiveCashShift = 'rm_active_cash_shift_v1';
+  static const _kCashShifts = 'rm_cash_shifts_v1';
+  static const _kPendingCashShiftClosures = 'rm_pending_cash_shift_closures_v1';
 
   /// URL de la web pública para importar los pedidos creados en línea.
   /// Se puede cambiar desde Configuración o con
@@ -119,13 +181,23 @@ class RestaurantRepository extends ChangeNotifier {
   List<WebVisit> _webVisits;
   RestaurantSettings _settings;
   AppUser? _currentUser;
+  List<AppUser> _users;
   DateTime? _lastSync;
   String _serverUrl;
   bool _syncing = false;
   bool _pullingServerOrders = false;
   bool _flushingMenuStatuses = false;
+  bool _flushingIngredientStocks = false;
+  bool _pullingServerIngredients = false;
+  bool _pullingServerMenuStatuses = false;
+  bool _pullingCashShifts = false;
+  bool _flushingCashShifts = false;
   final bool _webSyncEnabled;
-  Map<String, String> _pendingMenuStatuses = {};
+  Map<String, Map<String, dynamic>> _pendingMenuStatuses = {};
+  Map<String, Map<String, dynamic>> _pendingIngredientStocks = {};
+  Map<String, Map<String, dynamic>> _pendingCashShiftClosures = {};
+  CashShift _activeShift;
+  List<CashShift> _closedShifts;
   Future<void>? _syncFuture;
   Timer? _webPollTimer;
 
@@ -146,14 +218,16 @@ class RestaurantRepository extends ChangeNotifier {
     );
     final storedItems = _readList<MenuItem>(prefs, _kItems, MenuItem.fromJson);
     final seedItems = SeedData.menuItemsWithRecipes();
+    final migratedItems = _migrateRecipeIngredientIds(storedItems);
     final items = storedItems.isEmpty
         ? seedItems
-        : _hydrateSeedExtras(storedItems, seedItems);
-    final ingredients = _readList<Ingredient>(
+        : _hydrateSeedExtras(migratedItems, seedItems);
+    final storedIngredients = _readList<Ingredient>(
       prefs,
       _kIngredients,
       Ingredient.fromJson,
     );
+    final ingredients = _migrateIngredientIds(storedIngredients);
     final orders = _readList<Order>(prefs, _kOrders, Order.fromJson);
     final tables = _readList<RestaurantTable>(
       prefs,
@@ -170,19 +244,29 @@ class RestaurantRepository extends ChangeNotifier {
     final currentUser = sessionRaw == null
         ? null
         : AppUser.fromJson(jsonDecode(sessionRaw) as Map<String, dynamic>);
+    final storedUsers = _readList(prefs, _kUsers, AppUser.fromJson);
+    final users = storedUsers.isEmpty ? [...SeedData.users] : storedUsers;
     final lastSyncRaw = prefs.getString(_kLastSync);
-    final lastSync =
-        lastSyncRaw == null ? null : DateTime.tryParse(lastSyncRaw);
+    final lastSync = lastSyncRaw == null
+        ? null
+        : DateTime.tryParse(lastSyncRaw);
     final serverUrl = _normalizeServerUrl(
       prefs.getString(_kServerUrl) ?? defaultServerUrl,
     );
-    final customers = _readList(
-      prefs,
-      _kCustomers,
-      CustomerRecord.fromJson,
-    );
+    final customers = _readList(prefs, _kCustomers, CustomerRecord.fromJson);
     final webVisits = _readList(prefs, _kWebVisits, WebVisit.fromJson);
     final pendingMenuStatuses = _readPendingMenuStatuses(prefs);
+    final pendingIngredientStocks = _readPendingIngredientStocks(prefs);
+    final activeShiftRaw = prefs.getString(_kActiveCashShift);
+    final activeShift = activeShiftRaw == null
+        ? _newCashShift(DateTime.now(), user: currentUser)
+        : CashShift.fromJson(jsonDecode(activeShiftRaw) as Map<String, dynamic>);
+    final closedShifts = _readList(
+      prefs,
+      _kCashShifts,
+      CashShift.fromJson,
+    )..sort((a, b) => b.openedAt.compareTo(a.openedAt));
+    final pendingCashShiftClosures = _readPendingCashShiftClosures(prefs);
 
     final repository = RestaurantRepository._(
       prefs: prefs,
@@ -194,16 +278,20 @@ class RestaurantRepository extends ChangeNotifier {
           ? [...SeedData.ingredients]
           : ingredients,
       orders: _hydrateOrderExtras(
-              orders.isEmpty ? SeedData.orders() : orders,
-              seedItems,
-            )
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
+        orders.isEmpty ? SeedData.orders() : orders,
+        seedItems,
+      )..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
       tables: tables.isEmpty ? SeedData.tables() : tables,
       customers: customers,
       webVisits: webVisits,
       pendingMenuStatuses: pendingMenuStatuses,
+      pendingIngredientStocks: pendingIngredientStocks,
+      activeShift: activeShift,
+      closedShifts: closedShifts,
+      pendingCashShiftClosures: pendingCashShiftClosures,
       settings: settings,
       currentUser: currentUser,
+      users: users,
       lastSync: lastSync,
       serverUrl: serverUrl,
       webSyncEnabled: watchConnectivity,
@@ -212,13 +300,19 @@ class RestaurantRepository extends ChangeNotifier {
     repository._rebuildCustomersFromOrders(persist: customers.isEmpty);
 
     if (categories.isEmpty) await repository._persistCategories();
-    if (storedItems.isEmpty || !_sameItemExtras(storedItems, items)) {
+    if (storedItems.isEmpty ||
+        _hasLegacyRecipeId(storedItems) ||
+        !_sameItemExtras(storedItems, items)) {
       await repository._persistItems();
     }
-    if (ingredients.isEmpty) await repository._persistIngredients();
+    if (ingredients.isEmpty || _hasLegacyIngredientId(storedIngredients)) {
+      await repository._persistIngredients();
+    }
     if (orders.isEmpty) await repository._persistOrders();
     if (tables.isEmpty) await repository._persistTables();
+    if (storedUsers.isEmpty) await repository._persistUsers();
     if (customers.isEmpty) await repository._persistCustomers();
+    if (activeShiftRaw == null) await repository._persistActiveShift();
 
     if (watchConnectivity) {
       repository._startWebPolling();
@@ -226,6 +320,41 @@ class RestaurantRepository extends ChangeNotifier {
 
     return repository;
   }
+
+  /// El insumo del café se llamaba `cafe-huila` en versiones anteriores; la
+  /// web y Firestore usan `cafe`. Migrar evita que la app siga descontando un
+  /// documento que no existe en el catálogo compartido.
+  static const _legacyCafeIngredientId = 'cafe-huila';
+  static const _cafeIngredientId = 'cafe';
+
+  static bool _hasLegacyIngredientId(List<Ingredient> ingredients) =>
+      ingredients.any((ingredient) => ingredient.id == _legacyCafeIngredientId);
+
+  static bool _hasLegacyRecipeId(List<MenuItem> items) => items.any(
+    (item) =>
+        item.recipe.any((line) => line.ingredientId == _legacyCafeIngredientId),
+  );
+
+  static List<Ingredient> _migrateIngredientIds(List<Ingredient> stored) =>
+      stored
+          .map(
+            (ingredient) => ingredient.id == _legacyCafeIngredientId
+                ? ingredient.copyWith(id: _cafeIngredientId)
+                : ingredient,
+          )
+          .toList();
+
+  static List<MenuItem> _migrateRecipeIngredientIds(List<MenuItem> stored) =>
+      stored.map((item) {
+        final recipe = item.recipe
+            .map(
+              (line) => line.ingredientId == _legacyCafeIngredientId
+                  ? line.copyWith(ingredientId: _cafeIngredientId)
+                  : line,
+            )
+            .toList();
+        return item.copyWith(recipe: recipe);
+      }).toList();
 
   /// Agrega SKU, recetas y medios a los platos guardados por versiones
   /// anteriores de la app, sin sobrescribir cambios del administrador.
@@ -240,10 +369,12 @@ class RestaurantRepository extends ChangeNotifier {
       return item.copyWith(
         sku: item.sku.isEmpty ? seed.sku : item.sku,
         recipe: item.recipe.isEmpty ? seed.recipe : item.recipe,
-        recipeSteps:
-            item.recipeSteps.isEmpty ? seed.recipeSteps : item.recipeSteps,
-        ingredients:
-            item.ingredients.isEmpty ? seed.ingredients : item.ingredients,
+        recipeSteps: item.recipeSteps.isEmpty
+            ? seed.recipeSteps
+            : item.recipeSteps,
+        ingredients: item.ingredients.isEmpty
+            ? seed.ingredients
+            : item.ingredients,
         imageUrl: item.imageUrl.isEmpty ? seed.imageUrl : item.imageUrl,
       );
     }).toList();
@@ -281,7 +412,20 @@ class RestaurantRepository extends ChangeNotifier {
               ),
             ]
           : order.auditLog;
-      return order.copyWith(items: items, auditLog: audit);
+      return order.copyWith(
+        items: items,
+        auditLog: audit,
+        paidAt: order.paidAt ??
+            (order.paymentStatus == PaymentStatus.paid
+                ? order.updatedAt
+                : null),
+        paidByName: order.paidByName ??
+            (order.paymentStatus == PaymentStatus.paid
+                ? (order.source == 'web'
+                    ? 'Web pública'
+                    : order.updatedByName ?? order.createdByName)
+                : null),
+      );
     }).toList();
   }
 
@@ -303,6 +447,43 @@ class RestaurantRepository extends ChangeNotifier {
     return url.isEmpty ? defaultServerUrl : url;
   }
 
+  static CashShift _newCashShift(
+    DateTime openedAt, {
+    String? id,
+    AppUser? user,
+  }) => CashShift(
+        id: id ?? 'shift-${openedAt.microsecondsSinceEpoch}',
+        label:
+            'Turno ${twoDigits(openedAt.day)}/${twoDigits(openedAt.month)} '
+            '${twoDigits(openedAt.hour)}:${twoDigits(openedAt.minute)}',
+        openedAt: openedAt,
+        openedBy: user?.id,
+        openedByName: user?.name ?? 'Sistema',
+      );
+
+  static Map<String, Map<String, dynamic>> _readPendingCashShiftClosures(
+    SharedPreferences prefs,
+  ) {
+    final raw = prefs.getString(_kPendingCashShiftClosures);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return {};
+      return Map.fromEntries(
+        decoded.entries
+            .where((entry) => entry.value is Map<String, dynamic>)
+            .map(
+              (entry) => MapEntry(
+                entry.key,
+                Map<String, dynamic>.from(entry.value as Map<String, dynamic>),
+              ),
+            ),
+      );
+    } catch (_) {
+      return {};
+    }
+  }
+
   static List<T> _readList<T>(
     SharedPreferences prefs,
     String key,
@@ -313,16 +494,13 @@ class RestaurantRepository extends ChangeNotifier {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! List) return [];
-      return decoded
-          .whereType<Map<String, dynamic>>()
-          .map(fromJson)
-          .toList();
+      return decoded.whereType<Map<String, dynamic>>().map(fromJson).toList();
     } catch (_) {
       return [];
     }
   }
 
-  static Map<String, String> _readPendingMenuStatuses(
+  static Map<String, Map<String, dynamic>> _readPendingMenuStatuses(
     SharedPreferences prefs,
   ) {
     final raw = prefs.getString(_kPendingMenuStatuses);
@@ -330,14 +508,56 @@ class RestaurantRepository extends ChangeNotifier {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) return {};
+      final result = <String, Map<String, dynamic>>{};
+      for (final entry in decoded.entries) {
+        final status = entry.value is String
+            ? entry.value as String
+            : entry.value is Map<String, dynamic>
+            ? entry.value['status'] as String?
+            : null;
+        if (status != 'available' && status != 'unavailable') continue;
+        final manual = entry.value is Map<String, dynamic>
+            ? entry.value['manual'] as bool? ?? status == 'unavailable'
+            : status == 'unavailable';
+        final reason = entry.value is Map<String, dynamic>
+            ? entry.value['reason'] as String?
+            : null;
+        result[entry.key] = {
+          'status': status,
+          'manual': manual,
+          'reason': reason == 'ingredients' ? 'ingredients' : 'manual',
+        };
+      }
+      return result;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Map<String, Map<String, dynamic>> _readPendingIngredientStocks(
+    SharedPreferences prefs,
+  ) {
+    final raw = prefs.getString(_kPendingIngredientStocks);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return {};
       return Map.fromEntries(
-        decoded.entries
-            .where(
-              (entry) =>
-                  entry.value is String &&
-                  (entry.value == 'available' || entry.value == 'unavailable'),
-            )
-            .map((entry) => MapEntry(entry.key, entry.value as String)),
+        decoded.entries.map((entry) {
+          // Formato anterior: id -> stock. Se migra al patch completo.
+          if (entry.value is num) {
+            return MapEntry(entry.key, <String, dynamic>{
+              'stock': (entry.value as num).toDouble(),
+            });
+          }
+          if (entry.value is Map<String, dynamic>) {
+            return MapEntry(
+              entry.key,
+              Map<String, dynamic>.from(entry.value as Map<String, dynamic>),
+            );
+          }
+          return null;
+        }).whereType<MapEntry<String, Map<String, dynamic>>>(),
       );
     } catch (_) {
       return {};
@@ -352,10 +572,29 @@ class RestaurantRepository extends ChangeNotifier {
   UserRole? get role => _currentUser?.role;
   bool get isAuthenticated => _currentUser != null;
 
+  /// Cuentas guardadas en el dispositivo (semilla + altas del administrador).
+  List<AppUser> get users => List.unmodifiable(_users);
+
+  int get _adminCount =>
+      _users.where((user) => user.role == UserRole.admin).length;
+
+  AppUser? userById(String id) {
+    final matches = _users.where((user) => user.id == id);
+    return matches.isEmpty ? null : matches.first;
+  }
+
+  bool isEmailTaken(String email, {String? excludeId}) {
+    final normalized = email.trim().toLowerCase();
+    return _users.any(
+      (user) => user.email.toLowerCase() == normalized && user.id != excludeId,
+    );
+  }
+
   bool login(String email, String password) {
     final normalized = email.trim().toLowerCase();
-    final matches =
-        SeedData.users.where((user) => user.email.toLowerCase() == normalized);
+    final matches = _users.where(
+      (user) => user.email.toLowerCase() == normalized,
+    );
     if (matches.isEmpty || password != SeedData.demoPassword) {
       return false;
     }
@@ -366,7 +605,7 @@ class RestaurantRepository extends ChangeNotifier {
   }
 
   void loginAs(UserRole role) {
-    final matches = SeedData.users.where((user) => user.role == role);
+    final matches = _users.where((user) => user.role == role);
     if (matches.isEmpty) return;
     _currentUser = matches.first;
     _prefs.setString(_kSession, jsonEncode(_currentUser!.toJson()));
@@ -376,6 +615,92 @@ class RestaurantRepository extends ChangeNotifier {
   void logout() {
     _currentUser = null;
     _prefs.remove(_kSession);
+    notifyListeners();
+  }
+
+  Future<AppUser> addUser({
+    required String name,
+    required String email,
+    required UserRole role,
+  }) async {
+    final trimmedName = name.trim();
+    final trimmedEmail = email.trim().toLowerCase();
+    if (trimmedName.length < 2) {
+      throw ArgumentError('Escribe el nombre del usuario.');
+    }
+    if (!trimmedEmail.contains('@') || !trimmedEmail.contains('.')) {
+      throw ArgumentError('Escribe un correo válido.');
+    }
+    if (isEmailTaken(trimmedEmail)) {
+      throw ArgumentError('Ya existe un usuario con ese correo.');
+    }
+    final user = AppUser(
+      id: newId('u'),
+      name: trimmedName,
+      email: trimmedEmail,
+      role: role,
+    );
+    _users = [user, ..._users];
+    await _persistUsers();
+    notifyListeners();
+    return user;
+  }
+
+  Future<AppUser> updateUser(
+    String id, {
+    String? name,
+    String? email,
+    UserRole? role,
+  }) async {
+    final index = _users.indexWhere((user) => user.id == id);
+    if (index < 0) throw ArgumentError('Usuario no encontrado.');
+    final current = _users[index];
+
+    final nextName = name?.trim();
+    if (nextName != null && nextName.length < 2) {
+      throw ArgumentError('Escribe el nombre del usuario.');
+    }
+    final nextEmail = email?.trim().toLowerCase();
+    if (nextEmail != null &&
+        (!nextEmail.contains('@') || !nextEmail.contains('.'))) {
+      throw ArgumentError('Escribe un correo válido.');
+    }
+    if (nextEmail != null && isEmailTaken(nextEmail, excludeId: id)) {
+      throw ArgumentError('Ya existe un usuario con ese correo.');
+    }
+    final nextRole = role ?? current.role;
+    if (current.role == UserRole.admin &&
+        nextRole != UserRole.admin &&
+        _adminCount <= 1) {
+      throw ArgumentError('Debe quedar al menos un administrador.');
+    }
+
+    final updated = current.copyWith(
+      name: nextName,
+      email: nextEmail,
+      role: nextRole,
+    );
+    _users[index] = updated;
+    if (_currentUser?.id == id) {
+      _currentUser = updated;
+      await _prefs.setString(_kSession, jsonEncode(updated.toJson()));
+    }
+    await _persistUsers();
+    notifyListeners();
+    return updated;
+  }
+
+  Future<void> deleteUser(String id) async {
+    final user = userById(id);
+    if (user == null) return;
+    if (_currentUser?.id == id) {
+      throw ArgumentError('No puedes eliminar tu propia cuenta.');
+    }
+    if (user.role == UserRole.admin && _adminCount <= 1) {
+      throw ArgumentError('Debe quedar al menos un administrador.');
+    }
+    _users = _users.where((candidate) => candidate.id != id).toList();
+    await _persistUsers();
     notifyListeners();
   }
 
@@ -397,7 +722,22 @@ class RestaurantRepository extends ChangeNotifier {
     }
     if (isOnline && _webSyncEnabled) {
       unawaited(_flushPendingMenuStatuses());
+      unawaited(_pullWebCatalogState());
+      unawaited(_flushPendingCashShiftClosures());
+      unawaited(pullCashShifts());
     }
+  }
+
+  /// Recarga todo desde la web: pedidos, clientes, visitas, inventario,
+  /// estados del menú y turnos de caja. La usa el gesto de «actualizar».
+  Future<void> refreshAll() async {
+    await syncPendingOrders();
+    await _pullWebCatalogState();
+    await pullServerOrders();
+    await pullServerCustomers();
+    await pullServerVisits();
+    await _flushPendingCashShiftClosures();
+    await pullCashShifts();
   }
 
   Future<void> setOnlineForDemo(bool value) async {
@@ -450,7 +790,8 @@ class RestaurantRepository extends ChangeNotifier {
                         ...order.auditLog,
                         _audit(
                           'Pedido sincronizado',
-                          detail: 'Enviado al servidor al restablecerse la conexión',
+                          detail:
+                              'Enviado al servidor al restablecerse la conexión',
                         ),
                       ],
                     )
@@ -479,6 +820,17 @@ class RestaurantRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Aplica primero el inventario y luego los estados publicados por la web.
+  /// Así el estado remoto ya refleja el stock vigente y no se recalcula dos
+  /// veces desde el dispositivo.
+  Future<void> _pullWebCatalogState() async {
+    if (!_webSyncEnabled || !isOnline || _serverUrl.isEmpty) return;
+    await _flushPendingIngredientPatches();
+    await pullServerIngredients();
+    await _flushPendingMenuStatuses();
+    await pullServerMenuStatus();
+  }
+
   void _startWebPolling() {
     _webPollTimer?.cancel();
     _webPollTimer = Timer.periodic(_pollInterval, (_) {
@@ -486,24 +838,24 @@ class RestaurantRepository extends ChangeNotifier {
         unawaited(pullServerOrders());
         unawaited(pullServerCustomers());
         unawaited(pullServerVisits());
-        unawaited(pullServerMenuStatus());
-        unawaited(_flushPendingMenuStatuses());
+        unawaited(_pullWebCatalogState());
+        unawaited(_flushPendingCashShiftClosures());
+        unawaited(pullCashShifts());
       }
     });
     unawaited(pullServerOrders());
     unawaited(pullServerCustomers());
     unawaited(pullServerVisits());
-    unawaited(pullServerMenuStatus());
-    unawaited(_flushPendingMenuStatuses());
+    unawaited(_pullWebCatalogState());
+    unawaited(_flushPendingCashShiftClosures());
+    unawaited(pullCashShifts());
   }
 
   /// Prueba la conexión con la API de la web pública.
   Future<bool> testServerConnection() async {
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5);
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
     try {
-      final request =
-          await client.getUrl(Uri.parse('$_serverUrl/api/health'));
+      final request = await client.getUrl(Uri.parse('$_serverUrl/api/health'));
       final response = await request.close();
       await response.drain<void>();
       return response.statusCode == 200;
@@ -522,11 +874,9 @@ class RestaurantRepository extends ChangeNotifier {
   Future<int> pullServerOrders() async {
     if (_pullingServerOrders || _serverUrl.isEmpty) return 0;
     _pullingServerOrders = true;
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5);
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
     try {
-      final request =
-          await client.getUrl(Uri.parse('$_serverUrl/api/orders'));
+      final request = await client.getUrl(Uri.parse('$_serverUrl/api/orders'));
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       final response = await request.close();
       if (response.statusCode != 200) {
@@ -538,21 +888,23 @@ class RestaurantRepository extends ChangeNotifier {
       final rawList = decoded is List
           ? decoded
           : decoded is Map<String, dynamic>
-              ? decoded['orders']
-              : null;
+          ? decoded['orders']
+          : null;
       if (rawList is! List) return 0;
 
       final existingIds = _orders.map((order) => order.id).toSet();
       final imported = <Order>[];
+      final webReconcileIds = <String>[];
       var updatedExisting = false;
 
       for (final raw in rawList) {
         if (raw is! Map<String, dynamic>) continue;
-        final remote = Order.fromJson({
+        var remote = Order.fromJson({
           ...raw,
           'source': 'web',
           'synced': true,
-          'auditLog': raw['auditLog'] ??
+          'auditLog':
+              raw['auditLog'] ??
               [
                 {
                   'action': 'Pedido importado desde la web',
@@ -567,52 +919,98 @@ class RestaurantRepository extends ChangeNotifier {
 
         if (!existingIds.contains(remote.id)) {
           existingIds.add(remote.id);
-          imported.add(remote.copyWith(
-            auditLog: remote.auditLog.isEmpty
-                ? [
-                    OrderAuditEntry(
-                      action: 'Pedido importado desde la web',
-                      timestamp: remote.createdAt,
-                      actorName: 'Web pública',
-                      detail: 'Pedido creado desde el catálogo en línea',
-                    ),
-                  ]
-                : remote.auditLog,
-          ));
+          // La web es la dueña del stock de sus pedidos. Si llega un pedido
+          // heredado en estado superior sin flag, le pedimos que descuente
+          // con un PATCH en vez de descontar dos veces desde la app.
+          if (!remote.inventoryDeducted &&
+              _isDeductibleStatus(remote.status) &&
+              consumptionForOrder(remote).isNotEmpty) {
+            webReconcileIds.add(remote.id);
+          }
+          imported.add(
+            remote.copyWith(
+              auditLog: remote.auditLog.isEmpty
+                  ? [
+                      OrderAuditEntry(
+                        action: 'Pedido importado desde la web',
+                        timestamp: remote.createdAt,
+                        actorName: 'Web pública',
+                        detail: 'Pedido creado desde el catálogo en línea',
+                      ),
+                    ]
+                  : remote.auditLog,
+            ),
+          );
           continue;
         }
 
         final index = _orders.indexWhere((o) => o.id == remote.id);
         if (index < 0) continue;
-        final local = _orders[index];
+        var local = _orders[index];
         if (local.source != 'web') continue;
 
-        final statusChanged = local.status != remote.status ||
+        if (local.inventoryDeducted != remote.inventoryDeducted) {
+          local = local.copyWith(inventoryDeducted: remote.inventoryDeducted);
+          _orders[index] = local;
+          updatedExisting = true;
+        }
+        if (!remote.inventoryDeducted &&
+            _isDeductibleStatus(remote.status) &&
+            consumptionForOrder(local).isNotEmpty) {
+          webReconcileIds.add(remote.id);
+        }
+
+        final statusChanged =
+            local.status != remote.status ||
             local.paymentStatus != remote.paymentStatus;
-        if (!statusChanged) continue;
+        // La web también puede cambiar quién cobró después de marcar el pago.
+        // Sin esto, la app se queda con el cobrador genérico «Web pública».
+        final payerChanged =
+            (remote.paidAt != null && local.paidAt != remote.paidAt) ||
+            (remote.paidBy != null && local.paidBy != remote.paidBy) ||
+            (remote.paidByName != null &&
+                local.paidByName != remote.paidByName);
+        if (!statusChanged && !payerChanged) continue;
 
         final audit = [...local.auditLog];
         if (local.status != remote.status) {
-          audit.add(OrderAuditEntry(
-            action: 'Estado actualizado desde la web',
-            timestamp: remote.updatedAt,
-            actorName: 'Web pública',
-            detail: '${local.status.label} → ${remote.status.label}',
-          ));
+          audit.add(
+            OrderAuditEntry(
+              action: 'Estado actualizado desde la web',
+              timestamp: remote.updatedAt,
+              actorName: 'Web pública',
+              detail: '${local.status.label} → ${remote.status.label}',
+            ),
+          );
         }
         if (local.paymentStatus != remote.paymentStatus) {
-          audit.add(OrderAuditEntry(
-            action: 'Pago actualizado desde la web',
-            timestamp: remote.updatedAt,
-            actorName: 'Web pública',
-            detail:
-                '${local.paymentStatus.label} → ${remote.paymentStatus.label}',
-          ));
+          audit.add(
+            OrderAuditEntry(
+              action: 'Pago actualizado desde la web',
+              timestamp: remote.updatedAt,
+              actorName: 'Web pública',
+              detail:
+                  '${local.paymentStatus.label} → ${remote.paymentStatus.label}',
+            ),
+          );
+        }
+        if (payerChanged && remote.paidByName != null) {
+          audit.add(
+            OrderAuditEntry(
+              action: 'Cobrador actualizado desde la web',
+              timestamp: remote.updatedAt,
+              actorName: 'Web pública',
+              detail: remote.paidByName!,
+            ),
+          );
         }
         _orders[index] = local.copyWith(
           status: remote.status,
           paymentStatus: remote.paymentStatus,
           deliveryAddress: remote.deliveryAddress,
+          paidAt: remote.paidAt ?? local.paidAt,
+          paidBy: remote.paidBy ?? local.paidBy,
+          paidByName: remote.paidByName ?? local.paidByName,
           updatedAt: remote.updatedAt,
           auditLog: audit,
         );
@@ -643,6 +1041,11 @@ class RestaurantRepository extends ChangeNotifier {
       await _rebuildCustomersFromOrders(persist: false);
       await _persistOrders();
       await _persistCustomers();
+      for (final id in webReconcileIds) {
+        final synced = _orders.where((order) => order.id == id).toList();
+        if (synced.isEmpty) continue;
+        await _pushOrderUpdateToServer(synced.first);
+      }
       notifyListeners();
       return imported.length;
     } catch (_) {
@@ -655,18 +1058,28 @@ class RestaurantRepository extends ChangeNotifier {
 
   Future<void> _pushOrderUpdateToServer(Order order) async {
     if (_serverUrl.isEmpty) return;
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5);
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
     try {
       final request = await client.patchUrl(
         Uri.parse('$_serverUrl/api/orders/${Uri.encodeComponent(order.id)}'),
       );
       request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.write(jsonEncode({
-        'status': order.status.name,
-        'paymentStatus': order.paymentStatus.name,
-      }));
+      // La web es la dueña del inventario de sus propios pedidos. Enviamos el
+      // flag en false para que decida con su valor persistido: si el pedido ya
+      // descontó no hace nada; si es el primer estado superior, descuenta.
+      request.write(
+        jsonEncode({
+          'status': order.status.name,
+          'paymentStatus': order.paymentStatus.name,
+          'inventoryDeducted': false,
+          if (order.paymentStatus == PaymentStatus.paid) ...{
+            'paidAt': (order.paidAt ?? order.updatedAt).toIso8601String(),
+            'paidBy': order.paidBy,
+            'paidByName': order.paidByName ?? order.updatedByName,
+          },
+        }),
+      );
       final response = await request.close();
       await response.drain<void>();
     } catch (_) {
@@ -678,10 +1091,11 @@ class RestaurantRepository extends ChangeNotifier {
 
   Future<void> _pushCustomerToServer(CustomerRecord customer) async {
     if (_serverUrl.isEmpty || !customer.hasPhone) return;
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5);
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
     try {
-      final request = await client.postUrl(Uri.parse('$_serverUrl/api/customers'));
+      final request = await client.postUrl(
+        Uri.parse('$_serverUrl/api/customers'),
+      );
       request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.write(jsonEncode(customer.toJson()));
@@ -696,10 +1110,11 @@ class RestaurantRepository extends ChangeNotifier {
 
   Future<void> pullServerCustomers() async {
     if (_serverUrl.isEmpty) return;
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5);
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
     try {
-      final request = await client.getUrl(Uri.parse('$_serverUrl/api/customers'));
+      final request = await client.getUrl(
+        Uri.parse('$_serverUrl/api/customers'),
+      );
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       final response = await request.close();
       if (response.statusCode != 200) {
@@ -708,14 +1123,18 @@ class RestaurantRepository extends ChangeNotifier {
       }
       final body = await utf8.decoder.bind(response).join();
       final decoded = jsonDecode(body);
-      final rawList = decoded is Map<String, dynamic> ? decoded['customers'] : null;
+      final rawList = decoded is Map<String, dynamic>
+          ? decoded['customers']
+          : null;
       if (rawList is! List) return;
       var changed = false;
       for (final raw in rawList) {
         if (raw is! Map<String, dynamic>) continue;
         final remote = CustomerRecord.fromJson(raw);
         if (!remote.hasPhone) continue;
-        final idx = _customers.indexWhere((c) => c.normalizedPhone == remote.normalizedPhone);
+        final idx = _customers.indexWhere(
+          (c) => c.normalizedPhone == remote.normalizedPhone,
+        );
         if (idx < 0) {
           _customers = [..._customers, remote];
           changed = true;
@@ -749,8 +1168,7 @@ class RestaurantRepository extends ChangeNotifier {
   /// SharedPreferences para que el panel CRM funcione también sin conexión.
   Future<int> pullServerVisits() async {
     if (_serverUrl.isEmpty) return 0;
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5);
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
     try {
       final request = await client.getUrl(Uri.parse('$_serverUrl/api/visits'));
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
@@ -761,7 +1179,9 @@ class RestaurantRepository extends ChangeNotifier {
       }
       final body = await utf8.decoder.bind(response).join();
       final decoded = jsonDecode(body);
-      final rawList = decoded is Map<String, dynamic> ? decoded['visits'] : null;
+      final rawList = decoded is Map<String, dynamic>
+          ? decoded['visits']
+          : null;
       if (rawList is! List) return 0;
 
       final seen = <String>{};
@@ -788,22 +1208,44 @@ class RestaurantRepository extends ChangeNotifier {
     }
   }
 
-  Future<bool> _pushMenuItemStatusToServer(String itemId, String status) async {
-    if (_serverUrl.isEmpty) return false;
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5);
+  /// Devuelve el estado efectivo confirmado por la web, o `null` si falló.
+  ///
+  /// La web puede corregir un `available` a `unavailable` cuando el stock no
+  /// permite preparar el plato; usar esa respuesta evita reencolar el mismo
+  /// cambio en cada sondeo.
+  Future<String?> _pushMenuItemStatusToServer(
+    String itemId,
+    String status,
+    bool manual,
+    String reason,
+  ) async {
+    if (_serverUrl.isEmpty) return null;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
     try {
       final request = await client.patchUrl(
         Uri.parse('$_serverUrl/api/menu/${Uri.encodeComponent(itemId)}'),
       );
       request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.write(jsonEncode({'status': status}));
+      request.write(
+        jsonEncode({'status': status, 'manual': manual, 'reason': reason}),
+      );
       final response = await request.close();
-      await response.drain<void>();
-      return response.statusCode >= 200 && response.statusCode < 300;
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        await response.drain<void>();
+        return null;
+      }
+      final body = await utf8.decoder.bind(response).join();
+      try {
+        final decoded = jsonDecode(body);
+        final item = decoded is Map<String, dynamic> ? decoded['item'] : null;
+        final effective = item is Map<String, dynamic> ? item['status'] : null;
+        return effective is String && effective.isNotEmpty ? effective : status;
+      } catch (_) {
+        return status;
+      }
     } catch (_) {
-      return false;
+      return null;
     } finally {
       client.close(force: true);
     }
@@ -815,13 +1257,49 @@ class RestaurantRepository extends ChangeNotifier {
     if (_pendingMenuStatuses.isEmpty) return;
     _flushingMenuStatuses = true;
     try {
-      final snapshot = Map<String, String>.from(_pendingMenuStatuses);
+      final snapshot = Map<String, Map<String, dynamic>>.from(
+        _pendingMenuStatuses,
+      );
+      var localChanges = 0;
       for (final entry in snapshot.entries) {
-        final sent = await _pushMenuItemStatusToServer(entry.key, entry.value);
-        if (sent && _pendingMenuStatuses[entry.key] == entry.value) {
-          _pendingMenuStatuses.remove(entry.key);
-          await _persistPendingMenuStatuses();
+        final status = entry.value['status'] as String? ?? '';
+        final manual =
+            entry.value['manual'] as bool? ?? status == 'unavailable';
+        final reason = entry.value['reason'] as String? ?? 'manual';
+        final effective = await _pushMenuItemStatusToServer(
+          entry.key,
+          status,
+          manual,
+          reason,
+        );
+        if (effective == null) continue;
+        // Solo limpiar si la cola sigue siendo la misma que se envió; un cambio
+        // local posterior debe conservarse para el siguiente intento.
+        if (_pendingMenuStatuses[entry.key] != entry.value) continue;
+        _pendingMenuStatuses.remove(entry.key);
+        await _persistPendingMenuStatuses();
+
+        // La web puede corregir el estado por stock. Adoptar ese resultado
+        // evita reenviar indefinidamente un cambio que ya fue reconciliado y
+        // evita que `statusUpdatedAt` se reescriba en cada sondeo.
+        final index = _items.indexWhere((item) => item.id == entry.key);
+        if (index < 0) continue;
+        final effectiveStatus = MenuItemStatus.fromName(effective);
+        final effectiveManual =
+            effective == 'unavailable' && manual && reason == 'manual';
+        if (_items[index].status == effectiveStatus &&
+            _items[index].manualUnavailable == effectiveManual) {
+          continue;
         }
+        _items[index] = _items[index].copyWith(
+          status: effectiveStatus,
+          manualUnavailable: effectiveManual,
+        );
+        localChanges++;
+      }
+      if (localChanges > 0) {
+        await _persistItems();
+        notifyListeners();
       }
     } finally {
       _flushingMenuStatuses = false;
@@ -833,12 +1311,15 @@ class RestaurantRepository extends ChangeNotifier {
   /// Los cambios pendientes de envío tienen prioridad para no sobrescribir un
   /// toggle offline que todavía no llegó a Firestore.
   Future<int> pullServerMenuStatus() async {
-    if (!_webSyncEnabled || _serverUrl.isEmpty) return 0;
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5);
+    if (!_webSyncEnabled || _serverUrl.isEmpty || _pullingServerMenuStatuses) {
+      return 0;
+    }
+    _pullingServerMenuStatuses = true;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
     try {
-      final request =
-          await client.getUrl(Uri.parse('$_serverUrl/api/menu/status'));
+      final request = await client.getUrl(
+        Uri.parse('$_serverUrl/api/menu/status'),
+      );
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       final response = await request.close();
       if (response.statusCode != 200) {
@@ -860,10 +1341,20 @@ class RestaurantRepository extends ChangeNotifier {
         final index = _items.indexWhere((item) => item.id == id);
         if (index < 0) continue;
         final remoteStatus = MenuItemStatus.fromName(status);
-        if (_items[index].status == remoteStatus) continue;
-        _items[index] = _items[index].copyWith(status: remoteStatus);
+        final manualUnavailable = raw['manualStatus'] == 'unavailable';
+        if (_items[index].status == remoteStatus &&
+            _items[index].manualUnavailable == manualUnavailable) {
+          continue;
+        }
+        _items[index] = _items[index].copyWith(
+          status: remoteStatus,
+          manualUnavailable: manualUnavailable,
+        );
         changes++;
       }
+      // El estado remoto ya incluye los ajustes por stock (web/Functions).
+      // Recalcularlo aquí sobrescribiría la corrección del servidor y volvería
+      // a encolar el mismo cambio en cada sondeo.
       if (changes > 0) {
         await _persistItems();
         notifyListeners();
@@ -872,6 +1363,216 @@ class RestaurantRepository extends ChangeNotifier {
     } catch (_) {
       return 0;
     } finally {
+      client.close(force: true);
+      _pullingServerMenuStatuses = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sincronización de inventario con la web / Firestore
+  // ---------------------------------------------------------------------------
+
+  void _queueIngredientPatch(Ingredient ingredient) {
+    _pendingIngredientStocks[ingredient.id] = {
+      'name': ingredient.name,
+      'unit': ingredient.unit.symbol,
+      'stock': ingredient.stock,
+      'minStock': ingredient.minStock,
+    };
+    unawaited(_persistPendingIngredientStocks());
+    if (_webSyncEnabled) unawaited(_flushPendingIngredientPatches());
+  }
+
+  Future<bool> _pushIngredientPatchToServer(
+    String ingredientId,
+    Map<String, dynamic> patch,
+  ) async {
+    if (_serverUrl.isEmpty) return false;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final request = await client.patchUrl(
+        Uri.parse(
+          '$_serverUrl/api/ingredients/${Uri.encodeComponent(ingredientId)}',
+        ),
+      );
+      request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      request.write(jsonEncode(patch));
+      final response = await request.close();
+      await response.drain<void>();
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (_) {
+      return false;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<bool> _deleteIngredientOnServer(String ingredientId) async {
+    if (_serverUrl.isEmpty) return false;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final request = await client.deleteUrl(
+        Uri.parse(
+          '$_serverUrl/api/ingredients/${Uri.encodeComponent(ingredientId)}',
+        ),
+      );
+      final response = await request.close();
+      await response.drain<void>();
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (_) {
+      return false;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> _flushPendingIngredientPatches() async {
+    if (!_webSyncEnabled || !isOnline || _flushingIngredientStocks) return;
+    if (_pendingIngredientStocks.isEmpty) return;
+    _flushingIngredientStocks = true;
+    try {
+      final snapshot = Map<String, Map<String, dynamic>>.from(
+        _pendingIngredientStocks,
+      );
+      for (final entry in snapshot.entries) {
+        final sent = await _pushIngredientPatchToServer(entry.key, entry.value);
+        if (sent &&
+            mapEquals(_pendingIngredientStocks[entry.key], entry.value)) {
+          _pendingIngredientStocks.remove(entry.key);
+          await _persistPendingIngredientStocks();
+        }
+      }
+    } finally {
+      _flushingIngredientStocks = false;
+    }
+  }
+
+  /// Porciones preparables con el stock local; null si no hay receta o si
+  /// faltan datos de inventario. Es la única fuente de verdad para decidir si
+  /// un plato está agotado por insumos (etiqueta y estado)
+  int? _preparableServings(MenuItem item) {
+    if (item.recipe.isEmpty) return null;
+    int? max;
+    for (final line in item.recipe) {
+      if (line.quantity <= 0) continue;
+      final ingredient = ingredientById(line.ingredientId);
+      if (ingredient == null) continue;
+      final servings = ingredient.stock <= 0
+          ? 0
+          : (ingredient.stock / line.quantity).floor();
+      max = max == null ? servings : (servings < max ? servings : max);
+    }
+    return max;
+  }
+
+  /// Estado derivado del stock local, respetando los bloqueos manuales.
+  ///
+  /// Los cambios automáticos se encolan hacia la web con
+  /// `reason: 'ingredients'` para que Firestore termine con el mismo estado;
+  /// un toggle manual pendiente nunca se sobrescribe aquí.
+  int _recomputeMenuStatuses() {
+    var changes = 0;
+    var queued = 0;
+    for (var index = 0; index < _items.length; index++) {
+      final item = _items[index];
+      MenuItemStatus next;
+      if (item.manualUnavailable) {
+        next = MenuItemStatus.unavailable;
+      } else {
+        next = _preparableServings(item) == 0
+            ? MenuItemStatus.unavailable
+            : MenuItemStatus.available;
+      }
+      if (item.status == next) continue;
+      _items[index] = item.copyWith(status: next);
+      changes++;
+      if (!item.manualUnavailable &&
+          _pendingMenuStatuses[item.id]?['manual'] != true) {
+        _pendingMenuStatuses[item.id] = {
+          'status': next.name,
+          'manual': false,
+          'reason': 'ingredients',
+        };
+        queued++;
+      }
+    }
+    if (queued > 0) {
+      unawaited(_persistPendingMenuStatuses());
+      if (_webSyncEnabled) unawaited(_flushPendingMenuStatuses());
+    }
+    return changes;
+  }
+
+  /// Descarga el inventario compartido. Los cambios locales pendientes tienen
+  /// prioridad para no perder ajustes hechos sin conexión.
+  Future<int> pullServerIngredients() async {
+    if (!_webSyncEnabled || _serverUrl.isEmpty || _pullingServerIngredients) {
+      return 0;
+    }
+    _pullingServerIngredients = true;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final request = await client.getUrl(
+        Uri.parse('$_serverUrl/api/ingredients'),
+      );
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final response = await request.close();
+      if (response.statusCode != 200) {
+        await response.drain<void>();
+        return 0;
+      }
+      final body = await utf8.decoder.bind(response).join();
+      final decoded = jsonDecode(body);
+      if (decoded is! Map<String, dynamic> || decoded['configured'] == false) {
+        return 0;
+      }
+      final rawList = decoded['ingredients'];
+      if (rawList is! List) return 0;
+
+      final remote = <Ingredient>[];
+      for (final raw in rawList) {
+        if (raw is! Map<String, dynamic>) continue;
+        final id = raw['id'] as String?;
+        final stock = (raw['stock'] as num?)?.toDouble();
+        if (id == null || id.isEmpty || stock == null) continue;
+        remote.add(
+          Ingredient(
+            id: id,
+            name: raw['name'] as String? ?? id,
+            unit: IngredientUnit.fromSymbol(raw['unit'] as String?),
+            stock: stock,
+            minStock: (raw['minStock'] as num?)?.toDouble() ?? 0,
+          ),
+        );
+      }
+
+      final merged = mergeServerIngredients(
+        _ingredients,
+        remote,
+        _pendingIngredientStocks.keys.toSet(),
+      );
+      bool same(Ingredient a, Ingredient b) =>
+          a.id == b.id &&
+          a.name == b.name &&
+          a.unit == b.unit &&
+          a.stock == b.stock &&
+          a.minStock == b.minStock;
+      var changes = merged.length != _ingredients.length ? 1 : 0;
+      for (var index = 0; index < merged.length && changes == 0; index++) {
+        if (!same(_ingredients[index], merged[index])) changes = 1;
+      }
+      if (changes > 0) _ingredients = merged;
+
+      final statusChanges = _recomputeMenuStatuses();
+      if (changes > 0) await _persistIngredients();
+      if (statusChanges > 0) await _persistItems();
+      if (changes > 0 || statusChanges > 0) notifyListeners();
+      return changes;
+    } catch (_) {
+      return 0;
+    } finally {
+      _pullingServerIngredients = false;
       client.close(force: true);
     }
   }
@@ -907,20 +1608,25 @@ class RestaurantRepository extends ChangeNotifier {
       cost: cost,
     );
     _ingredients.add(ingredient);
+    _queueIngredientPatch(ingredient);
+    final statusChanges = _recomputeMenuStatuses();
     await _persistIngredients();
+    if (statusChanges > 0) await _persistItems();
     notifyListeners();
     return ingredient;
   }
 
   Future<void> upsertIngredient(Ingredient ingredient) async {
-    final index =
-        _ingredients.indexWhere((entry) => entry.id == ingredient.id);
+    final index = _ingredients.indexWhere((entry) => entry.id == ingredient.id);
     if (index >= 0) {
       _ingredients[index] = ingredient;
     } else {
       _ingredients.add(ingredient);
     }
+    _queueIngredientPatch(ingredient);
+    final statusChanges = _recomputeMenuStatuses();
     await _persistIngredients();
+    if (statusChanges > 0) await _persistItems();
     notifyListeners();
   }
 
@@ -935,19 +1641,28 @@ class RestaurantRepository extends ChangeNotifier {
           ),
         )
         .toList();
+    _pendingIngredientStocks.remove(ingredientId);
+    await _persistPendingIngredientStocks();
+    if (_webSyncEnabled) unawaited(_deleteIngredientOnServer(ingredientId));
+    final statusChanges = _recomputeMenuStatuses();
     await _persistIngredients();
-    await _persistItems();
+    if (statusChanges > 0) await _persistItems();
     notifyListeners();
   }
 
   Future<void> adjustIngredientStock(String ingredientId, double delta) async {
-    final index =
-        _ingredients.indexWhere((ingredient) => ingredient.id == ingredientId);
+    final index = _ingredients.indexWhere(
+      (ingredient) => ingredient.id == ingredientId,
+    );
     if (index < 0) return;
     final ingredient = _ingredients[index];
     final next = ingredient.stock + delta;
-    _ingredients[index] = ingredient.copyWith(stock: next < 0 ? 0 : next);
+    final clamped = next < 0 ? 0.0 : next;
+    _ingredients[index] = ingredient.copyWith(stock: clamped);
+    _queueIngredientPatch(_ingredients[index]);
+    final statusChanges = _recomputeMenuStatuses();
     await _persistIngredients();
+    if (statusChanges > 0) await _persistItems();
     notifyListeners();
   }
 
@@ -1015,33 +1730,48 @@ class RestaurantRepository extends ChangeNotifier {
     }
   }
 
-  Future<void> _deductInventory(Order order) async {
+  /// Pendiente y cancelado no consumen insumos; los estados intermedios y
+  /// finales sí. Se usa tanto en pedidos locales como en pedidos web importados.
+  bool _isDeductibleStatus(OrderStatus status) =>
+      status != OrderStatus.pending && status != OrderStatus.cancelled;
+
+  Future<bool> _deductInventory(Order order) async {
     final consumption = consumptionForOrder(order);
-    if (consumption.isEmpty) return;
+    if (consumption.isEmpty) return false;
+    var changed = false;
     for (final entry in consumption.entries) {
-      final index = _ingredients
-          .indexWhere((ingredient) => ingredient.id == entry.key);
+      final index = _ingredients.indexWhere(
+        (ingredient) => ingredient.id == entry.key,
+      );
       if (index < 0) continue;
       final ingredient = _ingredients[index];
       final next = ingredient.stock - entry.value;
-      _ingredients[index] =
-          ingredient.copyWith(stock: next < 0 ? 0 : next);
+      _ingredients[index] = ingredient.copyWith(stock: next < 0 ? 0 : next);
+      _queueIngredientPatch(_ingredients[index]);
+      changed = true;
     }
+    final statusChanges = _recomputeMenuStatuses();
     await _persistIngredients();
+    if (statusChanges > 0) await _persistItems();
+    return changed;
   }
 
   Future<void> _restoreInventory(Order order) async {
     final consumption = consumptionForOrder(order);
     if (consumption.isEmpty) return;
     for (final entry in consumption.entries) {
-      final index = _ingredients
-          .indexWhere((ingredient) => ingredient.id == entry.key);
+      final index = _ingredients.indexWhere(
+        (ingredient) => ingredient.id == entry.key,
+      );
       if (index < 0) continue;
       final ingredient = _ingredients[index];
-      _ingredients[index] =
-          ingredient.copyWith(stock: ingredient.stock + entry.value);
+      final next = ingredient.stock + entry.value;
+      _ingredients[index] = ingredient.copyWith(stock: next);
+      _queueIngredientPatch(_ingredients[index]);
     }
+    final statusChanges = _recomputeMenuStatuses();
     await _persistIngredients();
+    if (statusChanges > 0) await _persistItems();
   }
 
   // ---------------------------------------------------------------------------
@@ -1053,14 +1783,28 @@ class RestaurantRepository extends ChangeNotifier {
 
   List<MenuItem> get menuItems => List.unmodifiable(_items);
 
-  bool isMenuItemOutOfStockByIngredients(MenuItem item) {
-    if (item.recipe.isEmpty) return false;
+  /// Cambios de disponibilidad esperando a llegar a Firestore (diagnóstico/QA).
+  Map<String, Map<String, dynamic>> get pendingMenuStatuses =>
+      Map.unmodifiable(_pendingMenuStatuses);
+
+  bool isMenuItemOutOfStockByIngredients(MenuItem item) =>
+      _preparableServings(item) == 0;
+
+  /// Insumos de [item] que no alcanzan para una porción. Es la explicación
+  /// de `isMenuItemOutOfStockByIngredients` y usa el mismo criterio que
+  /// `_preparableServings`: stock menor que la cantidad de la receta.
+  List<IngredientShortage> outOfStockIngredientsFor(MenuItem item) {
+    final shortages = <IngredientShortage>[];
     for (final line in item.recipe) {
+      if (line.quantity <= 0) continue;
       final ingredient = ingredientById(line.ingredientId);
       if (ingredient == null) continue;
-      if (ingredient.stock <= 0) return true;
+      if (ingredient.stock + 0.0001 >= line.quantity) continue;
+      shortages.add(
+        IngredientShortage(ingredient: ingredient, required: line.quantity),
+      );
     }
-    return false;
+    return shortages;
   }
 
   bool isMenuItemEffectivelyAvailable(MenuItem item) =>
@@ -1127,15 +1871,25 @@ class RestaurantRepository extends ChangeNotifier {
     final index = _items.indexWhere((item) => item.id == itemId);
     if (index < 0) return;
     final item = _items[index];
-    final next = item.status == MenuItemStatus.unavailable
-        ? MenuItemStatus.available
-        : MenuItemStatus.unavailable;
-    _items[index] = item.copyWith(status: next);
+    final goingManual = item.status != MenuItemStatus.unavailable;
+    _items[index] = item.copyWith(
+      status: goingManual
+          ? MenuItemStatus.unavailable
+          : MenuItemStatus.available,
+      manualUnavailable: goingManual,
+    );
+    if (!goingManual) _recomputeMenuStatuses();
+    final finalStatus = _items[index].status;
     await _persistItems();
 
     // La web pública lee Firestore: el toggle debe llegar al catálogo
-    // compartido, con cola local para cambios hechos offline.
-    _pendingMenuStatuses[itemId] = next.name;
+    // compartido, con cola local para cambios hechos offline. El bloqueo
+    // manual viaja junto al estado para que el trigger de stock lo respete.
+    _pendingMenuStatuses[itemId] = {
+      'status': finalStatus.name,
+      'manual': goingManual,
+      'reason': 'manual',
+    };
     await _persistPendingMenuStatuses();
     notifyListeners();
     if (_webSyncEnabled) unawaited(_flushPendingMenuStatuses());
@@ -1158,9 +1912,11 @@ class RestaurantRepository extends ChangeNotifier {
 
   /// Pedidos pendientes por cobrar (no cancelados).
   List<Order> get ordersToCollect => _orders
-      .where((order) =>
-          order.paymentStatus == PaymentStatus.pending &&
-          order.status != OrderStatus.cancelled)
+      .where(
+        (order) =>
+            order.paymentStatus == PaymentStatus.pending &&
+            order.status != OrderStatus.cancelled,
+      )
       .toList();
 
   Order? orderById(String id) {
@@ -1217,8 +1973,10 @@ class RestaurantRepository extends ChangeNotifier {
           ),
         )
         .toList();
-    final subtotal =
-        orderItems.fold<double>(0, (sum, item) => sum + item.subtotal);
+    final subtotal = orderItems.fold<double>(
+      0,
+      (sum, item) => sum + item.subtotal,
+    );
     final actorName = _currentUser?.name;
     final order = Order(
       id: newId('order'),
@@ -1255,14 +2013,17 @@ class RestaurantRepository extends ChangeNotifier {
     );
     _orders.insert(0, order);
 
-    if (order.tableNumber != null) {
-      await _setTableForOrder(order.tableNumber!, order.id);
+    // El pedido nace en Pendiente y aún no descuenta insumos; el descuento se
+    // hace al avanzar a un estado superior (updateOrderStatus).
+    final savedOrder = _orders[0];
+    if (savedOrder.tableNumber != null) {
+      await _setTableForOrder(savedOrder.tableNumber!, savedOrder.id);
     }
-    _upsertCustomerFromOrder(order);
+    _upsertCustomerFromOrder(savedOrder);
     await _persistOrders();
     await _persistCustomers();
     notifyListeners();
-    return order;
+    return savedOrder;
   }
 
   Future<void> updateOrderStatus(String orderId, OrderStatus status) async {
@@ -1271,7 +2032,9 @@ class RestaurantRepository extends ChangeNotifier {
     final order = _orders[index];
     final now = DateTime.now();
     final entry = _audit(
-      status == OrderStatus.cancelled ? 'Pedido cancelado' : 'Estado actualizado',
+      status == OrderStatus.cancelled
+          ? 'Pedido cancelado'
+          : 'Estado actualizado',
       detail: '${order.status.label} → ${status.label}',
     );
     _orders[index] = order.copyWith(
@@ -1281,33 +2044,36 @@ class RestaurantRepository extends ChangeNotifier {
       updatedByName: _currentUser?.name,
       auditLog: [...order.auditLog, entry],
     );
-    if ((status == OrderStatus.preparing ||
-            status == OrderStatus.ready ||
-            status == OrderStatus.sent ||
-            status == OrderStatus.delivered) &&
-        !order.inventoryDeducted) {
-      await _deductInventory(order);
-      _orders[index] = _orders[index].copyWith(
-        inventoryDeducted: true,
-        auditLog: [
-          ..._orders[index].auditLog,
-          _audit('Inventario descontado', detail: 'Descuento por cambio a ${status.label}'),
-        ],
-      );
-    }
-    if (status == OrderStatus.cancelled) {
-      if (order.inventoryDeducted) {
+    if (order.source != 'web') {
+      // Los pedidos de la web los descuenta la propia web al recibir el PATCH;
+      // descontar también aquí duplicaría el consumo en Firestore.
+      if (_isDeductibleStatus(status) && !order.inventoryDeducted) {
+        if (await _deductInventory(order)) {
+          _orders[index] = _orders[index].copyWith(
+            inventoryDeducted: true,
+            auditLog: [
+              ..._orders[index].auditLog,
+              _audit(
+                'Inventario descontado',
+                detail: 'Descuento por cambio a ${status.label}',
+              ),
+            ],
+          );
+        }
+      }
+      if (status == OrderStatus.cancelled && order.inventoryDeducted) {
         await _restoreInventory(order);
         _orders[index] = _orders[index].copyWith(
+          inventoryDeducted: false,
           auditLog: [
             ..._orders[index].auditLog,
             _audit('Inventario repuesto', detail: 'Reposición por cancelación'),
           ],
         );
       }
-      if (order.tableNumber != null) {
-        await _freeTableByNumber(order.tableNumber!);
-      }
+    }
+    if (status == OrderStatus.cancelled && order.tableNumber != null) {
+      await _freeTableByNumber(order.tableNumber!);
     }
     _upsertCustomerFromOrder(_orders[index]);
     await _persistOrders();
@@ -1315,6 +2081,7 @@ class RestaurantRepository extends ChangeNotifier {
     notifyListeners();
     if (_orders[index].source == 'web') {
       await _pushOrderUpdateToServer(_orders[index]);
+      await pullServerIngredients();
     }
   }
 
@@ -1334,52 +2101,79 @@ class RestaurantRepository extends ChangeNotifier {
     final order = _orders[index];
     final now = DateTime.now();
     var audit = [...order.auditLog];
-    if (!order.inventoryDeducted) {
-      await _deductInventory(order);
-      audit.add(_audit('Inventario descontado', detail: 'Descuento al cobrar'));
+    var inventoryDeducted = order.inventoryDeducted;
+    final resolvedStatus = order.status == OrderStatus.cancelled
+        ? OrderStatus.cancelled
+        : order.type == OrderType.delivery
+        ? OrderStatus.sent
+        : OrderStatus.delivered;
+    if (order.source != 'web') {
+      if (resolvedStatus == OrderStatus.cancelled && inventoryDeducted) {
+        await _restoreInventory(order);
+        inventoryDeducted = false;
+        audit.add(_audit('Inventario repuesto', detail: 'Pedido cancelado'));
+      } else if (_isDeductibleStatus(resolvedStatus) && !inventoryDeducted) {
+        if (await _deductInventory(order)) {
+          inventoryDeducted = true;
+          audit.add(
+            _audit('Inventario descontado', detail: 'Descuento al cobrar'),
+          );
+        }
+      }
     }
     final resolvedPayments = (payments == null || payments.isEmpty)
         ? [OrderPayment(method: order.paymentMethod, amount: order.total)]
         : payments;
     final paymentDetail = resolvedPayments
-        .map((p) =>
-            '${p.method.label} ${formatCop(p.amount)}${p.note.trim().isNotEmpty ? ' (${p.note.trim()})' : ''}')
+        .map(
+          (p) =>
+              '${p.method.label} ${formatCop(p.amount)}${p.note.trim().isNotEmpty ? ' (${p.note.trim()})' : ''}',
+        )
         .join(' + ');
-    audit.add(_audit(
-      'Pago registrado',
-      detail: '$paymentDetail · Total ${formatCop(order.total)}',
-    ));
+    audit.add(
+      _audit(
+        'Pago registrado',
+        detail: '$paymentDetail · Total ${formatCop(order.total)}',
+      ),
+    );
     if (order.status.isActive) {
-      audit.add(_audit('Estado actualizado', detail: '${order.status.label} → Entregado'));
+      audit.add(
+        _audit(
+          'Estado actualizado',
+          detail: '${order.status.label} → Entregado',
+        ),
+      );
     }
-    final resolvedStatus = order.status == OrderStatus.cancelled
-        ? OrderStatus.cancelled
-        : order.type == OrderType.delivery
-            ? OrderStatus.sent
-            : OrderStatus.delivered;
     _orders[index] = order.copyWith(
       paymentStatus: PaymentStatus.paid,
       paymentMethod: resolvedPayments.first.method,
       payments: resolvedPayments,
       status: resolvedStatus,
       updatedAt: now,
-      inventoryDeducted: true,
+      inventoryDeducted: inventoryDeducted,
       updatedBy: _currentUser?.id,
       updatedByName: _currentUser?.name,
+      paidAt: now,
+      paidBy: _currentUser?.id,
+      paidByName: _currentUser?.name ?? 'Sistema',
       auditLog: audit,
     );
     if (order.tableNumber != null) {
-      final otherActive = _orders.any((o) =>
-          o.id != order.id &&
-          o.tableNumber == order.tableNumber &&
-          o.status.isActive);
+      final otherActive = _orders.any(
+        (o) =>
+            o.id != order.id &&
+            o.tableNumber == order.tableNumber &&
+            o.status.isActive,
+      );
       if (!otherActive) {
         await _freeTableByNumber(order.tableNumber!);
       } else {
-        final other = _orders.firstWhere((o) =>
-            o.id != order.id &&
-            o.tableNumber == order.tableNumber &&
-            o.status.isActive);
+        final other = _orders.firstWhere(
+          (o) =>
+              o.id != order.id &&
+              o.tableNumber == order.tableNumber &&
+              o.status.isActive,
+        );
         await _setTableForOrder(order.tableNumber!, other.id);
       }
     }
@@ -1387,14 +2181,17 @@ class RestaurantRepository extends ChangeNotifier {
     notifyListeners();
     if (_orders[index].source == 'web') {
       await _pushOrderUpdateToServer(_orders[index]);
+      await pullServerIngredients();
     }
   }
 
   /// Busca pedidos en preparación para una mesa específica.
   List<Order> preparingOrdersForTable(int tableNumber) {
     return _orders
-        .where((o) =>
-            o.tableNumber == tableNumber && o.status == OrderStatus.preparing)
+        .where(
+          (o) =>
+              o.tableNumber == tableNumber && o.status == OrderStatus.preparing,
+        )
         .toList();
   }
 
@@ -1406,10 +2203,12 @@ class RestaurantRepository extends ChangeNotifier {
     bool activeOnly = true,
   }) {
     return _orders
-        .where((o) =>
-            o.tableNumber == tableNumber &&
-            (includeCancelled || o.status != OrderStatus.cancelled) &&
-            (!activeOnly || o.status.isActive))
+        .where(
+          (o) =>
+              o.tableNumber == tableNumber &&
+              (includeCancelled || o.status != OrderStatus.cancelled) &&
+              (!activeOnly || o.status.isActive),
+        )
         .toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
@@ -1428,18 +2227,19 @@ class RestaurantRepository extends ChangeNotifier {
   /// Pedidos pendientes de pago para una mesa, ordenados por creacion.
   List<Order> payableTableOrders(int tableNumber) {
     return _orders
-        .where((o) =>
-            o.tableNumber == tableNumber &&
-            o.paymentStatus == PaymentStatus.pending &&
-            o.status != OrderStatus.cancelled)
+        .where(
+          (o) =>
+              o.tableNumber == tableNumber &&
+              o.paymentStatus == PaymentStatus.pending &&
+              o.status != OrderStatus.cancelled,
+        )
         .toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
   /// Total pendiente de pago para una mesa.
   double tablePendingTotal(int tableNumber) {
-    return payableTableOrders(tableNumber)
-        .fold(0, (sum, o) => sum + o.total);
+    return payableTableOrders(tableNumber).fold(0, (sum, o) => sum + o.total);
   }
 
   bool canEditOrder(Order order) {
@@ -1500,14 +2300,16 @@ class RestaurantRepository extends ChangeNotifier {
         final prev = existingQty[line.menuItemId] ?? 0;
         final diff = line.quantity - prev;
         if (diff > 0) {
-          deltaLines.add(CartLine(
-            menuItemId: line.menuItemId,
-            name: line.name,
-            price: line.price,
-            quantity: diff,
-            emoji: line.emoji,
-            imageUrl: line.imageUrl,
-          ));
+          deltaLines.add(
+            CartLine(
+              menuItemId: line.menuItemId,
+              name: line.name,
+              price: line.price,
+              quantity: diff,
+              emoji: line.emoji,
+              imageUrl: line.imageUrl,
+            ),
+          );
         }
       }
       _validateCartStock(deltaLines);
@@ -1530,21 +2332,30 @@ class RestaurantRepository extends ChangeNotifier {
           ),
         )
         .toList();
-    final subtotal =
-        orderItems.fold<double>(0, (sum, item) => sum + item.subtotal);
+    final subtotal = orderItems.fold<double>(
+      0,
+      (sum, item) => sum + item.subtotal,
+    );
     final nextTable = type == OrderType.table ? tableNumber : null;
 
     var audit = [...existing.auditLog];
-    if (wasDeducted) {
+    if (wasDeducted && existing.source != 'web') {
       await _restoreInventory(existing);
-      audit.add(_audit('Inventario repuesto', detail: 'Reposición antes de editar pedido'));
+      audit.add(
+        _audit(
+          'Inventario repuesto',
+          detail: 'Reposición antes de editar pedido',
+        ),
+      );
     }
 
-    audit.add(_audit(
-      'Pedido editado',
-      detail:
-          '${orderItems.fold<int>(0, (s, i) => s + i.quantity)} uds · ${formatCop(subtotal)}',
-    ));
+    audit.add(
+      _audit(
+        'Pedido editado',
+        detail:
+            '${orderItems.fold<int>(0, (s, i) => s + i.quantity)} uds · ${formatCop(subtotal)}',
+      ),
+    );
 
     final updated = existing.copyWith(
       customerName: resolvedName,
@@ -1561,35 +2372,40 @@ class RestaurantRepository extends ChangeNotifier {
       notes: notes.trim(),
       updatedAt: now,
       synced: isOnline,
-      inventoryDeducted: wasDeducted ||
-          existing.status == OrderStatus.preparing ||
-          existing.status == OrderStatus.ready ||
-          existing.status == OrderStatus.delivered,
+      inventoryDeducted: existing.source == 'web'
+          ? wasDeducted
+          : (wasDeducted || _isDeductibleStatus(existing.status)),
       updatedBy: _currentUser?.id,
       updatedByName: _currentUser?.name,
       auditLog: audit,
     );
 
-    if (updated.inventoryDeducted) {
+    if (updated.inventoryDeducted && existing.source != 'web') {
       await _deductInventory(updated);
-      audit.add(_audit('Inventario descontado', detail: 'Descuento tras editar pedido'));
+      audit.add(
+        _audit('Inventario descontado', detail: 'Descuento tras editar pedido'),
+      );
     }
 
     _orders[index] = updated.copyWith(auditLog: audit);
 
     if (existing.tableNumber != nextTable) {
       if (existing.tableNumber != null) {
-        final otherActive = _orders.any((o) =>
-            o.id != updated.id &&
-            o.tableNumber == existing.tableNumber &&
-            o.status.isActive);
+        final otherActive = _orders.any(
+          (o) =>
+              o.id != updated.id &&
+              o.tableNumber == existing.tableNumber &&
+              o.status.isActive,
+        );
         if (!otherActive) {
           await _freeTableByNumber(existing.tableNumber!);
         } else {
-          final other = _orders.firstWhere((o) =>
-              o.id != updated.id &&
-              o.tableNumber == existing.tableNumber &&
-              o.status.isActive);
+          final other = _orders.firstWhere(
+            (o) =>
+                o.id != updated.id &&
+                o.tableNumber == existing.tableNumber &&
+                o.status.isActive,
+          );
           await _setTableForOrder(existing.tableNumber!, other.id);
         }
       }
@@ -1632,7 +2448,9 @@ class RestaurantRepository extends ChangeNotifier {
           price: line.price,
           quantity: (prev?.quantity ?? 0) + line.quantity,
           emoji: line.emoji,
-          imageUrl: line.imageUrl.isNotEmpty ? line.imageUrl : (prev?.imageUrl ?? ''),
+          imageUrl: line.imageUrl.isNotEmpty
+              ? line.imageUrl
+              : (prev?.imageUrl ?? ''),
         );
       }
       _validateCartStock(combined.values.toList());
@@ -1640,7 +2458,9 @@ class RestaurantRepository extends ChangeNotifier {
     final newItems = [...order.items];
     final addedNames = <String>[];
     for (final line in lines) {
-      final existing = newItems.indexWhere((i) => i.menuItemId == line.menuItemId);
+      final existing = newItems.indexWhere(
+        (i) => i.menuItemId == line.menuItemId,
+      );
       addedNames.add('${line.quantity}× ${line.name}');
       if (existing >= 0) {
         newItems[existing] = OrderItem(
@@ -1654,14 +2474,16 @@ class RestaurantRepository extends ChangeNotifier {
               : line.imageUrl,
         );
       } else {
-        newItems.add(OrderItem(
-          menuItemId: line.menuItemId,
-          name: line.name,
-          price: line.price,
-          quantity: line.quantity,
-          emoji: line.emoji,
-          imageUrl: line.imageUrl,
-        ));
+        newItems.add(
+          OrderItem(
+            menuItemId: line.menuItemId,
+            name: line.name,
+            price: line.price,
+            quantity: line.quantity,
+            emoji: line.emoji,
+            imageUrl: line.imageUrl,
+          ),
+        );
       }
     }
     final subtotal = newItems.fold<double>(0, (s, i) => s + i.subtotal);
@@ -1670,8 +2492,9 @@ class RestaurantRepository extends ChangeNotifier {
       _audit('Productos agregados', detail: addedNames.join(', ')),
     ];
     var inventoryDeducted = order.inventoryDeducted;
-    if (order.inventoryDeducted) {
-      // Descontar solo los insumos de las líneas agregadas.
+    if (order.inventoryDeducted && order.source != 'web') {
+      // Descontar solo los insumos de las líneas agregadas. Los pedidos web
+      // los descuenta la web; las ediciones de ítems aún no se reenvían.
       final deltaOrder = Order(
         id: order.id,
         code: order.code,
@@ -1680,14 +2503,16 @@ class RestaurantRepository extends ChangeNotifier {
         type: order.type,
         tableNumber: order.tableNumber,
         items: lines
-            .map((l) => OrderItem(
-                  menuItemId: l.menuItemId,
-                  name: l.name,
-                  price: l.price,
-                  quantity: l.quantity,
-                  emoji: l.emoji,
-                  imageUrl: l.imageUrl,
-                ))
+            .map(
+              (l) => OrderItem(
+                menuItemId: l.menuItemId,
+                name: l.name,
+                price: l.price,
+                quantity: l.quantity,
+                emoji: l.emoji,
+                imageUrl: l.imageUrl,
+              ),
+            )
             .toList(),
         subtotal: 0,
         tax: 0,
@@ -1702,7 +2527,12 @@ class RestaurantRepository extends ChangeNotifier {
         synced: order.synced,
       );
       await _deductInventory(deltaOrder);
-      audit.add(_audit('Inventario descontado', detail: 'Descuento por productos agregados'));
+      audit.add(
+        _audit(
+          'Inventario descontado',
+          detail: 'Descuento por productos agregados',
+        ),
+      );
       inventoryDeducted = true;
     }
     _orders[index] = order.copyWith(
@@ -1721,15 +2551,18 @@ class RestaurantRepository extends ChangeNotifier {
     await _persistCustomers();
     notifyListeners();
   }
+
   Future<void> markGroupPaid(
     int tableNumber, {
     List<OrderPayment>? payments,
   }) async {
     final group = _orders
-        .where((order) =>
-            order.tableNumber == tableNumber &&
-            order.paymentStatus == PaymentStatus.pending &&
-            order.status != OrderStatus.cancelled)
+        .where(
+          (order) =>
+              order.tableNumber == tableNumber &&
+              order.paymentStatus == PaymentStatus.pending &&
+              order.status != OrderStatus.cancelled,
+        )
         .toList();
     if (group.isEmpty) return;
     final total = group.fold<double>(0, (s, o) => s + o.total);
@@ -1738,11 +2571,13 @@ class RestaurantRepository extends ChangeNotifier {
       if (payments != null && payments.isNotEmpty && total > 0) {
         final ratio = order.total / total;
         orderPayments = payments
-            .map((p) => OrderPayment(
-                  method: p.method,
-                  amount: p.amount * ratio,
-                  note: p.note,
-                ))
+            .map(
+              (p) => OrderPayment(
+                method: p.method,
+                amount: p.amount * ratio,
+                note: p.note,
+              ),
+            )
             .toList();
       }
       await markOrderPaid(order.id, payments: orderPayments);
@@ -1765,8 +2600,7 @@ class RestaurantRepository extends ChangeNotifier {
   }
 
   Future<void> updateTableStatus(int tableNumber, TableStatus status) async {
-    final index =
-        _tables.indexWhere((table) => table.number == tableNumber);
+    final index = _tables.indexWhere((table) => table.number == tableNumber);
     if (index < 0) return;
     _tables[index] = _tables[index].copyWith(status: status);
     await _persistTables();
@@ -1796,8 +2630,7 @@ class RestaurantRepository extends ChangeNotifier {
   }
 
   Future<void> _setTableForOrder(int tableNumber, String orderId) async {
-    final index =
-        _tables.indexWhere((table) => table.number == tableNumber);
+    final index = _tables.indexWhere((table) => table.number == tableNumber);
     if (index < 0) return;
     _tables[index] = _tables[index].copyWith(
       status: TableStatus.esperandoPedido,
@@ -1807,8 +2640,7 @@ class RestaurantRepository extends ChangeNotifier {
   }
 
   Future<void> _freeTableByNumber(int tableNumber) async {
-    final index =
-        _tables.indexWhere((table) => table.number == tableNumber);
+    final index = _tables.indexWhere((table) => table.number == tableNumber);
     if (index < 0) return;
     _tables[index] = _tables[index].copyWith(
       status: TableStatus.libre,
@@ -1838,15 +2670,19 @@ class RestaurantRepository extends ChangeNotifier {
       .toList();
 
   double get todaySales => todayOrders
-      .where((order) =>
-          order.paymentStatus == PaymentStatus.paid &&
-          order.status != OrderStatus.cancelled)
+      .where(
+        (order) =>
+            order.paymentStatus == PaymentStatus.paid &&
+            order.status != OrderStatus.cancelled,
+      )
       .fold(0, (sum, order) => sum + order.total);
 
   double get pendingPayments => _orders
-      .where((order) =>
-          order.paymentStatus == PaymentStatus.pending &&
-          order.status != OrderStatus.cancelled)
+      .where(
+        (order) =>
+            order.paymentStatus == PaymentStatus.pending &&
+            order.status != OrderStatus.cancelled,
+      )
       .fold(0, (sum, order) => sum + order.total);
 
   int get pendingCount =>
@@ -1866,24 +2702,96 @@ class RestaurantRepository extends ChangeNotifier {
 
   int get todayOrderCount => todayOrders.length;
 
-  List<DailySales> salesByDay({int days = 7}) {
-    final now = DateTime.now();
-    return List.generate(days, (index) {
-      final day = DateTime(now.year, now.month, now.day)
-          .subtract(Duration(days: days - 1 - index));
-      final total = _orders
-          .where((order) =>
-              order.paymentStatus == PaymentStatus.paid &&
-              order.status != OrderStatus.cancelled &&
-              isSameDay(order.createdAt, day))
-          .fold<double>(0, (sum, order) => sum + order.total);
-      return DailySales(day: day, total: total);
-    });
+  /// Pedidos efectivamente cobrados, ordenados por fecha de pago.
+  List<Order> get paidOrders => _orders
+      .where(
+        (order) =>
+            order.paymentStatus == PaymentStatus.paid &&
+            order.status != OrderStatus.cancelled,
+      )
+      .toList();
+
+  List<Order> paidOrdersInRange(DateTime start, DateTime end) => paidOrders
+      .where((order) {
+        final paidAt = order.paidAtOrFallback;
+        return !paidAt.isBefore(start) && !paidAt.isAfter(end);
+      })
+      .toList()
+        ..sort((a, b) =>
+            b.paidAtOrFallback.compareTo(a.paidAtOrFallback));
+
+  List<Order> paidOrdersForShift(CashShift shift) {
+    final end = shift.closedAt ?? DateTime.now();
+    if (!end.isAfter(shift.openedAt)) {
+      return paidOrdersInRange(shift.openedAt, shift.openedAt);
+    }
+    return paidOrdersInRange(shift.openedAt, end);
   }
 
-  List<ProductSales> topProducts({int limit = 5}) {
+  DateTime _bucketStart(DateTime value, SalesBucket bucket) => switch (bucket) {
+        SalesBucket.hour => DateTime(value.year, value.month, value.day, value.hour),
+        SalesBucket.day => DateTime(value.year, value.month, value.day),
+        SalesBucket.week => DateTime(value.year, value.month, value.day)
+            .subtract(Duration(days: value.weekday - 1)),
+        SalesBucket.month => DateTime(value.year, value.month),
+      };
+
+  DateTime _nextBucket(DateTime value, SalesBucket bucket) => switch (bucket) {
+        SalesBucket.hour => value.add(const Duration(hours: 1)),
+        SalesBucket.day => value.add(const Duration(days: 1)),
+        SalesBucket.week => value.add(const Duration(days: 7)),
+        SalesBucket.month => DateTime(value.year, value.month + 1),
+      };
+
+  /// Totales de ventas cobradas en [start]..[end], agrupados por [bucket].
+  /// Usa `paidAt` (con fallback) en vez de la fecha de creación del pedido.
+  List<DailySales> salesInRange({
+    required DateTime start,
+    required DateTime end,
+    SalesBucket bucket = SalesBucket.day,
+  }) {
+    final last = _bucketStart(end, bucket);
+    final result = <DailySales>[];
+    var cursor = _bucketStart(start, bucket);
+    var index = 0;
+    while (!cursor.isAfter(last) && index < 400) {
+      final next = _nextBucket(cursor, bucket);
+      final bucketEnd = next.isAfter(end) ? end : next;
+      final effectiveStart = index == 0 ? start : cursor;
+      final total = paidOrdersInRange(effectiveStart, bucketEnd)
+          .fold<double>(0, (sum, order) => sum + order.total);
+      result.add(DailySales(day: cursor, total: total));
+      cursor = next;
+      index++;
+    }
+    return result;
+  }
+
+  List<DailySales> salesForShift(CashShift shift) {
+    final end = shift.closedAt ?? DateTime.now();
+    final effectiveEnd = end.isAfter(shift.openedAt)
+        ? end
+        : shift.openedAt.add(const Duration(seconds: 1));
+    return salesInRange(
+      start: shift.openedAt,
+      end: effectiveEnd,
+      bucket: SalesBucket.hour,
+    );
+  }
+
+  List<DailySales> salesByDay({int days = 7}) {
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, now.day)
+        .subtract(Duration(days: days - 1));
+    return salesInRange(start: start, end: now, bucket: SalesBucket.day);
+  }
+
+  List<ProductSales> topProducts({
+    int limit = 5,
+    Iterable<Order>? orders,
+  }) {
     final Map<String, ({int quantity, double total})> accumulator = {};
-    for (final order in _orders) {
+    for (final order in orders ?? _orders) {
       if (order.status == OrderStatus.cancelled) continue;
       for (final item in order.items) {
         final current = accumulator[item.name] ?? (quantity: 0, total: 0.0);
@@ -1897,11 +2805,13 @@ class RestaurantRepository extends ChangeNotifier {
       ..sort((a, b) => b.value.quantity.compareTo(a.value.quantity));
     return entries
         .take(limit)
-        .map((entry) => ProductSales(
-              name: entry.key,
-              quantity: entry.value.quantity,
-              total: entry.value.total,
-            ))
+        .map(
+          (entry) => ProductSales(
+            name: entry.key,
+            quantity: entry.value.quantity,
+            total: entry.value.total,
+          ),
+        )
         .toList();
   }
 
@@ -1909,42 +2819,61 @@ class RestaurantRepository extends ChangeNotifier {
     final map = <String, _CustomerAgg>{};
     for (final order in _orders) {
       final phone = order.customerPhone.replaceAll(RegExp(r'\D'), '');
-      final key = phone.isNotEmpty ? phone : 'name:${order.customerName.toLowerCase().trim()}';
+      final key = phone.isNotEmpty
+          ? phone
+          : 'name:${order.customerName.toLowerCase().trim()}';
       if (key.isEmpty || key == 'name:') continue;
-      final agg = map.putIfAbsent(key, () => _CustomerAgg(
-            phone: order.customerPhone.trim(),
-            name: order.customerName.trim(),
-          ));
-      if (order.customerName.trim().length >= 2) agg.name = order.customerName.trim();
-      if (order.customerPhone.trim().isNotEmpty) agg.phone = order.customerPhone.trim();
-      if (order.deliveryAddress.trim().isNotEmpty) agg.address = order.deliveryAddress.trim();
+      final agg = map.putIfAbsent(
+        key,
+        () => _CustomerAgg(
+          phone: order.customerPhone.trim(),
+          name: order.customerName.trim(),
+        ),
+      );
+      if (order.customerName.trim().length >= 2) {
+        agg.name = order.customerName.trim();
+      }
+      if (order.customerPhone.trim().isNotEmpty) {
+        agg.phone = order.customerPhone.trim();
+      }
+      if (order.deliveryAddress.trim().isNotEmpty) {
+        agg.address = order.deliveryAddress.trim();
+      }
       agg.orderCount += 1;
       if (order.status != OrderStatus.cancelled) {
         agg.totalSpent += order.total;
       }
-      if (order.createdAt.isAfter(agg.lastOrderAt)) agg.lastOrderAt = order.createdAt;
-      if (order.createdAt.isBefore(agg.firstOrderAt)) agg.firstOrderAt = order.createdAt;
+      if (order.createdAt.isAfter(agg.lastOrderAt)) {
+        agg.lastOrderAt = order.createdAt;
+      }
+      if (order.createdAt.isBefore(agg.firstOrderAt)) {
+        agg.firstOrderAt = order.createdAt;
+      }
       agg.lastType = order.type;
     }
     final list = map.values
-        .map((a) => CustomerSummary(
-              name: a.name,
-              phone: a.phone,
-              address: a.address,
-              orderCount: a.orderCount,
-              totalSpent: a.totalSpent,
-              firstOrderAt: a.firstOrderAt,
-              lastOrderAt: a.lastOrderAt,
-              lastType: a.lastType,
-            ))
+        .map(
+          (a) => CustomerSummary(
+            name: a.name,
+            phone: a.phone,
+            address: a.address,
+            orderCount: a.orderCount,
+            totalSpent: a.totalSpent,
+            firstOrderAt: a.firstOrderAt,
+            lastOrderAt: a.lastOrderAt,
+            lastType: a.lastType,
+          ),
+        )
         .toList();
     list.sort((a, b) => b.lastOrderAt.compareTo(a.lastOrderAt));
     return list;
   }
 
-  Map<PaymentMethod, double> get salesByPaymentMethod {
+  Map<PaymentMethod, double> salesByPaymentMethodFor(
+    Iterable<Order> orders,
+  ) {
     final result = <PaymentMethod, double>{};
-    for (final order in _orders) {
+    for (final order in orders) {
       if (order.paymentStatus != PaymentStatus.paid ||
           order.status == OrderStatus.cancelled) {
         continue;
@@ -1961,6 +2890,195 @@ class RestaurantRepository extends ChangeNotifier {
     return result;
   }
 
+  Map<PaymentMethod, double> get salesByPaymentMethod =>
+      salesByPaymentMethodFor(_orders);
+
+  /// Datos vivos del turno abierto. El historial nunca modifica estos totals.
+  List<Order> get currentShiftOrders => paidOrdersForShift(_activeShift);
+
+  CashShift get activeShift => _activeShift;
+
+  List<CashShift> get closedShifts => List.unmodifiable(_closedShifts);
+
+  Map<String, Map<String, dynamic>> get pendingCashShiftClosures =>
+      Map.unmodifiable(_pendingCashShiftClosures);
+
+  /// Cierra el turno actual, guarda la foto de sus totales y abre uno nuevo.
+  /// Los pedidos no se modifican: el nuevo turno empieza en cero porque su
+  /// ventana de fechas comienza ahora.
+  Future<CashShift> closeShift({
+    double? closingAmount,
+    String notes = '',
+  }) async {
+    if (role?.canCloseShift != true) {
+      throw StateError('Solo un administrador o cajero puede cerrar caja.');
+    }
+    final now = DateTime.now();
+    final orders = paidOrdersForShift(_activeShift);
+    final totals = salesByPaymentMethodFor(orders);
+    final total = orders.fold<double>(0, (sum, order) => sum + order.total);
+    final closed = _activeShift.copyWith(
+      closedAt: now,
+      closedBy: _currentUser?.id,
+      closedByName: _currentUser?.name ?? 'Sistema',
+      orderCount: orders.length,
+      total: total,
+      totalsByPaymentMethod: totals,
+      closingAmount: closingAmount,
+      notes: notes.trim(),
+      status: 'closed',
+    );
+    _closedShifts = [closed, ..._closedShifts];
+    _activeShift = _newCashShift(now, user: _currentUser);
+    _pendingCashShiftClosures[closed.id] = closed.toJson();
+    await _persistCashShifts();
+    await _persistActiveShift();
+    await _persistPendingCashShiftClosures();
+    notifyListeners();
+    if (_webSyncEnabled) unawaited(_flushPendingCashShiftClosures());
+    return closed;
+  }
+
+  Future<void> _flushPendingCashShiftClosures() async {
+    if (!_webSyncEnabled ||
+        !isOnline ||
+        _flushingCashShifts ||
+        _pendingCashShiftClosures.isEmpty ||
+        _serverUrl.isEmpty) {
+      return;
+    }
+    _flushingCashShifts = true;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final snapshot = Map<String, Map<String, dynamic>>.fromEntries(
+        _pendingCashShiftClosures.entries.map(
+          (entry) => MapEntry(
+            entry.key,
+            Map<String, dynamic>.from(entry.value),
+          ),
+        ),
+      );
+      for (final entry in snapshot.entries) {
+        final request = await client.postUrl(
+          Uri.parse('$_serverUrl/api/cash-shifts/close'),
+        );
+        request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+        request.write(jsonEncode({'shift': entry.value}));
+        final response = await request.close();
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          continue;
+        }
+        final body = await utf8.decoder.bind(response).join();
+        try {
+          final decoded = jsonDecode(body);
+          if (decoded is Map<String, dynamic>) {
+            final remoteCurrent = decoded['currentShift'];
+            if (remoteCurrent is Map<String, dynamic>) {
+              final parsed = CashShift.fromJson(remoteCurrent);
+              if (parsed.openedAt.isAfter(_activeShift.openedAt)) {
+                _activeShift = parsed;
+              }
+            }
+          }
+        } catch (_) {
+          // El cierre ya se aplicó; no hace falta la respuesta para darlo por
+          // enviado si el servidor devolvió 2xx.
+        }
+        if (mapEquals(_pendingCashShiftClosures[entry.key], entry.value)) {
+          _pendingCashShiftClosures.remove(entry.key);
+        }
+      }
+      await _persistPendingCashShiftClosures();
+      await _persistActiveShift();
+      notifyListeners();
+    } catch (_) {
+      // Queda en la cola para el próximo evento de conectividad.
+    } finally {
+      _flushingCashShifts = false;
+      client.close(force: true);
+    }
+  }
+
+  /// Baja el turno abierto y el historial publicados por la web. Los cierres
+  /// pendientes ganan para no sobrescribir un cierre hecho sin conexión.
+  Future<void> pullCashShifts() async {
+    if (!_webSyncEnabled ||
+        !isOnline ||
+        _serverUrl.isEmpty ||
+        _pullingCashShifts) {
+      return;
+    }
+    _pullingCashShifts = true;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final request = await client.getUrl(
+        Uri.parse('$_serverUrl/api/cash-shifts'),
+      );
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      final response = await request.close();
+      if (response.statusCode != 200) return;
+      final decoded = jsonDecode(await utf8.decoder.bind(response).join());
+      if (decoded is! Map<String, dynamic>) return;
+      var changed = false;
+
+      String? remoteCurrentId;
+      final remoteCurrent = decoded['currentShift'];
+      if (remoteCurrent is Map<String, dynamic>) {
+        final parsed = CashShift.fromJson(remoteCurrent);
+        remoteCurrentId = parsed.id;
+        if (_pendingCashShiftClosures.isEmpty &&
+            parsed.openedAt.isAfter(_activeShift.openedAt)) {
+          _activeShift = parsed;
+          changed = true;
+        }
+      }
+
+      final remoteShifts = decoded['shifts'];
+      if (remoteShifts is List<dynamic>) {
+        // Versiones anteriores guardaban el turno abierto en este historial;
+        // lo descartamos también en local para que el arreglo se aplique sin
+        // borrar datos del dispositivo.
+        final byId = {
+          for (final shift in _closedShifts)
+            if (shift.isClosed && shift.id != remoteCurrentId) shift.id: shift,
+        };
+        for (final raw in remoteShifts.whereType<Map<String, dynamic>>()) {
+          final parsed = CashShift.fromJson(raw);
+          // El turno abierto es el activo, no un cierre; mostrarlo en
+          // «Turnos cerrados» confundiría el historial y el detalle.
+          if (parsed.id.isEmpty ||
+              parsed.status != 'closed' ||
+              parsed.id == remoteCurrentId ||
+              _pendingCashShiftClosures.containsKey(parsed.id)) {
+            continue;
+          }
+          byId[parsed.id] = parsed;
+        }
+        final merged = byId.values.toList()
+          ..sort((a, b) => b.openedAt.compareTo(a.openedAt));
+        if (merged.length != _closedShifts.length ||
+            !mapEquals(
+              {for (final shift in merged) shift.id: shift.toJson()},
+              {for (final shift in _closedShifts) shift.id: shift.toJson()},
+            )) {
+          _closedShifts = merged;
+          changed = true;
+        }
+      }
+      if (changed) {
+        await _persistCashShifts();
+        await _persistActiveShift();
+        notifyListeners();
+      }
+    } catch (_) {
+      // El estado local sigue siendo válido; se reintenta en el próximo pull.
+    } finally {
+      _pullingCashShifts = false;
+      client.close(force: true);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Utilidades
   // ---------------------------------------------------------------------------
@@ -1973,9 +3091,18 @@ class RestaurantRepository extends ChangeNotifier {
     await _prefs.remove(_kTables);
     await _prefs.remove(_kSettings);
     await _prefs.remove(_kSession);
+    await _prefs.remove(_kUsers);
     await _prefs.remove(_kLastSync);
     await _prefs.remove(_kPendingMenuStatuses);
+    await _prefs.remove(_kPendingIngredientStocks);
+    await _prefs.remove(_kActiveCashShift);
+    await _prefs.remove(_kCashShifts);
+    await _prefs.remove(_kPendingCashShiftClosures);
     _pendingMenuStatuses = {};
+    _pendingIngredientStocks = {};
+    _pendingCashShiftClosures = {};
+    _closedShifts = [];
+    _activeShift = _newCashShift(DateTime.now());
     _categories = [...SeedData.categories];
     _items = SeedData.menuItemsWithRecipes();
     _ingredients = [...SeedData.ingredients];
@@ -1984,12 +3111,16 @@ class RestaurantRepository extends ChangeNotifier {
     _tables = SeedData.tables();
     _settings = SeedData.settings;
     _currentUser = null;
+    _users = [...SeedData.users];
     _lastSync = null;
     await _persistCategories();
     await _persistItems();
     await _persistIngredients();
     await _persistOrders();
     await _persistTables();
+    await _persistUsers();
+    await _persistActiveShift();
+    await _persistCashShifts();
     notifyListeners();
   }
 
@@ -1998,7 +3129,8 @@ class RestaurantRepository extends ChangeNotifier {
         action: action,
         timestamp: DateTime.now(),
         actorId: _currentUser?.id,
-        actorName: _currentUser?.name ?? (isOnline ? 'Sistema' : 'Sistema (offline)'),
+        actorName:
+            _currentUser?.name ?? (isOnline ? 'Sistema' : 'Sistema (offline)'),
         detail: detail,
       );
 
@@ -2060,6 +3192,13 @@ class RestaurantRepository extends ChangeNotifier {
     );
   }
 
+  Future<void> _persistUsers() async {
+    await _prefs.setString(
+      _kUsers,
+      jsonEncode(_users.map((user) => user.toJson()).toList()),
+    );
+  }
+
   Future<void> _persistWebVisits() async {
     await _prefs.setString(
       _kWebVisits,
@@ -2074,10 +3213,34 @@ class RestaurantRepository extends ChangeNotifier {
     );
   }
 
-  List<CustomerRecord> get crmCustomers => _customers
-      .where((c) => c.hasPhone)
-      .toList()
-    ..sort((a, b) => b.lastOrderAt.compareTo(a.lastOrderAt));
+  Future<void> _persistPendingIngredientStocks() async {
+    await _prefs.setString(
+      _kPendingIngredientStocks,
+      jsonEncode(_pendingIngredientStocks),
+    );
+  }
+
+  Future<void> _persistActiveShift() async {
+    await _prefs.setString(_kActiveCashShift, jsonEncode(_activeShift.toJson()));
+  }
+
+  Future<void> _persistCashShifts() async {
+    await _prefs.setString(
+      _kCashShifts,
+      jsonEncode(_closedShifts.map((shift) => shift.toJson()).toList()),
+    );
+  }
+
+  Future<void> _persistPendingCashShiftClosures() async {
+    await _prefs.setString(
+      _kPendingCashShiftClosures,
+      jsonEncode(_pendingCashShiftClosures),
+    );
+  }
+
+  List<CustomerRecord> get crmCustomers =>
+      _customers.where((c) => c.hasPhone).toList()
+        ..sort((a, b) => b.lastOrderAt.compareTo(a.lastOrderAt));
 
   CustomerRecord? customerByPhone(String phone) {
     final normalized = phone.replaceAll(RegExp(r'\D'), '');
@@ -2140,7 +3303,8 @@ class RestaurantRepository extends ChangeNotifier {
     final sortedKeys = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
     return {
       for (final key in sortedKeys)
-        key: (grouped[key]!..sort((a, b) => b.occurredAt.compareTo(a.occurredAt)))
+        key: (grouped[key]!
+          ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt))),
     };
   }
 
@@ -2203,10 +3367,12 @@ class RestaurantRepository extends ChangeNotifier {
       address: address.isNotEmpty ? address : current.address,
       addresses: _mergeAddresses(current.addresses, address),
       updatedAt: now,
-      createdAt:
-          first.createdAt.isBefore(current.createdAt) ? first.createdAt : current.createdAt,
-      lastOrderAt:
-          last.createdAt.isAfter(current.lastOrderAt) ? last.createdAt : current.lastOrderAt,
+      createdAt: first.createdAt.isBefore(current.createdAt)
+          ? first.createdAt
+          : current.createdAt,
+      lastOrderAt: last.createdAt.isAfter(current.lastOrderAt)
+          ? last.createdAt
+          : current.lastOrderAt,
       orderCount: orderCount > 0 ? orderCount : current.orderCount,
       totalSpent: orderCount > 0 ? totalSpent : current.totalSpent,
       lastType: last.type,
@@ -2218,7 +3384,8 @@ class RestaurantRepository extends ChangeNotifier {
     for (final existing in _customers) {
       if (existing.hasPhone) byPhone[existing.normalizedPhone] = existing;
     }
-    final sortedOrders = [..._orders]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final sortedOrders = [..._orders]
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     for (final order in sortedOrders) {
       final normalized = order.customerPhone.replaceAll(RegExp(r'\D'), '');
       if (normalized.length < 7) continue;
@@ -2254,7 +3421,8 @@ class RestaurantRepository extends ChangeNotifier {
           createdAt: isFirst ? order.createdAt : current.createdAt,
           lastOrderAt: isLast ? order.createdAt : current.lastOrderAt,
           orderCount: current.orderCount + 1,
-          totalSpent: current.totalSpent +
+          totalSpent:
+              current.totalSpent +
               (order.status == OrderStatus.cancelled ? 0 : order.total),
           lastType: isLast ? order.type : current.lastType,
         );

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { formatCOP, formatDateTime } from "@/lib/format";
-import type { Order } from "@/lib/types";
+import { ORDER_STATUS_LABELS, type Order } from "@/lib/types";
 
 const PROFILE_KEY = "rm_customer_profile_v1";
 const ORDERS_KEY = "rm_orders_v1";
@@ -142,7 +142,9 @@ export function AccountView() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-semibold text-ink-900">{order.code}</p>
-                    <p className="text-xs text-ink-500">{formatDateTime(order.createdAt)} · {order.status}</p>
+                    <p className="text-xs text-ink-500">
+                      {formatDateTime(order.createdAt)} · {ORDER_STATUS_LABELS[order.status] ?? order.status}
+                    </p>
                   </div>
                   <p className="font-semibold text-brand-700">{formatCOP(order.total)}</p>
                 </div>

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:app/core/models/cash_shift.dart';
 import 'package:app/core/models/order.dart';
 import 'package:app/core/models/restaurant_table.dart';
 import 'package:app/core/utils/formatters.dart';
@@ -148,6 +149,54 @@ void main() {
       final date = DateTime(2026, 11, 22, 9, 5);
       expect(formatDateTime(date), '22/11/2026 09:05');
       expect(formatShortDate(date), '22/11');
+    });
+  });
+
+  group('cobros y turnos', () {
+    test('serializa quién cobró y usa fallback en pedidos heredados', () {
+      final paidAt = DateTime(2026, 11, 24, 13, 45);
+      final paid = sampleOrder().copyWith(
+        paymentStatus: PaymentStatus.paid,
+        paidAt: paidAt,
+        paidBy: 'u-cashier',
+        paidByName: 'Andrés Mejía',
+      );
+      final restored = Order.fromJson(paid.toJson());
+      expect(restored.paidAt, paidAt);
+      expect(restored.paidBy, 'u-cashier');
+      expect(restored.paidByNameOrFallback, 'Andrés Mejía');
+
+      final legacy = sampleOrder().copyWith(paymentStatus: PaymentStatus.paid);
+      expect(legacy.paidAtOrFallback, legacy.updatedAt);
+      expect(legacy.paidByNameOrFallback, isNotEmpty);
+    });
+
+    test('el turno serializa snapshot y calcula la diferencia de efectivo', () {
+      final openedAt = DateTime(2026, 11, 24, 12);
+      final shift = CashShift(
+        id: 'shift-1',
+        label: 'Turno 24/11 12:00',
+        openedAt: openedAt,
+        openedBy: 'u-cashier',
+        openedByName: 'Andrés Mejía',
+        closedAt: openedAt.add(const Duration(hours: 2)),
+        closedBy: 'u-cashier',
+        closedByName: 'Andrés Mejía',
+        orderCount: 2,
+        total: 90000,
+        totalsByPaymentMethod: const {
+          PaymentMethod.cash: 60000,
+          PaymentMethod.card: 30000,
+        },
+        closingAmount: 61000,
+        status: 'closed',
+      );
+      final restored = CashShift.fromJson(shift.toJson());
+      expect(restored.isClosed, isTrue);
+      expect(restored.total, 90000);
+      expect(restored.expectedCash, 60000);
+      expect(restored.difference, 1000);
+      expect(restored.totalsByPaymentMethod[PaymentMethod.card], 30000);
     });
   });
 }

@@ -248,6 +248,14 @@ function mapOrderDoc(doc: {
     createdAt: String(d.createdAt ?? new Date().toISOString()),
     updatedAt: String(d.updatedAt ?? d.createdAt ?? new Date().toISOString()),
     source: d.source === "app" ? "app" : "web",
+    ...(typeof d.inventoryDeducted === "boolean"
+      ? { inventoryDeducted: d.inventoryDeducted }
+      : {}),
+    ...(typeof d.paidAt === "string" && d.paidAt.trim()
+      ? { paidAt: d.paidAt }
+      : {}),
+    ...(typeof d.paidBy === "string" ? { paidBy: d.paidBy } : {}),
+    ...(typeof d.paidByName === "string" ? { paidByName: d.paidByName } : {}),
   };
 }
 
@@ -294,16 +302,104 @@ async function persistOrdersToDisk() {
 
 async function loadIngredientStocks(): Promise<Map<string, number>> {
   if (isFirestoreConfigured()) {
-    const ingredientDocs = await listDocuments("ingredients", (doc) => ({
-      id: doc.id,
-      stock:
-        typeof doc.data.stock === "number" && Number.isFinite(doc.data.stock)
-          ? (doc.data.stock as number)
-          : 0,
-    }));
+    const ingredientDocs = await listDocuments(
+      "ingredients",
+      (doc) => ({
+        id: doc.id,
+        stock:
+          typeof doc.data.stock === "number" && Number.isFinite(doc.data.stock)
+            ? (doc.data.stock as number)
+            : 0,
+      }),
+      0,
+    );
     return new Map(ingredientDocs.map((i) => [i.id, i.stock]));
   }
   return new Map(Object.entries(demoIngredientStocks));
+}
+
+type StockLine = Pick<OrderInputItem, "menuItemId" | "quantity">;
+type StockUpdate = { id: string; stock: number };
+
+/** Estado a partir del cual el pedido ya consume insumos (pendiente no consume). */
+function isDeductibleStatus(status: OrderStatus): boolean {
+  return (
+    status !== "pending" &&
+    status !== "cancelled" &&
+    ORDER_STATUSES.includes(status)
+  );
+}
+
+function stockConsumption(
+  items: StockLine[],
+  menuById: Map<string, MenuItem>,
+): Map<string, number> {
+  const consumption = new Map<string, number>();
+  for (const line of items) {
+    const menuItem = menuById.get(line.menuItemId);
+    if (!menuItem?.recipe?.length) continue;
+    for (const recipeLine of menuItem.recipe) {
+      if (!recipeLine.ingredientId || recipeLine.quantity <= 0) continue;
+      consumption.set(
+        recipeLine.ingredientId,
+        (consumption.get(recipeLine.ingredientId) ?? 0) +
+          recipeLine.quantity * line.quantity,
+      );
+    }
+  }
+  return consumption;
+}
+
+async function applyStockUpdates(updates: StockUpdate[]): Promise<void> {
+  if (updates.length === 0) return;
+  if (isFirestoreConfigured()) {
+    const updatedAt = new Date().toISOString();
+    await Promise.all(
+      updates.map(({ id, stock }) =>
+        setDocument("ingredients", id, { stock, updatedAt }),
+      ),
+    );
+  } else {
+    for (const { id, stock } of updates) demoIngredientStocks[id] = stock;
+  }
+}
+
+/** Descuenta los insumos cuando el pedido avanza más allá de `pending`. */
+async function deductStockForItems(
+  items: StockLine[],
+  menuById: Map<string, MenuItem>,
+): Promise<StockUpdate[]> {
+  const consumption = stockConsumption(items, menuById);
+  if (consumption.size === 0) return [];
+
+  const stocks = await loadIngredientStocks();
+  const updates: StockUpdate[] = [];
+  for (const [ingredientId, required] of consumption) {
+    const current = stocks.get(ingredientId);
+    if (current === undefined) continue;
+    updates.push({ id: ingredientId, stock: Math.max(0, current - required) });
+  }
+  await applyStockUpdates(updates);
+  return updates;
+}
+
+/** Repone los insumos al cancelar un pedido que ya había descontado. */
+async function restoreStockForItems(
+  items: StockLine[],
+  menuById: Map<string, MenuItem>,
+): Promise<StockUpdate[]> {
+  const consumption = stockConsumption(items, menuById);
+  if (consumption.size === 0) return [];
+
+  const stocks = await loadIngredientStocks();
+  const updates: StockUpdate[] = [];
+  for (const [ingredientId, required] of consumption) {
+    const current = stocks.get(ingredientId);
+    if (current === undefined) continue;
+    updates.push({ id: ingredientId, stock: current + required });
+  }
+  await applyStockUpdates(updates);
+  return updates;
 }
 
 export async function getInsufficientItems(
@@ -441,6 +537,8 @@ export async function createOrder(raw: unknown): Promise<Order> {
 
   if (errors.length > 0) throw new OrderValidationError(errors, insufficientItems);
 
+  // Un pedido recién creado queda en `pending` y aún no consume insumos.
+  // El descuento ocurre al avanzar a un estado superior (ver `updateOrder`).
   const totals = cartTotals(orderItems);
   const now = new Date();
   const base = {
@@ -456,6 +554,7 @@ export async function createOrder(raw: unknown): Promise<Order> {
     total: totals.total,
     status: "pending" as const,
     paymentStatus: "pending" as const,
+    inventoryDeducted: false,
     paymentMethod: input.paymentMethod,
     notes: input.notes,
     source: "web" as const,
@@ -538,16 +637,39 @@ const ORDER_STATUSES: OrderStatus[] = [
 ];
 const PAYMENT_STATUSES: PaymentStatus[] = ["pending", "paid", "refunded"];
 
+function normalizePaidAt(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const timestamp = Date.parse(trimmed);
+  return Number.isNaN(timestamp) ? undefined : new Date(timestamp).toISOString();
+}
+
+export interface OrderPaymentPatch {
+  paidAt?: string;
+  paidBy?: string;
+  paidByName?: string;
+}
+
 export async function updateOrder(
   id: string,
-  patch: { status?: OrderStatus; paymentStatus?: PaymentStatus },
+  patch: {
+    status?: OrderStatus;
+    paymentStatus?: PaymentStatus;
+    inventoryDeducted?: boolean;
+  } & OrderPaymentPatch,
 ): Promise<Order | null> {
   await loadFromDisk();
-  const cached = demoOrders().get(id);
-  const current =
-    cached ?? (isFirestoreConfigured() ? await getOrderById(id) : null);
+  // Con Firestore, la fuente de verdad es el documento remoto: la copia en
+  // memoria puede tener un `inventoryDeducted` viejo (p. ej. el pedido ya
+  // descontó en otro proceso del servidor) y Reponer/Deductir se decidiría mal.
+  // `getOrderById` ya cae al caché local si la lectura remota falla.
+  const current = isFirestoreConfigured()
+    ? await getOrderById(id)
+    : demoOrders().get(id) ?? null;
   if (!current) return null;
 
+  const wasDeducted = current.inventoryDeducted === true;
   const next: Order = { ...current };
   if (patch.status) {
     if (!ORDER_STATUSES.includes(patch.status)) {
@@ -561,7 +683,60 @@ export async function updateOrder(
     }
     next.paymentStatus = patch.paymentStatus;
   }
+  if (typeof patch.inventoryDeducted === "boolean") {
+    next.inventoryDeducted = patch.inventoryDeducted;
+  }
+  const paidAt = normalizePaidAt(patch.paidAt);
+  if (paidAt) next.paidAt = paidAt;
+  if (typeof patch.paidBy === "string") {
+    const paidBy = patch.paidBy.trim();
+    if (paidBy) next.paidBy = paidBy;
+  }
+  if (typeof patch.paidByName === "string") {
+    const paidByName = patch.paidByName.trim();
+    if (paidByName) next.paidByName = paidByName;
+  }
+  // Cobros heredados o desde la web pública: dejar huella aunque el cliente
+  // no envíe metadata. Los datos enviados por la app tienen prioridad.
+  if (next.paymentStatus === "paid" && current.paymentStatus !== "paid") {
+    next.paidAt ??= new Date().toISOString();
+    next.paidByName ??= current.source === "web" ? "Web pública" : "Sistema";
+  }
   next.updatedAt = new Date().toISOString();
+
+  // `pending` no descuenta insumos. El descuento se hace una sola vez al
+  // avanzar a cualquier estado superior y se repone al cancelar/reabrir.
+  if (patch.status) {
+    const { items: menuItems } = await getMenu();
+    const menuById = new Map(menuItems.map((item) => [item.id, item]));
+    // La decisión la manda el flag persistido, no el que envía el cliente: la
+    // app reenvía `inventoryDeducted: true` junto al cambio de estado después
+    // de descontar localmente, pero la web aún no había descontado.
+    if (isDeductibleStatus(patch.status) && !wasDeducted) {
+      try {
+        const updates = await deductStockForItems(current.items, menuById);
+        if (updates.length > 0) next.inventoryDeducted = true;
+      } catch (error) {
+        console.error("[orders] No se pudo descontar el inventario:", error);
+        throw new OrderValidationError([
+          "No se pudo descontar el inventario. Intenta de nuevo.",
+        ]);
+      }
+    } else if (
+      (patch.status === "cancelled" || patch.status === "pending") &&
+      wasDeducted
+    ) {
+      try {
+        await restoreStockForItems(current.items, menuById);
+        next.inventoryDeducted = false;
+      } catch (error) {
+        console.error("[orders] No se pudo reponer el inventario:", error);
+        throw new OrderValidationError([
+          "No se pudo reponer el inventario. Intenta de nuevo.",
+        ]);
+      }
+    }
+  }
 
   if (isFirestoreConfigured()) {
     try {

@@ -12,11 +12,13 @@ import {
 } from "react";
 import {
   addLine,
+  adjustLinesForStock,
   cartCount,
   cartTotals,
   isValidCartLine,
   removeLine,
   updateQuantity,
+  type StockAdjustment,
 } from "@/lib/cart";
 import type { CartLine, CartTotals, MenuItem } from "@/lib/types";
 
@@ -35,6 +37,7 @@ interface CartContextValue {
   ) => { added: boolean; limited: boolean };
   setQuantity: (menuItemId: string, quantity: number) => void;
   remove: (menuItemId: string) => void;
+  adjustForStock: (adjustments: StockAdjustment[]) => void;
   clear: () => void;
 }
 
@@ -99,6 +102,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setLines((current) => removeLine(current, menuItemId));
   }, []);
 
+  const adjustForStock = useCallback((adjustments: StockAdjustment[]) => {
+    setLines((current) => adjustLinesForStock(current, adjustments));
+  }, []);
+
   const clear = useCallback(() => setLines([]), []);
 
   const totals = useMemo(() => cartTotals(lines), [lines]);
@@ -112,9 +119,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
       add,
       setQuantity,
       remove,
+      adjustForStock,
       clear,
     }),
-    [lines, totals, ready, add, setQuantity, remove, clear],
+    [lines, totals, ready, add, setQuantity, remove, adjustForStock, clear],
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

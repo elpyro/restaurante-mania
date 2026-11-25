@@ -186,10 +186,21 @@ export type WritableMenuItemStatus = Extract<
   "available" | "unavailable"
 >;
 
-/** Actualiza el estado real del plato en Firestore (catálogo compartido). */
+export type MenuStatusReason = "manual" | "ingredients";
+
+/**
+ * Actualiza el estado real del plato en Firestore (catálogo compartido).
+ *
+ * `manual = true` fija un bloqueo que el trigger de stock no puede levantar.
+ * `reason` distingue un toggle manual de un agotamiento calculado por stock.
+ * Al marcar «Disponible» se limpia el bloqueo y se guarda el estado que
+ * realmente permiten los insumos.
+ */
 export async function setMenuItemStatus(
   id: string,
   status: unknown,
+  manual = status === "unavailable",
+  reason: MenuStatusReason = "manual",
 ): Promise<{ id: string; status: WritableMenuItemStatus } | null> {
   const documentId = id.trim();
   if (!documentId || !WRITABLE_STATUS.includes(status as WritableMenuItemStatus)) {
@@ -197,7 +208,7 @@ export async function setMenuItemStatus(
   }
   if (!isFirestoreConfigured()) return null;
 
-  const next = status as WritableMenuItemStatus;
+  const requested = status as WritableMenuItemStatus;
   const existing = await getDocument<Record<string, unknown>>(
     "menuItems",
     documentId,
@@ -205,12 +216,118 @@ export async function setMenuItemStatus(
   );
   if (!existing) return null;
 
-  await setDocument("menuItems", documentId, { status: next });
+  let next = requested;
+  const nextManual =
+    requested === "unavailable" && manual ? "unavailable" : null;
+  const patch: Record<string, unknown> = {
+    status: next,
+    manualStatus: nextManual,
+    statusReason: reason,
+    statusUpdatedAt: new Date().toISOString(),
+  };
+
+  if (requested === "available") {
+    const recipe = asRecipe(existing.recipe);
+    if (recipe.length > 0) {
+      try {
+        const ingredients = await listDocuments(
+          "ingredients",
+          (doc) => ({
+            id: doc.id,
+            stock: asNumber(doc.data.stock, 0),
+          }),
+          0,
+        );
+        const stocks = new Map(
+          ingredients.map((ingredient) => [ingredient.id, ingredient.stock]),
+        );
+        if (computeMaxServings(recipe, stocks) === 0) next = "unavailable";
+      } catch (error) {
+        console.warn("[menu] No se pudo validar stock al disponibilizar:", error);
+      }
+    }
+    patch.status = next;
+    patch.statusReason = next === "unavailable" ? "ingredients" : reason;
+  }
+
+  // La app reenvía el mismo estado en cada reconciliación. Solo cambiar
+  // `statusUpdatedAt` cuando el estado efectivo cambia evita reescrituras
+  // constantes del documento (y ruido en el trigger de Firestore).
+  const currentStatus = asString(existing.status);
+  const currentManual =
+    existing.manualStatus === "unavailable" ? "unavailable" : null;
+  const currentReason =
+    existing.statusReason === "ingredients" ||
+    existing.statusReason === "manual"
+      ? existing.statusReason
+      : null;
+  if (
+    next === currentStatus &&
+    nextManual === currentManual &&
+    patch.statusReason === currentReason
+  ) {
+    return { id: documentId, status: next };
+  }
+
+  await setDocument("menuItems", documentId, patch);
   return { id: documentId, status: next };
 }
 
+/**
+ * Escribe en Firestore el estado derivado del stock para todos los platos.
+ * Equivale al trigger `onDocumentWritten('ingredients/{id}')` y permite que la
+ * reconciliación funcione aunque el despliegue de Functions esté limitado.
+ * Respeta los bloqueos manuales (`manualStatus: "unavailable"`).
+ */
+export async function syncMenuStatusesFromStock(): Promise<string[]> {
+  if (!isFirestoreConfigured()) return [];
+  const [ingredients, items] = await Promise.all([
+    listDocuments(
+      "ingredients",
+      (doc) => ({ id: doc.id, stock: asNumber(doc.data.stock, 0) }),
+      0,
+    ),
+    listDocuments(
+      "menuItems",
+      (doc) => ({
+        id: doc.id,
+        status: asString(doc.data.status, "available"),
+        manualStatus:
+          doc.data.manualStatus === "unavailable" ? "unavailable" : null,
+        recipe: asRecipe(doc.data.recipe),
+      }),
+      0,
+    ),
+  ]);
+  const stocks = new Map(
+    ingredients.map((ingredient) => [ingredient.id, ingredient.stock]),
+  );
+  const updatedAt = new Date().toISOString();
+  const updated: string[] = [];
+  for (const item of items) {
+    if (item.manualStatus === "unavailable") continue;
+    const next =
+      computeMaxServings(item.recipe, stocks) === 0
+        ? "unavailable"
+        : "available";
+    if (item.status === next) continue;
+    await setDocument("menuItems", item.id, {
+      status: next,
+      statusReason: "ingredients",
+      statusUpdatedAt: updatedAt,
+    });
+    updated.push(item.id);
+  }
+  return updated;
+}
+
+/** Un plato sin insumos no es vendible aunque su estado manual diga lo contrario. */
+export function isSoldOutByIngredients(menuItem: MenuItem): boolean {
+  return menuItem.maxServings === 0;
+}
+
 export function isAvailable(menuItem: MenuItem): boolean {
-  return menuItem.status !== "unavailable";
+  return menuItem.status !== "unavailable" && !isSoldOutByIngredients(menuItem);
 }
 
 /** Catálogo público: los platos agotados nunca se muestran ni se indexan. */

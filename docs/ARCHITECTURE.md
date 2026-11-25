@@ -119,10 +119,12 @@ lib/
 
 | Rol | Dashboard | Pedidos | Mesas | Menú | Reportes | Más |
 |---|---|---|---|---|---|---|
-| Administrador | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Administrador | ✅ | ✅ | — * | ✅ | ✅ | ✅ |
 | Cajero | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | Mesero | ✅ | ✅ | ✅ | — | — | ✅ |
 | Cocinero | ✅ | ✅ | — | — | — | ✅ |
+
+\* El administrador abre **Mesas** desde la tarjeta «Mesas ocupadas» del Inicio; el destino sigue en el `IndexedStack`, pero no aparece en la `NavigationBar`.
 
 ### Reglas de negocio en la app
 
@@ -149,14 +151,23 @@ currency, taxRate, updatedAt`
 ### `menuItems/{id}`
 `name, slug, description, price, categoryId, categorySlug,
 status ('available'|'unavailable'|'limited'), ingredients[], allergens[],
-emoji, featured, prepMinutes, calories, createdAt, updatedAt`
+emoji, featured, prepMinutes, calories, recipe[], manualStatus
+('unavailable'|null), statusReason ('manual'|'ingredients'|null),
+statusUpdatedAt, createdAt, updatedAt`. `statusUpdatedAt` solo cambia cuando
+el estado efectivo (`status` + `manualStatus` + `statusReason`) cambia.
 
 ### `orders/{id}`
 `code, customerName, customerPhone, type ('pickup'|'delivery'|'table'),
 tableNumber, items[{menuItemId,name,price,quantity,emoji}], subtotal, tax,
 total, status, paymentStatus ('pending'|'paid'|'refunded'),
 paymentMethod ('cash'|'card'|'nequi'|'daviplata'), notes, source
-('web'|'app'), createdBy, createdAt, updatedAt, lastChangedBy`
+('web'|'app'), inventoryDeducted, createdBy, createdAt, updatedAt,
+lastChangedBy`. `inventoryDeducted` es el flag de idempotencia: `pending` no
+consume insumos; el primer estado superior a `pending` descuenta una sola vez
+y `cancelled` repone y limpia el flag. Para pedidos `source: 'web'`, la web/Firestore
+es la única dueña del descuento: la app solo reenvía el estado y consulta el
+inventario actualizado; para pedidos `source: 'app'`, la app descuenta localmente
+y publica el stock absoluto.
 
 ### `tables/{id}`
 `number, status ('libre'|'ocupada'|'esperando_pedido'|'pidiendo_cuenta'),
@@ -178,8 +189,8 @@ Marcador de idempotencia para triggers.
 | Función | Tipo | Descripción |
 |---|---|---|
 | `health` | HTTP | Estado del servicio |
-| `placeOrder` | Callable | Valida contrato, resuelve precios desde Firestore y crea el pedido en `pending` |
-| `updateOrderStatus` | Callable | Transacción con control de rol, libera mesa al cerrar |
+| `placeOrder` | Callable | Valida contrato, resuelve precios desde Firestore y crea el pedido en `pending` (sin descuento de inventario) |
+| `updateOrderStatus` | Callable | Transacción con control de rol, descuenta/repone inventario de forma idempotente y libera mesa al cerrar |
 | `onOrderCreated` | Trigger Firestore | Métricas diarias idempotentes |
 | `dailySalesReport` | Scheduler (03:00 America/Bogota) | Consolidado del día anterior |
 

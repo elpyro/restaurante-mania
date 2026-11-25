@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useCart } from "./CartProvider";
 import { formatCOP } from "@/lib/format";
 import type { Order, OrderType, PaymentMethod } from "@/lib/types";
@@ -31,7 +31,7 @@ type InsufficientItem = {
 
 export function CheckoutForm() {
   const router = useRouter();
-  const { lines, totals, ready, clear, setQuantity, remove } = useCart();
+  const { lines, totals, ready, clear, adjustForStock } = useCart();
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
@@ -47,6 +47,8 @@ export function CheckoutForm() {
   const [stockInsufficient, setStockInsufficient] = useState<InsufficientItem[]>([]);
   const [stockErrors, setStockErrors] = useState<string[]>([]);
   const [stockChecking, setStockChecking] = useState(false);
+  const [stockAlert, setStockAlert] = useState<InsufficientItem[] | null>(null);
+  const alertButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     try {
@@ -73,6 +75,33 @@ export function CheckoutForm() {
       /* ignorar perfil inválido */
     }
   }, []);
+
+  const applyInsufficientItems = useCallback(
+    (items: InsufficientItem[]) => {
+      if (items.length === 0) return;
+      adjustForStock(
+        items.map((item) => ({
+          menuItemId: item.menuItemId,
+          available: item.available,
+        })),
+      );
+      setInsufficientItems(items);
+      setStockAlert(items);
+      setStockInsufficient([]);
+      setStockErrors([]);
+    },
+    [adjustForStock],
+  );
+
+  useEffect(() => {
+    if (!stockAlert) return;
+    alertButtonRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setStockAlert(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [stockAlert]);
 
   // Verificación temprana: bloquea el botón de confirmación en cuanto el
   // carrito cambia, sin esperar a que el cliente intente enviar el pedido.
@@ -104,8 +133,13 @@ export function CheckoutForm() {
           insufficientItems?: InsufficientItem[];
         };
         if (controller.signal.aborted) return;
-        setStockInsufficient(data.insufficientItems ?? []);
-        setStockErrors(data.errors ?? []);
+        const insufficient = data.insufficientItems ?? [];
+        if (insufficient.length > 0) {
+          applyInsufficientItems(insufficient);
+        } else {
+          setStockInsufficient([]);
+          setStockErrors(data.errors ?? []);
+        }
       } catch {
         if (!controller.signal.aborted) {
           setStockInsufficient([]);
@@ -119,7 +153,7 @@ export function CheckoutForm() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [ready, lines]);
+  }, [ready, lines, applyInsufficientItems]);
 
   if (!ready) {
     return <div className="h-64 animate-pulse rounded-2xl bg-stone-200" />;
@@ -175,18 +209,6 @@ export function CheckoutForm() {
     return found;
   }
 
-  function applyInsufficientItems(
-    items: Array<{ menuItemId: string; name: string; requested: number; available: number }>,
-  ) {
-    setInsufficientItems(items);
-    setStockInsufficient([]);
-    setStockErrors([]);
-    for (const item of items) {
-      if (item.available > 0) setQuantity(item.menuItemId, item.available);
-      else remove(item.menuItemId);
-    }
-  }
-
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const clientErrors = validate();
@@ -230,9 +252,6 @@ export function CheckoutForm() {
         const insufficient = checkPayload.insufficientItems ?? [];
         if (insufficient.length > 0) {
           applyInsufficientItems(insufficient);
-          setErrors([
-            "Algunos platos no tienen ingredientes suficientes. Ajustamos tu carrito; revisa y confirma de nuevo.",
-          ]);
         } else {
           setErrors(checkPayload.errors ?? ["No pudimos validar el pedido."]);
         }
@@ -258,9 +277,6 @@ export function CheckoutForm() {
         const insufficient = payload.insufficientItems ?? [];
         if (insufficient.length > 0) {
           applyInsufficientItems(insufficient);
-          setErrors([
-            "Algunos platos no tienen ingredientes suficientes. Ajustamos tu carrito; revisa y confirma de nuevo.",
-          ]);
         } else {
           setErrors(payload.errors ?? ["No pudimos crear el pedido. Intenta de nuevo."]);
         }
@@ -299,6 +315,7 @@ export function CheckoutForm() {
       }
       setStockInsufficient([]);
       setStockErrors([]);
+      setStockAlert(null);
       clear();
       router.push(`/order/${order.id}`);
     } catch {
@@ -484,12 +501,7 @@ export function CheckoutForm() {
             </ul>
             <button
               type="button"
-              onClick={() => {
-                applyInsufficientItems(stockInsufficient);
-                setErrors([
-                  "Ajustamos el carrito con la cantidad disponible. Revisa y confirma de nuevo.",
-                ]);
-              }}
+              onClick={() => applyInsufficientItems(stockInsufficient)}
               className="mt-3 rounded-full bg-amber-700 px-4 py-2 text-xs font-bold text-white hover:bg-amber-800"
             >
               Ajustar carrito automáticamente
@@ -564,6 +576,54 @@ export function CheckoutForm() {
           Al confirmar aceptas que te contactemos por WhatsApp.
         </p>
       </aside>
+
+      {stockAlert ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/50 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setStockAlert(null);
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="stock-alert-title"
+            aria-describedby="stock-alert-desc"
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
+          >
+            <p className="text-3xl" aria-hidden="true">⚠️</p>
+            <h2
+              id="stock-alert-title"
+              className="mt-3 font-display text-xl font-bold text-ink-900"
+            >
+              No hay suficientes insumos
+            </h2>
+            <p id="stock-alert-desc" className="mt-2 text-sm text-ink-600">
+              Ajustamos tu carrito a la cantidad que sí se puede preparar. Revisa
+              el resumen antes de confirmar.
+            </p>
+            <ul className="mt-4 space-y-1 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+              {stockAlert.map((item) => (
+                <li key={item.menuItemId}>
+                  <span className="font-semibold">{item.name}</span>: pediste{" "}
+                  {item.requested},{" "}
+                  {item.available > 0
+                    ? `solo se pueden preparar ${item.available}.`
+                    : "no queda disponibilidad; lo quitamos del carrito."}
+                </li>
+              ))}
+            </ul>
+            <button
+              ref={alertButtonRef}
+              type="button"
+              onClick={() => setStockAlert(null)}
+              className="mt-5 w-full rounded-full bg-brand-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-brand-700"
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      ) : null}
     </form>
   );
 }

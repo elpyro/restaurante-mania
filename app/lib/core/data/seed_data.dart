@@ -354,7 +354,7 @@ class SeedData {
     _ing('hielo', 'Hielo', IngredientUnit.gramo, 5000, 800, 0.5),
     _ing('lulo', 'Lulo', IngredientUnit.unidad, 40, 8, 900),
     _ing('agua', 'Agua', IngredientUnit.mililitro, 20000, 3000, 0.2),
-    _ing('cafe-huila', 'Café de Huila', IngredientUnit.gramo, 1500, 250, 32),
+    _ing('cafe', 'Café de Huila', IngredientUnit.gramo, 1500, 250, 32),
     _ing('vainilla', 'Vainilla', IngredientUnit.mililitro, 500, 100, 20),
   ];
 
@@ -441,8 +441,8 @@ class SeedData {
       'azucar': 25.0,
     },
     'item-cafe': {
-      'cafe-huila': 18.0,
-      'agua': 180.0,
+      'cafe': 15.0,
+      'agua': 200.0,
     },
   };
 

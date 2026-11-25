@@ -33,6 +33,67 @@ export interface Totals {
   count: number;
 }
 
+export type MenuItemStatus = "available" | "unavailable";
+
+export interface RecipeLine {
+  ingredientId: string;
+  quantity: number;
+}
+
+export interface AvailabilityResult {
+  status: MenuItemStatus;
+  /** Porciones preparables con el stock actual; null = sin receta o sin stock conocido. */
+  maxServings: number | null;
+}
+
+/** Máximo de porciones preparables según la receta y el stock de insumos. */
+export function computeMaxServings(
+  recipe: RecipeLine[],
+  stocks: Map<string, number>,
+): number | null {
+  if (recipe.length === 0) return null;
+  let max = Number.POSITIVE_INFINITY;
+  for (const line of recipe) {
+    if (
+      typeof line.ingredientId !== "string" ||
+      line.ingredientId.length === 0
+    ) {
+      continue;
+    }
+    const quantity =
+      typeof line.quantity === "number" && Number.isFinite(line.quantity)
+        ? line.quantity
+        : 0;
+    if (quantity <= 0) continue;
+    const stock = stocks.get(line.ingredientId);
+    if (stock === undefined) continue;
+    const canMake = stock <= 0 ? 0 : Math.floor(stock / quantity);
+    if (canMake < max) max = canMake;
+  }
+  return Number.isFinite(max) ? Math.max(0, max) : null;
+}
+
+/**
+ * Estado que debe persistirse en `menuItems.status`.
+ *
+ * Un bloqueo manual (`manualStatus === "unavailable"`) gana siempre: el stock
+ * no puede reactivar el plato sin que un administrador lo autorice.
+ */
+export function deriveMenuItemStatus(
+  recipe: RecipeLine[],
+  stocks: Map<string, number>,
+  manualStatus?: unknown,
+): AvailabilityResult {
+  const maxServings = computeMaxServings(recipe, stocks);
+  if (manualStatus === "unavailable") {
+    return { status: "unavailable", maxServings };
+  }
+  return {
+    status: maxServings === 0 ? "unavailable" : "available",
+    maxServings,
+  };
+}
+
 /** Redondea a pesos colombianos (sin centavos) evitando errores de coma flotante. */
 export function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;

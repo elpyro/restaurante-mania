@@ -6,8 +6,10 @@ import '../../core/models/role.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../inventory/inventory_screen.dart';
+import '../menu/menu_admin_screen.dart';
 import '../reports/reports_screen.dart';
 import '../settings/settings_screen.dart';
+import '../users/users_screen.dart';
 
 class MoreScreen extends StatelessWidget {
   const MoreScreen({super.key});
@@ -140,7 +142,9 @@ class MoreScreen extends StatelessWidget {
           label: 'Reportes de ventas',
           subtitle: 'Ventas, ticket promedio y productos top',
           onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const ReportsScreen()),
+            MaterialPageRoute<void>(
+              builder: (_) => const ReportsScreen(showAppBar: true),
+            ),
           ),
         ),
         _MenuTile(
@@ -157,21 +161,32 @@ class MoreScreen extends StatelessWidget {
           subtitle:
               '${repository.ingredients.length} insumos · ${repository.lowStockIngredients.length} con stock bajo',
           onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const InventoryScreen()),
+            MaterialPageRoute<void>(
+              builder: (_) => const InventoryScreen(showAppBar: true),
+            ),
           ),
         ),
-        _MenuTile(
-          icon: Icons.restaurant_menu_outlined,
-          label: 'Menú',
-          subtitle: '${repository.menuItems.length} productos registrados',
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Usa la pestaña Menú para gestionar productos.'),
+        if (role == UserRole.admin) ...[
+          _MenuTile(
+            icon: Icons.restaurant_menu_outlined,
+            label: 'Menú',
+            subtitle: '${repository.menuItems.length} productos registrados',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const MenuAdminScreen(showAppBar: true),
               ),
-            );
-          },
-        ),
+            ),
+          ),
+          _MenuTile(
+            icon: Icons.manage_accounts_outlined,
+            label: 'Usuarios',
+            subtitle:
+                '${repository.users.length} cuentas · alta, edición y roles',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const UsersScreen()),
+            ),
+          ),
+        ],
         _MenuTile(
           icon: Icons.info_outline_rounded,
           label: 'Acerca de',

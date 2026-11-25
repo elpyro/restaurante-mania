@@ -5,7 +5,10 @@ import {
   onRequest,
   type CallableRequest,
 } from "firebase-functions/v2/https";
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import {
+  onDocumentCreated,
+  onDocumentWritten,
+} from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
 import { initializeApp } from "firebase-admin/app";
@@ -20,6 +23,7 @@ import {
   canTransition,
   computeTotals,
   dayKey,
+  deriveMenuItemStatus,
   isValidCustomerName,
   isValidOrderType,
   isValidPaymentMethod,
@@ -28,6 +32,7 @@ import {
   isValidTableNumber,
   type OrderStatus,
   type PricedLine,
+  type RecipeLine,
 } from "./domain";
 
 setGlobalOptions({ region: "us-central1", maxInstances: 20 });
@@ -198,6 +203,7 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
       quantity,
       emoji: String(data.emoji ?? "🍽️"),
     });
+
   });
 
   if (missing.length > 0) {
@@ -225,25 +231,29 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
       : String(payload.customerPhone).trim();
 
   const orderRef = db.collection("orders").doc();
-  await orderRef.set({
-    code,
-    customerName: resolvedCustomerName,
-    customerPhone: resolvedCustomerPhone,
-    deliveryAddress: isDelivery ? deliveryAddress : "",
-    type: payload.type,
-    tableNumber: payload.type === "table" ? payload.tableNumber ?? null : null,
-    items: lines,
-    subtotal: totals.subtotal,
-    tax: totals.tax,
-    total: totals.total,
-    status: "pending",
-    paymentStatus: "pending",
-    paymentMethod: payload.paymentMethod,
-    notes,
-    source: request.auth ? "app" : "web",
-    createdBy: request.auth?.uid ?? null,
-    createdAt: now,
-    updatedAt: now,
+  await db.runTransaction(async (transaction) => {
+    // Pendiente no consume insumos; el descuento ocurre en updateOrderStatus.
+    transaction.set(orderRef, {
+      code,
+      customerName: resolvedCustomerName,
+      customerPhone: resolvedCustomerPhone,
+      deliveryAddress: isDelivery ? deliveryAddress : "",
+      type: payload.type,
+      tableNumber: payload.type === "table" ? payload.tableNumber ?? null : null,
+      items: lines,
+      subtotal: totals.subtotal,
+      tax: totals.tax,
+      total: totals.total,
+      status: "pending",
+      paymentStatus: "pending",
+      inventoryDeducted: false,
+      paymentMethod: payload.paymentMethod,
+      notes,
+      source: request.auth ? "app" : "web",
+      createdBy: request.auth?.uid ?? null,
+      createdAt: now,
+      updatedAt: now,
+    });
   });
 
   if (isTable && isValidTableNumber(payload.tableNumber)) {
@@ -277,6 +287,88 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
     itemCount: totals.count,
   };
 });
+
+// =============================================================================
+// syncMenuStatusOnIngredientChange: persistir la disponibilidad derivada del
+// stock. La web y la app siguen calculando `maxServings` al leer, pero el
+// estado escrito en Firestore debe quedar sincronizado para el catálogo, los
+// pedidos y cualquier consumer externo.
+// =============================================================================
+
+function readRecipe(value: unknown): RecipeLine[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const ingredientId =
+      typeof row.ingredientId === "string" ? row.ingredientId : "";
+    const quantity =
+      typeof row.quantity === "number" && Number.isFinite(row.quantity)
+        ? row.quantity
+        : 0;
+    return ingredientId.length > 0 && quantity > 0
+      ? [{ ingredientId, quantity }]
+      : [];
+  });
+}
+
+export const syncMenuStatusOnIngredientChange = onDocumentWritten(
+  "ingredients/{ingredientId}",
+  async (event) => {
+    const changedId = event.params.ingredientId;
+    const menuSnapshot = await db.collection("menuItems").get();
+    const affected = menuSnapshot.docs.filter((doc) =>
+      readRecipe(doc.data()?.recipe).some(
+        (line) => line.ingredientId === changedId,
+      ),
+    );
+    if (affected.length === 0) return;
+
+    const ingredientIds = [
+      ...new Set(
+        affected.flatMap((doc) =>
+          readRecipe(doc.data()?.recipe).map((line) => line.ingredientId),
+        ),
+      ),
+    ];
+    const stockSnapshots = await Promise.all(
+      ingredientIds.map((id) => db.collection("ingredients").doc(id).get()),
+    );
+    const stocks = new Map<string, number>();
+    for (const snapshot of stockSnapshots) {
+      if (!snapshot.exists) continue;
+      const stock = snapshot.data()?.stock;
+      stocks.set(
+        snapshot.id,
+        typeof stock === "number" && Number.isFinite(stock) ? stock : 0,
+      );
+    }
+
+    const updates: string[] = [];
+    await Promise.all(
+      affected.map(async (doc) => {
+        const data = doc.data() ?? {};
+        const next = deriveMenuItemStatus(
+          readRecipe(data.recipe),
+          stocks,
+          data.manualStatus,
+        );
+        if (data.status === next.status) return;
+        await doc.ref.update({
+          status: next.status,
+          statusReason: "ingredients",
+          statusUpdatedAt: FieldValue.serverTimestamp(),
+        });
+        updates.push(`${doc.id}→${next.status}`);
+      }),
+    );
+
+    logger.info("Estado de menú recalculado por stock", {
+      ingredientId: changedId,
+      updates,
+    });
+  },
+);
 
 // =============================================================================
 // updateOrderStatus: cambios de estado con control de rol y transiciones.
@@ -336,11 +428,13 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
       patch.paymentStatus = "refunded";
     }
 
-    // Inventario: descontar al pasar a preparación/listo/enviado/entregado, reponer al cancelar.
+    // Inventario: `pending` no descuenta. Al avanzar a cualquier estado superior
+    // se descuenta una sola vez; al cancelar se repone.
     const deducted = data.inventoryDeducted === true;
     const shouldDeduct =
       !deducted &&
-      (target === "preparing" ||
+      (target === "confirmed" ||
+        target === "preparing" ||
         target === "ready" ||
         target === "sent" ||
         target === "delivered");

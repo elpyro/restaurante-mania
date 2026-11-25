@@ -7,8 +7,12 @@ import '../../core/models/role.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/common.dart';
 
+enum _InventoryFilter { all, low, out }
+
 class InventoryScreen extends StatefulWidget {
-  const InventoryScreen({super.key});
+  const InventoryScreen({super.key, this.showAppBar = false});
+
+  final bool showAppBar;
 
   @override
   State<InventoryScreen> createState() => _InventoryScreenState();
@@ -17,7 +21,7 @@ class InventoryScreen extends StatefulWidget {
 class _InventoryScreenState extends State<InventoryScreen> {
   final _searchController = TextEditingController();
   String _query = '';
-  bool _onlyOutOfStock = false;
+  _InventoryFilter _filter = _InventoryFilter.all;
 
   @override
   void dispose() {
@@ -32,16 +36,30 @@ class _InventoryScreenState extends State<InventoryScreen> {
     final canEdit = role.canManageMenu;
     final outOfStockCount =
         repository.ingredients.where((i) => i.stock <= 0).length;
+    final lowStockCount = repository.lowStockIngredients.length;
     final query = _query.trim().toLowerCase();
     final items = repository.ingredients.where((ingredient) {
       final matchesQuery =
           query.isEmpty || ingredient.name.toLowerCase().contains(query);
-      final matchesStock = !_onlyOutOfStock || ingredient.stock <= 0;
+      final matchesStock = switch (_filter) {
+        _InventoryFilter.all => true,
+        _InventoryFilter.low => ingredient.isLow,
+        _InventoryFilter.out => ingredient.stock <= 0,
+      };
       return matchesQuery && matchesStock;
     }).toList();
 
     return Scaffold(
       backgroundColor: Colors.transparent,
+      appBar: widget.showAppBar
+          ? AppBar(
+              title: const Text('Inventario'),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back_rounded),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
+            )
+          : null,
       floatingActionButton: canEdit
           ? FloatingActionButton.extended(
               onPressed: () => _openEditor(context, repository),
@@ -54,34 +72,74 @@ class _InventoryScreenState extends State<InventoryScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: TextField(
-              controller: _searchController,
-              onChanged: (value) => setState(() => _query = value),
-              decoration: const InputDecoration(
-                hintText: 'Buscar insumo',
-                prefixIcon: Icon(Icons.search_rounded, size: 20),
-              ),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: (value) => setState(() => _query = value),
+                    decoration: const InputDecoration(
+                      hintText: 'Buscar insumo',
+                      prefixIcon: Icon(Icons.search_rounded, size: 20),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
             child: Row(
               children: [
                 _SummaryCard(
                   label: 'Insumos',
                   value: '${repository.ingredients.length}',
                   color: AppTheme.ink,
+                  selected: _filter == _InventoryFilter.all,
+                  onTap: () => setState(() => _filter = _InventoryFilter.all),
+                ),
+                const SizedBox(width: 8),
+                _SummaryCard(
+                  label: 'Stock bajo',
+                  value: '$lowStockCount',
+                  color: AppTheme.warning,
+                  selected: _filter == _InventoryFilter.low,
+                  onTap: () => setState(() => _filter =
+                      _filter == _InventoryFilter.low
+                          ? _InventoryFilter.all
+                          : _InventoryFilter.low),
                 ),
                 const SizedBox(width: 8),
                 _SummaryCard(
                   label: 'Sin stock',
                   value: '$outOfStockCount',
                   color: outOfStockCount > 0 ? AppTheme.danger : AppTheme.success,
-                  selected: _onlyOutOfStock,
-                  onTap: () => setState(() => _onlyOutOfStock = !_onlyOutOfStock),
+                  selected: _filter == _InventoryFilter.out,
+                  onTap: () => setState(() => _filter =
+                      _filter == _InventoryFilter.out
+                          ? _InventoryFilter.all
+                          : _InventoryFilter.out),
                 ),
               ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: SectionHeader(
+              title: switch (_filter) {
+                _InventoryFilter.low => 'Insumos con stock bajo',
+                _InventoryFilter.out => 'Insumos sin stock',
+                _InventoryFilter.all => 'Todos los insumos',
+              },
+              padding: const EdgeInsets.only(top: 4, bottom: 8),
+              action: Text(
+                '${items.length} resultado(s)',
+                style: const TextStyle(
+                  fontSize: 10.5,
+                  color: Color(0xFFA8A29E),
+                ),
+              ),
             ),
           ),
           Expanded(
@@ -95,7 +153,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     ),
                   )
                 : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 6, 16, 96),
+                    padding: const EdgeInsets.fromLTRB(16, 2, 16, 96),
                     itemCount: items.length,
                     itemBuilder: (context, index) {
                       final ingredient = items[index];

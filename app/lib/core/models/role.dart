@@ -25,6 +25,7 @@ enum UserRole {
   bool get canMarkPaid =>
       this == UserRole.admin || this == UserRole.cashier || this == UserRole.waiter;
   bool get canCancelOrders => this == UserRole.admin;
+  bool get canCloseShift => this == UserRole.admin || this == UserRole.cashier;
   bool get canAccessSettings => this == UserRole.admin;
   bool get canCreateOrders => this != UserRole.cook;
   bool get canViewRecipe => this == UserRole.admin || this == UserRole.cook;

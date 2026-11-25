@@ -162,6 +162,28 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------------
+    // Turnos de caja. Solo admin/cajero pueden cerrar y abrir turnos; el
+    // historial es de lectura para todo el personal.
+    // ---------------------------------------------------------------------
+    function canCloseShift() {
+      return role() in ['admin', 'cashier'];
+    }
+
+    match /cashShifts/{shiftId} {
+      allow get, list: if isStaff();
+      allow create, update: if canCloseShift()
+        && request.resource.data.keys().hasOnly([
+          'id', 'label', 'openedAt', 'openedBy', 'openedByName',
+          'closedAt', 'closedBy', 'closedByName', 'orderCount', 'total',
+          'totalsByPaymentMethod', 'closingAmount', 'notes', 'status'
+        ])
+        && request.resource.data.id == shiftId
+        && request.resource.data.openedAt is string
+        && request.resource.data.status in ['open', 'closed'];
+      allow delete: if isAdmin();
+    }
+
+    // ---------------------------------------------------------------------
     // Métricas y reportes (solo escritura desde Cloud Functions)
     // ---------------------------------------------------------------------
 

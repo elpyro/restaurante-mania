@@ -18,7 +18,8 @@ export async function PATCH(
   if (!body || typeof body !== "object") {
     return NextResponse.json({ error: "Cuerpo inválido." }, { status: 400 });
   }
-  const status = (body as Record<string, unknown>).status;
+  const payload = body as Record<string, unknown>;
+  const status = payload.status;
   if (status !== "available" && status !== "unavailable") {
     return NextResponse.json(
       { error: "Estado inválido. Use 'available' o 'unavailable'." },
@@ -27,7 +28,14 @@ export async function PATCH(
   }
 
   try {
-    const item = await setMenuItemStatus(id, status);
+    const reason =
+      payload.reason === "ingredients" ? "ingredients" : "manual";
+    const item = await setMenuItemStatus(
+      id,
+      status,
+      typeof payload.manual === "boolean" ? payload.manual : undefined,
+      reason,
+    );
     if (!item) {
       return NextResponse.json(
         { error: "Plato no encontrado." },

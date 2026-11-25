@@ -77,6 +77,29 @@ export interface Order {
   createdAt: string;
   updatedAt: string;
   source: "web" | "app";
+  /** Evita descontar dos veces el mismo pedido al sincronizar con la app. */
+  inventoryDeducted?: boolean;
+  /** Momento y autor del cobro; no cambia con actualizaciones posteriores. */
+  paidAt?: string;
+  paidBy?: string;
+  paidByName?: string;
+}
+
+export interface CashShift {
+  id: string;
+  label: string;
+  openedAt: string;
+  openedBy?: string;
+  openedByName: string;
+  closedAt?: string | null;
+  closedBy?: string;
+  closedByName?: string;
+  orderCount: number;
+  total: number;
+  totalsByPaymentMethod: Partial<Record<PaymentMethod, number>>;
+  closingAmount?: number | null;
+  notes: string;
+  status: "open" | "closed";
 }
 
 export interface CartLine {
@@ -103,7 +126,7 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   preparing: "En preparación",
   ready: "Listo",
   sent: "Enviado",
-  delivered: "Entregado",
+  delivered: "Enviado",
   cancelled: "Cancelado",
 };
 

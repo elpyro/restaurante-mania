@@ -63,6 +63,29 @@ export function removeLine(lines: CartLine[], menuItemId: string): CartLine[] {
   return lines.filter((line) => line.menuItemId !== menuItemId);
 }
 
+export interface StockAdjustment {
+  menuItemId: string;
+  available: number;
+}
+
+/** Recorta o quita las cantidades que no se pueden preparar con el stock actual. */
+export function adjustLinesForStock(
+  lines: CartLine[],
+  adjustments: StockAdjustment[],
+): CartLine[] {
+  if (adjustments.length === 0) return lines;
+  const byId = new Map(adjustments.map((entry) => [entry.menuItemId, entry.available]));
+  let changed = false;
+  const adjusted = lines.flatMap((line) => {
+    if (!byId.has(line.menuItemId)) return [line];
+    const available = Math.max(0, Math.floor(byId.get(line.menuItemId) ?? 0));
+    if (available >= line.quantity) return [line];
+    changed = true;
+    return available > 0 ? [{ ...line, quantity: available }] : [];
+  });
+  return changed ? adjusted : lines;
+}
+
 export function cartCount(lines: CartLine[]): number {
   return lines.reduce((total, line) => total + line.quantity, 0);
 }

@@ -275,6 +275,25 @@ export async function createDocument(
   return docId(document);
 }
 
+export async function deleteDocument(
+  collection: string,
+  id: string,
+): Promise<void> {
+  const config = readConfig();
+  if (!config) throw new Error("Firestore no está configurado");
+  const url = `${baseUrl(config)}/${collection}/${encodeURIComponent(id)}?key=${config.apiKey}`;
+  const response = await fetch(url, {
+    method: "DELETE",
+    headers: await authHeaders(),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Firestore DELETE ${collection}/${id} respondió ${response.status}: ${await response.text()}`,
+    );
+  }
+}
+
 export async function setDocument(
   collection: string,
   id: string,
