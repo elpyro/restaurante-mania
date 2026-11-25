@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ArrowRight, Search, SlidersHorizontal, X } from "lucide-react";
 import { MenuItemCard } from "./MenuItemCard";
 import { searchMenuItems } from "@/lib/menu";
 import type { Category, MenuItem } from "@/lib/types";
@@ -35,28 +36,44 @@ export function MenuBrowser({ categories, items, initialQuery = "" }: Props) {
 
   return (
     <div>
-      <div className="sticky top-16 z-30 -mx-4 mb-8 border-b border-stone-200 bg-stone-50/95 px-4 py-3 backdrop-blur sm:mx-0 sm:rounded-2xl sm:border sm:px-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div className="sticky top-[4.5rem] z-30 -mx-4 mb-10 border-y border-line bg-surface/95 px-4 py-4 backdrop-blur-xl sm:mx-0 sm:rounded-3xl sm:border">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <label className="relative flex-1">
             <span className="sr-only">Buscar en el menú</span>
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-500">
-              🔍
-            </span>
+            <Search
+              size={17}
+              className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-ink-muted"
+              aria-hidden
+            />
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Buscar plato, ingrediente..."
-              className="w-full rounded-full border border-stone-300 bg-white py-2.5 pl-9 pr-4 text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+              className="field rounded-full py-3 pl-11 pr-10"
             />
+            {query ? (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                className="absolute right-3 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full text-ink-muted transition hover:bg-surface-muted hover:text-ink"
+                aria-label="Limpiar búsqueda"
+              >
+                <X size={15} />
+              </button>
+            ) : null}
           </label>
-          <div className="flex gap-2 overflow-x-auto pb-1 sm:pb-0">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0">
+            <span className="hidden shrink-0 text-ink-muted sm:block" aria-hidden>
+              <SlidersHorizontal size={17} />
+            </span>
             <button
               type="button"
               onClick={() => setActiveCategory("all")}
-              className={`whitespace-nowrap rounded-full px-3.5 py-2 text-xs font-semibold transition ${
+              aria-pressed={activeCategory === "all"}
+              className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition ${
                 activeCategory === "all"
-                  ? "bg-ink-900 text-white"
-                  : "bg-white text-ink-700 hover:bg-brand-100"
+                  ? "bg-ink text-surface"
+                  : "bg-surface-raised text-ink-soft hover:bg-brand-50 hover:text-brand-strong"
               }`}
             >
               Todo
@@ -66,10 +83,11 @@ export function MenuBrowser({ categories, items, initialQuery = "" }: Props) {
                 key={category.id}
                 type="button"
                 onClick={() => setActiveCategory(category.slug)}
-                className={`whitespace-nowrap rounded-full px-3.5 py-2 text-xs font-semibold transition ${
+                aria-pressed={activeCategory === category.slug}
+                className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition ${
                   activeCategory === category.slug
-                    ? "bg-ink-900 text-white"
-                    : "bg-white text-ink-700 hover:bg-brand-100"
+                    ? "bg-ink text-surface"
+                    : "bg-surface-raised text-ink-soft hover:bg-brand-50 hover:text-brand-strong"
                 }`}
               >
                 {category.emoji} {category.name}
@@ -77,19 +95,19 @@ export function MenuBrowser({ categories, items, initialQuery = "" }: Props) {
             ))}
           </div>
         </div>
-        <p className="mt-2 text-xs text-ink-500" aria-live="polite">
+        <p className="mt-2 text-xs text-ink-muted" aria-live="polite">
           {visible.length} producto{visible.length === 1 ? "" : "s"} encontrado
           {visible.length === 1 ? "" : "s"}
         </p>
       </div>
 
       {visible.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-12 text-center">
-          <p className="text-4xl">🕵️</p>
-          <p className="mt-3 font-semibold text-ink-900">
+        <div className="surface-card border-dashed p-12 text-center">
+          <p className="text-4xl" aria-hidden>🕵️</p>
+          <p className="mt-3 font-semibold text-ink">
             No encontramos platos con esa búsqueda
           </p>
-          <p className="mt-1 text-sm text-ink-500">
+          <p className="mt-1 text-sm text-ink-muted">
             Prueba con otro nombre o revisa todas las categorías.
           </p>
           <button
@@ -98,23 +116,23 @@ export function MenuBrowser({ categories, items, initialQuery = "" }: Props) {
               setQuery("");
               setActiveCategory("all");
             }}
-            className="mt-4 rounded-full bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
+            className="btn-primary mt-5"
           >
-            Ver todo el menú
+            Ver todo el menú <ArrowRight size={15} aria-hidden />
           </button>
         </div>
       ) : grouped ? (
-        <div className="space-y-12">
+        <div className="space-y-14">
           {grouped.map(({ category, items: categoryItems }) => (
-            <section key={category.id} id={category.slug} className="scroll-mt-32">
-              <div className="mb-4 flex items-end justify-between gap-3">
+            <section key={category.id} id={category.slug} className="scroll-mt-36">
+              <div className="mb-5 flex items-end justify-between gap-3">
                 <div>
-                  <h2 className="font-display text-2xl font-bold text-ink-900">
+                  <h2 className="font-display text-2xl font-bold text-ink">
                     {category.emoji} {category.name}
                   </h2>
-                  <p className="mt-1 text-sm text-ink-500">{category.description}</p>
+                  <p className="mt-1 text-sm text-ink-muted">{category.description}</p>
                 </div>
-                <span className="hidden text-xs font-medium text-ink-500 sm:block">
+                <span className="hidden text-xs font-medium text-ink-muted sm:block">
                   {categoryItems.length} platos
                 </span>
               </div>

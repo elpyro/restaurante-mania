@@ -99,6 +99,13 @@ export function isFirestoreConfigured(): boolean {
   return readConfig() !== null;
 }
 
+function isDynamicUsageError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { digest?: unknown }).digest === "DYNAMIC_SERVER_USAGE"
+  );
+}
+
 function readServiceAccount(): ServiceAccount | null {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
   if (!raw) return null;
@@ -194,7 +201,9 @@ async function authHeaders(): Promise<Record<string, string>> {
     const token = await googleAccessToken(account);
     headers.Authorization = `Bearer ${token}`;
   } catch (error) {
-    console.warn("[firebase/rest] No se pudo obtener token de servicio:", error);
+    if (!isDynamicUsageError(error)) {
+      console.warn("[firebase/rest] No se pudo obtener token de servicio:", error);
+    }
   }
   return headers;
 }

@@ -9,6 +9,7 @@ import {
   setDocument,
 } from "./firebase/rest";
 import { getMenu } from "./menu";
+import { getRestaurantConfig } from "./restaurant-config";
 import { demoIngredientStocks } from "./seed";
 import type {
   MenuItem,
@@ -22,6 +23,29 @@ import type {
 
 const ORDER_TYPES: OrderType[] = ["pickup", "delivery", "table"];
 const PAYMENT_METHODS: PaymentMethod[] = ["cash", "card", "nequi", "daviplata"];
+
+/** Política publicada desde la APK; por defecto todo está disponible. */
+export interface OrderPolicy {
+  showOrderTypeOptions: boolean;
+  deliveryOptions: Record<OrderType, boolean>;
+  paymentMethods: PaymentMethod[];
+}
+
+export const DEFAULT_ORDER_POLICY: OrderPolicy = {
+  showOrderTypeOptions: true,
+  deliveryOptions: { pickup: true, delivery: true, table: true },
+  paymentMethods: [...PAYMENT_METHODS],
+};
+
+export function restaurantOrderPolicy(
+  config: Awaited<ReturnType<typeof getRestaurantConfig>>["config"],
+): OrderPolicy {
+  return {
+    showOrderTypeOptions: config.showOrderTypeOptions,
+    deliveryOptions: config.deliveryOptions,
+    paymentMethods: config.paymentMethods,
+  };
+}
 
 export interface OrderInputItem {
   menuItemId: string;
@@ -89,7 +113,10 @@ export function validateOrderItems(raw: unknown): ItemsValidationResult {
   return { ok: true, items };
 }
 
-export function validateOrderInput(raw: unknown): ValidationResult {
+export function validateOrderInput(
+  raw: unknown,
+  policy: OrderPolicy = DEFAULT_ORDER_POLICY,
+): ValidationResult {
   const errors: string[] = [];
   if (!raw || typeof raw !== "object") {
     return { ok: false, errors: ["El cuerpo del pedido es inválido."] };
@@ -105,6 +132,8 @@ export function validateOrderInput(raw: unknown): ValidationResult {
 
   if (!ORDER_TYPES.includes(type)) {
     errors.push("El tipo de pedido no es válido.");
+  } else if (!policy.deliveryOptions[type]) {
+    errors.push("Ese tipo de pedido no está disponible en este momento.");
   }
 
   if (!isTable) {
@@ -144,8 +173,11 @@ export function validateOrderInput(raw: unknown): ValidationResult {
   }
 
   const paymentMethod = text(body.paymentMethod) as PaymentMethod;
-  if (!PAYMENT_METHODS.includes(paymentMethod)) {
-    errors.push("El método de pago no es válido.");
+  if (
+    !PAYMENT_METHODS.includes(paymentMethod) ||
+    !policy.paymentMethods.includes(paymentMethod)
+  ) {
+    errors.push("El método de pago no está disponible en este momento.");
   }
 
   const notes = text(body.notes);
@@ -474,7 +506,8 @@ export async function getInsufficientItems(
 }
 
 export async function createOrder(raw: unknown): Promise<Order> {
-  const validation = validateOrderInput(raw);
+  const { config } = await getRestaurantConfig();
+  const validation = validateOrderInput(raw, restaurantOrderPolicy(config));
   if (!validation.ok) throw new OrderValidationError(validation.errors);
 
   const input = validation.value;

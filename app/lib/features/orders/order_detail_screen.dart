@@ -4,13 +4,30 @@ import 'package:provider/provider.dart';
 import '../../core/data/repository.dart';
 import '../../core/models/ingredient.dart';
 import '../../core/models/order.dart';
+import '../../core/models/restaurant_settings.dart';
 import '../../core/models/role.dart';
+import '../../core/services/receipt_print_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/status_colors.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/common.dart';
 import 'new_order_screen.dart';
 import 'payment_sheet.dart';
+
+Future<void> _printOrderReceipt(
+  BuildContext context,
+  Order order,
+  RestaurantSettings settings,
+) async {
+  try {
+    await ReceiptPrintService(order: order, settings: settings).printReceipt();
+  } catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('No se pudo imprimir el recibo: $error')),
+    );
+  }
+}
 
 class OrderDetailScreen extends StatelessWidget {
   const OrderDetailScreen({super.key, required this.orderId});
@@ -44,6 +61,12 @@ class OrderDetailScreen extends StatelessWidget {
           appBar: AppBar(
             title: Text(order.code),
             actions: [
+              IconButton(
+                tooltip: 'Imprimir recibo',
+                icon: const Icon(Icons.print_outlined),
+                onPressed: () =>
+                    _printOrderReceipt(context, order, repository.settings),
+              ),
               if ((role.canCreateOrders && repository.canEditOrder(order)) || order.status.isActive)
                 PopupMenuButton<String>(
                   onSelected: (value) async {

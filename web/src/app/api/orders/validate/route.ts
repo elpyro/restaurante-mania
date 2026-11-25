@@ -1,7 +1,9 @@
 ﻿import { NextResponse } from "next/server";
 import { getMenu } from "@/lib/menu";
+import { getRestaurantConfig } from "@/lib/restaurant-config";
 import {
   getInsufficientItems,
+  restaurantOrderPolicy,
   validateOrderInput,
   validateOrderItems,
   type OrderInputItem,
@@ -35,7 +37,8 @@ export async function POST(request: Request) {
     }
     items = validation.items;
   } else {
-    const validation = validateOrderInput(body);
+    const { config } = await getRestaurantConfig();
+    const validation = validateOrderInput(body, restaurantOrderPolicy(config));
     if (!validation.ok) {
       return NextResponse.json(
         { ok: false, errors: validation.errors, insufficientItems: [] },

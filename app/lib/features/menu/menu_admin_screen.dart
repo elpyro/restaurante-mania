@@ -385,6 +385,21 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
                                 ),
                               ),
                               if (canEdit) ...[
+                                IconButton(
+                                  tooltip: item.featured
+                                      ? 'Quitar de favoritos de la web'
+                                      : 'Mostrar en favoritos de la web',
+                                  color: item.featured
+                                      ? const Color(0xFFF59E0B)
+                                      : const Color(0xFFA8A29E),
+                                  icon: Icon(
+                                    item.featured
+                                        ? Icons.star_rounded
+                                        : Icons.star_border_rounded,
+                                  ),
+                                  onPressed: () =>
+                                      repository.toggleFavorite(item.id),
+                                ),
                                 Switch.adaptive(
                                   value: effectivelyAvailable,
                                   onChanged: (value) {

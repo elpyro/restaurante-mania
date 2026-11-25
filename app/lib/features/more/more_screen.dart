@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -5,7 +7,9 @@ import '../../core/data/repository.dart';
 import '../../core/models/role.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../appearance/appearance_screen.dart';
 import '../inventory/inventory_screen.dart';
+import '../inventory_losses/inventory_losses_screen.dart';
 import '../menu/menu_admin_screen.dart';
 import '../reports/reports_screen.dart';
 import '../settings/settings_screen.dart';
@@ -156,6 +160,16 @@ class MoreScreen extends StatelessWidget {
           ),
         ),
         _MenuTile(
+          icon: Icons.palette_outlined,
+          label: 'Apariencia',
+          subtitle: 'Colores y textos de la web pública',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const AppearanceScreen(),
+            ),
+          ),
+        ),
+        _MenuTile(
           icon: Icons.inventory_2_outlined,
           label: 'Inventario',
           subtitle:
@@ -167,6 +181,18 @@ class MoreScreen extends StatelessWidget {
           ),
         ),
         if (role == UserRole.admin) ...[
+          _MenuTile(
+            icon: Icons.report_problem_outlined,
+            label: 'Pérdidas de inventario',
+            subtitle:
+                '${repository.inventoryLosses.length} registro(s) · '
+                '${repository.pendingInventoryLosses.length} pendiente(s)',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const InventoryLossesScreen(),
+              ),
+            ),
+          ),
           _MenuTile(
             icon: Icons.restaurant_menu_outlined,
             label: 'Menú',
@@ -195,18 +221,7 @@ class MoreScreen extends StatelessWidget {
             context: context,
             applicationName: 'Restaurante Manía POS',
             applicationVersion: '1.0.0',
-            applicationLegalese:
-                'Sistema integral de restaurantes · Flutter + Firebase ready',
-            children: const [
-              SizedBox(height: 12),
-              Text(
-                'App administrativa con arquitectura feature-first, persistencia '
-                'offline y cola de sincronización. Roles de administrador, cajero, '
-                'mesero y cocinero. La web pública crea pedidos que llegan aquí '
-                'en tiempo real al conectar Firestore.',
-                style: TextStyle(fontSize: 12, height: 1.45),
-              ),
-            ],
+            applicationLegalese: 'Sistema integral de restaurantes',
           ),
         ),
         _MenuTile(
@@ -214,7 +229,7 @@ class MoreScreen extends StatelessWidget {
           label: 'Cerrar sesión',
           subtitle: 'Volver a la pantalla de acceso',
           danger: true,
-          onTap: repository.logout,
+          onTap: () => unawaited(repository.logout()),
         ),
       ],
     );

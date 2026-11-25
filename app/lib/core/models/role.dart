@@ -29,4 +29,10 @@ enum UserRole {
   bool get canAccessSettings => this == UserRole.admin;
   bool get canCreateOrders => this != UserRole.cook;
   bool get canViewRecipe => this == UserRole.admin || this == UserRole.cook;
+
+  /// Pérdidas/caducidades de ingredientes: quien cocina las registra y el
+  /// administrador además consulta el historial con auditoría.
+  bool get canRegisterInventoryLoss =>
+      this == UserRole.admin || this == UserRole.cook;
+  bool get canViewInventoryLosses => this == UserRole.admin;
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -119,7 +121,7 @@ class _AppShellState extends State<AppShell> {
           PopupMenuButton<String>(
             tooltip: 'Cuenta',
             onSelected: (value) {
-              if (value == 'logout') repository.logout();
+              if (value == 'logout') unawaited(repository.logout());
             },
             itemBuilder: (context) => [
               PopupMenuItem<String>(
@@ -197,7 +199,7 @@ class _AppShellState extends State<AppShell> {
                   )
                 else
                   Text(
-                    'Datos locales offline · ${repository.todayOrderCount} pedidos hoy',
+                    'Datos guardados en este dispositivo',
                     style: const TextStyle(
                       fontSize: 10.5,
                       color: Color(0xFFA8A29E),

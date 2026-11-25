@@ -2,6 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import {
+  CircleCheck,
+  Clock,
+  House,
+  MapPin,
+  MessageCircle,
+  ReceiptText,
+  Search,
+  Wallet,
+} from "lucide-react";
 import { formatCOP, formatDateTime } from "@/lib/format";
 import {
   ORDER_STATUS_LABELS,
@@ -31,7 +41,13 @@ function readStoredOrder(id: string): Order | null {
   }
 }
 
-export function OrderConfirmation({ id }: { id: string }) {
+interface Props {
+  id: string;
+  whatsapp: string;
+  restaurantName: string;
+}
+
+export function OrderConfirmation({ id, whatsapp, restaurantName }: Props) {
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -71,32 +87,34 @@ export function OrderConfirmation({ id }: { id: string }) {
   }, [id]);
 
   if (loading && !order) {
-    return <div className="h-72 animate-pulse rounded-3xl bg-stone-200" />;
+    return <div className="skeleton h-72" />;
   }
 
   if (!order) {
     return (
-      <div className="rounded-3xl border border-dashed border-stone-300 bg-white p-12 text-center">
-        <p className="text-5xl">🔎</p>
-        <h2 className="mt-4 font-display text-2xl font-bold text-ink-900">
+      <div className="surface-card border-dashed p-12 text-center">
+        <span className="mx-auto grid h-16 w-16 place-items-center rounded-3xl bg-brand-50 text-brand">
+          <Search size={28} aria-hidden />
+        </span>
+        <h2 className="mt-4 font-display text-2xl font-bold text-ink">
           No encontramos ese pedido
         </h2>
-        <p className="mt-2 text-sm text-ink-500">
+        <p className="mt-2 text-sm text-ink-muted">
           Puede que el enlace haya expirado. Escríbenos por WhatsApp y lo
           revisamos contigo.
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
           <Link
             href="/menu"
-            className="rounded-full bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-700"
+            className="btn-primary"
           >
             Volver al menú
           </Link>
           <a
-            href={whatsappUrl()}
+            href={whatsappUrl(undefined, whatsapp, restaurantName)}
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-full border border-stone-300 px-5 py-2.5 text-sm font-semibold text-ink-700 hover:bg-stone-100"
+            className="rounded-full border border-line px-5 py-2.5 text-sm font-semibold text-ink-soft hover:bg-surface-muted"
           >
             WhatsApp
           </a>
@@ -117,44 +135,44 @@ export function OrderConfirmation({ id }: { id: string }) {
 
   return (
     <div className="space-y-6">
-      <section className="overflow-hidden rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-6 sm:p-8">
+      <section className="relative overflow-hidden rounded-4xl border border-accent-soft bg-gradient-to-br from-accent-soft to-surface-raised p-6 sm:p-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold uppercase tracking-wide text-emerald-800">
-              ✓ Pedido recibido
+            <p className="inline-flex items-center gap-2 rounded-full bg-accent px-3 py-1 text-xs font-bold uppercase tracking-wide text-white">
+              <CircleCheck size={13} aria-hidden /> Pedido recibido
             </p>
-            <h2 className="mt-3 font-display text-3xl font-bold text-ink-900">
+            <h2 className="mt-3 font-display text-3xl font-bold text-ink">
               ¡Gracias, {order.customerName.split(" ")[0]}!
             </h2>
-            <p className="mt-2 text-sm text-ink-700">
+            <p className="mt-2 text-sm text-ink-soft">
               Tu pedido <strong>{order.code}</strong> quedó registrado. La cocina
               lo verá en tiempo real en la app administrativa.
             </p>
           </div>
-          <div className="rounded-2xl border border-emerald-200 bg-white p-4 text-sm">
-            <p className="text-ink-500">Total del pedido</p>
+          <div className="rounded-2xl border border-accent-soft bg-surface-raised p-4 text-sm">
+            <p className="text-ink-muted">Total del pedido</p>
             <p className="text-2xl font-bold text-brand-700">
               {formatCOP(order.total)}
             </p>
-            <p className="mt-1 text-xs text-ink-500">
+            <p className="mt-1 text-xs text-ink-muted">
               {PAYMENT_METHOD_LABELS[order.paymentMethod]} · {ORDER_TYPE_LABELS[order.type]}
             </p>
           </div>
         </div>
 
         <a
-          href={whatsappUrl(message)}
+          href={whatsappUrl(message, whatsapp, restaurantName)}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-5 inline-flex rounded-full bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
+          className="btn-primary mt-5"
         >
-          Enviar comprobante por WhatsApp
+          <MessageCircle size={16} aria-hidden /> Enviar comprobante por WhatsApp
         </a>
       </section>
 
-      <section className="rounded-2xl border border-stone-200 bg-white p-5">
-        <h3 className="font-display text-lg font-bold text-ink-900">
-          Estado del pedido
+      <section className="surface-card p-5">
+        <h3 className="inline-flex items-center gap-2 font-display text-lg font-bold text-ink">
+          <Clock size={17} className="text-brand" aria-hidden /> Estado del pedido
         </h3>
         {cancelled ? (
           <p className="mt-3 rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
@@ -169,15 +187,15 @@ export function OrderConfirmation({ id }: { id: string }) {
                   <span
                     className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-xs font-bold ${
                       done
-                        ? "bg-emerald-600 text-white"
-                        : "bg-stone-200 text-stone-500"
+                        ? "bg-accent text-white"
+                        : "bg-surface-muted text-ink-400"
                     }`}
                   >
                     {done ? "✓" : index + 1}
                   </span>
                   <span
                     className={`text-xs font-medium ${
-                      done ? "text-ink-900" : "text-ink-500"
+                      done ? "text-ink" : "text-ink-muted"
                     }`}
                   >
                     {ORDER_STATUS_LABELS[status]}
@@ -187,19 +205,21 @@ export function OrderConfirmation({ id }: { id: string }) {
             })}
           </ol>
         )}
-        <p className="mt-4 text-xs text-ink-500">
+        <p className="mt-4 text-xs text-ink-muted">
           Creado el {formatDateTime(order.createdAt)}. Estado actual:{" "}
           <strong>{ORDER_STATUS_LABELS[order.status]}</strong>.
         </p>
       </section>
 
       <div className="grid gap-6 md:grid-cols-2">
-        <section className="rounded-2xl border border-stone-200 bg-white p-5">
-          <h3 className="font-display text-lg font-bold text-ink-900">Productos</h3>
+        <section className="surface-card p-5">
+          <h3 className="inline-flex items-center gap-2 font-display text-lg font-bold text-ink">
+            <ReceiptText size={17} className="text-brand" aria-hidden /> Productos
+          </h3>
           <ul className="mt-3 divide-y divide-stone-100 text-sm">
             {order.items.map((item) => (
               <li key={item.menuItemId} className="flex justify-between gap-3 py-2">
-                <span className="flex items-center gap-2 text-ink-700">
+                <span className="flex items-center gap-2 text-ink-soft">
                   {item.imageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
@@ -212,55 +232,59 @@ export function OrderConfirmation({ id }: { id: string }) {
                   )}
                   {item.quantity} × {item.name}
                 </span>
-                <span className="whitespace-nowrap font-medium text-ink-900">
+                <span className="whitespace-nowrap font-medium text-ink">
                   {formatCOP(item.price * item.quantity)}
                 </span>
               </li>
             ))}
           </ul>
-          <div className="mt-3 flex justify-between border-t border-stone-200 pt-3 text-base font-bold">
+          <div className="mt-3 flex justify-between border-t border-line pt-3 text-base font-bold">
             <span>Total</span>
             <span className="text-brand-700">{formatCOP(order.total)}</span>
           </div>
           {order.notes ? (
-            <p className="mt-3 rounded-xl bg-stone-50 px-3 py-2 text-xs text-ink-700">
+            <p className="mt-3 rounded-xl bg-surface-muted px-3 py-2 text-xs text-ink-soft">
               <strong>Notas:</strong> {order.notes}
             </p>
           ) : null}
         </section>
 
-        <section className="rounded-2xl border border-stone-200 bg-white p-5">
-          <h3 className="font-display text-lg font-bold text-ink-900">Entrega</h3>
+        <section className="surface-card p-5">
+          <h3 className="inline-flex items-center gap-2 font-display text-lg font-bold text-ink">
+            <MapPin size={17} className="text-brand" aria-hidden /> Entrega
+          </h3>
           <dl className="mt-3 space-y-2 text-sm">
             <div className="flex justify-between gap-3">
-              <dt className="text-ink-500">Modalidad</dt>
-              <dd className="font-medium text-ink-900">{ORDER_TYPE_LABELS[order.type]}</dd>
+              <dt className="text-ink-muted">Modalidad</dt>
+              <dd className="font-medium text-ink">{ORDER_TYPE_LABELS[order.type]}</dd>
             </div>
             {order.tableNumber ? (
               <div className="flex justify-between gap-3">
-                <dt className="text-ink-500">Mesa</dt>
-                <dd className="font-medium text-ink-900">{order.tableNumber}</dd>
+                <dt className="text-ink-muted">Mesa</dt>
+                <dd className="font-medium text-ink">{order.tableNumber}</dd>
               </div>
             ) : null}
             {order.deliveryAddress ? (
               <div className="flex justify-between gap-3">
-                <dt className="text-ink-500">Dirección</dt>
-                <dd className="text-right font-medium text-ink-900">{order.deliveryAddress}</dd>
+                <dt className="text-ink-muted">Dirección</dt>
+                <dd className="text-right font-medium text-ink">{order.deliveryAddress}</dd>
               </div>
             ) : null}
             <div className="flex justify-between gap-3">
-              <dt className="text-ink-500">Teléfono</dt>
-              <dd className="font-medium text-ink-900">{order.customerPhone}</dd>
+              <dt className="text-ink-muted">Teléfono</dt>
+              <dd className="font-medium text-ink">{order.customerPhone}</dd>
             </div>
             <div className="flex justify-between gap-3">
-              <dt className="text-ink-500">Pago</dt>
-              <dd className="font-medium text-ink-900">
+              <dt className="inline-flex items-center gap-1.5 text-ink-muted">
+                <Wallet size={13} aria-hidden /> Pago
+              </dt>
+              <dd className="font-medium text-ink">
                 {PAYMENT_METHOD_LABELS[order.paymentMethod]}
               </dd>
             </div>
             <div className="flex justify-between gap-3">
-              <dt className="text-ink-500">Código</dt>
-              <dd className="font-mono text-xs font-semibold text-ink-900">
+              <dt className="text-ink-muted">Código</dt>
+              <dd className="font-mono text-xs font-semibold text-ink">
                 {order.code}
               </dd>
             </div>
@@ -268,15 +292,15 @@ export function OrderConfirmation({ id }: { id: string }) {
           <div className="mt-4 flex flex-wrap gap-2">
             <Link
               href="/menu"
-              className="rounded-full bg-brand-600 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-700"
+              className="btn-primary !px-4 !py-2 text-xs"
             >
               Pedir algo más
             </Link>
             <Link
               href="/"
-              className="rounded-full border border-stone-300 px-4 py-2 text-xs font-semibold text-ink-700 hover:bg-stone-100"
+              className="rounded-full border border-line px-4 py-2 text-xs font-semibold text-ink-soft hover:bg-surface-muted"
             >
-              Inicio
+              <House size={14} aria-hidden /> Inicio
             </Link>
           </div>
         </section>

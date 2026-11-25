@@ -1,17 +1,24 @@
 import type { MetadataRoute } from "next";
 import { getPublicMenu } from "@/lib/menu";
+import { getRestaurantConfig } from "@/lib/restaurant-config";
 import { absoluteUrl } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const { items } = await getPublicMenu();
+  const [{ items }, { config }] = await Promise.all([
+    getPublicMenu(),
+    getRestaurantConfig(),
+  ]);
   const now = new Date();
+  const configuredAt = config.updatedAt ? new Date(config.updatedAt) : null;
+  const homeModified =
+    configuredAt && !Number.isNaN(configuredAt.getTime()) ? configuredAt : now;
 
   return [
     {
       url: absoluteUrl("/"),
-      lastModified: now,
+      lastModified: homeModified,
       changeFrequency: "weekly",
       priority: 1,
     },

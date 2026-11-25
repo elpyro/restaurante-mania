@@ -12,6 +12,7 @@ import '../../core/widgets/common.dart';
 import '../../core/widgets/order_card.dart';
 import '../orders/new_order_screen.dart';
 import '../inventory/inventory_screen.dart';
+import '../inventory_losses/inventory_losses_screen.dart';
 import '../orders/order_detail_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
@@ -27,13 +28,23 @@ class DashboardScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.transparent,
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.of(
-          context,
-        ).push(MaterialPageRoute<void>(builder: (_) => const NewOrderScreen())),
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => role == UserRole.cook
+                ? const RegisterLossScreen()
+                : const NewOrderScreen(),
+          ),
+        ),
         backgroundColor: AppTheme.brand,
         foregroundColor: Colors.white,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('Nuevo pedido'),
+        icon: Icon(
+          role == UserRole.cook
+              ? Icons.report_problem_outlined
+              : Icons.add_rounded,
+        ),
+        label: Text(
+          role == UserRole.cook ? 'Registrar pérdida' : 'Nuevo pedido',
+        ),
       ),
       body: RefreshIndicator(
         onRefresh: repository.refreshAll,
@@ -53,6 +64,34 @@ class DashboardScreen extends StatelessWidget {
             if (role == UserRole.cook) ...[
               const SectionHeader(title: 'Cola de cocina'),
               _KitchenQueue(repository: repository),
+              const SectionHeader(title: 'Pérdidas de ingredientes'),
+              Card(
+                child: ListTile(
+                  leading: const Icon(
+                    Icons.report_problem_outlined,
+                    color: AppTheme.danger,
+                  ),
+                  title: const Text(
+                    'Registrar pérdida',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text(
+                    repository.hasPendingInventoryLosses
+                        ? '${repository.pendingInventoryLosses.length} registro(s) pendiente(s) de sincronizar'
+                        : 'Caducados y mermas con foto y auditoría',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const RegisterLossScreen(),
+                    ),
+                  ),
+                ),
+              ),
             ],
             if (role == UserRole.waiter) ...[
               SectionHeader(
@@ -175,13 +214,6 @@ class _KpiGrid extends StatelessWidget {
               builder: (_) => const InventoryScreen(showAppBar: true),
             ),
           ),
-        ),
-        StatCard(
-          label: 'Pedidos hoy',
-          value: '${repository.todayOrderCount}',
-          icon: Icons.today_outlined,
-          accent: const Color(0xFF7C3AED),
-          onTap: () => onNavigate(AppTab.orders),
         ),
         StatCard(
           label: 'Mesas ocupadas',

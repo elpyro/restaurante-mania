@@ -348,6 +348,31 @@ export async function getFeaturedItems(limit = 6): Promise<MenuItem[]> {
   return pool.slice(0, limit);
 }
 
+/** Favoritos marcados desde la APK; nunca rellena con otros platos. */
+export async function getFavoriteItems(limit = 12): Promise<MenuItem[]> {
+  const { items } = await getPublicMenu();
+  return items.filter((item) => item.featured).slice(0, limit);
+}
+
+/** Marca/desmarca el campo «Favorito» compartido con la app administrativa. */
+export async function setMenuItemFeatured(
+  id: string,
+  featured: boolean,
+): Promise<{ id: string; featured: boolean } | null> {
+  const documentId = id.trim();
+  if (!documentId || typeof featured !== "boolean") return null;
+  if (!isFirestoreConfigured()) return null;
+  const existing = await getDocument<Record<string, unknown>>(
+    "menuItems",
+    documentId,
+    0,
+  );
+  if (!existing) return null;
+  if (existing.featured === featured) return { id: documentId, featured };
+  await setDocument("menuItems", documentId, { featured });
+  return { id: documentId, featured };
+}
+
 export async function getItemsByCategory(slug: string): Promise<MenuItem[]> {
   const { items } = await getPublicMenu();
   return items.filter((item) => item.categorySlug === slug);

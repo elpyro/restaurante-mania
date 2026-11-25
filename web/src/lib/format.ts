@@ -1,9 +1,14 @@
-export function formatCOP(value: number): string {
+export function formatMoney(value: number, currency = "COP"): string {
   return new Intl.NumberFormat("es-CO", {
     style: "currency",
-    currency: "COP",
-    maximumFractionDigits: 0,
+    currency,
+    maximumFractionDigits: currency === "COP" ? 0 : 2,
   }).format(value);
+}
+
+/** Compatibilidad con el catálogo histórico, siempre en pesos colombianos. */
+export function formatCOP(value: number): string {
+  return formatMoney(value, "COP");
 }
 
 export function formatDateTime(value: string): string {

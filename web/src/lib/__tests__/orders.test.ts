@@ -12,7 +12,13 @@ vi.mock("../firebase/rest", () => rest);
 
 import { demoIngredientStocks } from "../seed";
 import { ORDER_STATUS_LABELS } from "../types";
-import { createOrder, updateOrder, validateOrderInput, validateOrderItems } from "../orders";
+import {
+  createOrder,
+  DEFAULT_ORDER_POLICY,
+  updateOrder,
+  validateOrderInput,
+  validateOrderItems,
+} from "../orders";
 
 const base = {
   customerName: "Ana Pérez",
@@ -33,6 +39,17 @@ describe("validación de pedidos", () => {
       expect(result.value.customerName).toBe("Ana Pérez");
       expect(result.value.items).toHaveLength(1);
     }
+  });
+
+  it("rechaza tipos de entrega y pagos desactivados desde la APK", () => {
+    const policy = {
+      ...DEFAULT_ORDER_POLICY,
+      deliveryOptions: { pickup: true, delivery: false, table: false },
+      paymentMethods: ["cash" as const],
+    };
+    expect(validateOrderInput(base, policy).ok).toBe(true);
+    expect(validateOrderInput({ ...base, type: "delivery" }, policy).ok).toBe(false);
+    expect(validateOrderInput({ ...base, paymentMethod: "card" }, policy).ok).toBe(false);
   });
 
   it("rechaza nombre corto y teléfono inválido", () => {

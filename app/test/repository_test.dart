@@ -44,7 +44,7 @@ void main() {
     expect(repository.role, UserRole.admin);
     expect(repository.currentUser?.name, 'Valentina Ríos');
 
-    repository.logout();
+    await repository.logout();
     expect(repository.isAuthenticated, isFalse);
     expect(repository.login('admin@restaurante.com', '0000'), isFalse);
   });
@@ -65,7 +65,7 @@ void main() {
       );
       expect(repository.users.any((u) => u.id == user.id), isTrue);
       expect(repository.isEmailTaken('nueva@restaurante.com'), isTrue);
-      repository.logout();
+      await repository.logout();
       expect(
         repository.login('nueva@restaurante.com', SeedData.demoPassword),
         isTrue,

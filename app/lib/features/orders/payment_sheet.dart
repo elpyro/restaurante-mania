@@ -119,7 +119,7 @@ class _PaymentSheetState extends State<_PaymentSheet> {
             const SizedBox(height: 8),
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: const Color(0xFFFAF8F5), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFEDEAE6))),
+              decoration: BoxDecoration(color: AppTheme.canvas, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFEDEAE6))),
               child: Row(children: [
                 const Text('Total a cobrar', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
                 const Spacer(),

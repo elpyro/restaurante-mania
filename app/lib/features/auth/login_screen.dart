@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/data/repository.dart';
 import '../../core/data/seed_data.dart';
 import '../../core/models/role.dart';
+import '../../core/services/auth_service.dart';
 import '../../core/theme/app_theme.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -15,9 +18,14 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController(text: 'admin@restaurante.com');
-  final _passwordController = TextEditingController(text: SeedData.demoPassword);
+  final _passwordController = TextEditingController(
+    text: AuthService.firebaseApiKey.isEmpty ? SeedData.demoPassword : '',
+  );
   bool _obscure = true;
+  bool _loading = false;
   String? _error;
+
+  bool get _usesFirebase => AuthService.firebaseApiKey.isNotEmpty;
 
   @override
   void dispose() {
@@ -26,15 +34,38 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  void _submit(RestaurantRepository repository) {
-    final ok = repository.login(
-      _emailController.text,
-      _passwordController.text,
-    );
-    if (!ok) {
-      setState(() {
-        _error = 'Credenciales inválidas. Usa una cuenta demo y la clave 1234.';
-      });
+  Future<void> _submit(RestaurantRepository repository) async {
+    if (_loading) return;
+    setState(() {
+      _error = null;
+      _loading = true;
+    });
+    try {
+      if (_usesFirebase) {
+        await repository.loginWithFirebase(
+          _emailController.text,
+          _passwordController.text,
+        );
+        return;
+      }
+      final ok = repository.login(
+        _emailController.text,
+        _passwordController.text,
+      );
+      if (!ok) {
+        setState(() {
+          _error =
+              'Credenciales inválidas. Usa una cuenta demo y la clave 1234.';
+        });
+      }
+    } on AuthException catch (error) {
+      setState(() => _error = error.message);
+    } catch (error) {
+      setState(() => _error = 'No se pudo iniciar sesión: $error');
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -141,7 +172,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ),
                           ),
-                          onSubmitted: (_) => _submit(repository),
+                          onSubmitted: (_) => unawaited(_submit(repository)),
                         ),
                         if (_error != null) ...[
                           const SizedBox(height: 10),
@@ -156,14 +187,42 @@ class _LoginScreenState extends State<LoginScreen> {
                         ],
                         const SizedBox(height: 16),
                         FilledButton(
-                          onPressed: () => _submit(repository),
-                          child: const Text('Ingresar'),
+                          onPressed: _loading
+                              ? null
+                              : () => unawaited(_submit(repository)),
+                          child: _loading
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text('Ingresar'),
                         ),
+                        if (_usesFirebase) ...[
+                          const SizedBox(height: 6),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              onPressed: _loading
+                                  ? null
+                                  : () => unawaited(
+                                      _showPasswordResetDialog(repository),
+                                    ),
+                              icon: const Icon(Icons.help_outline_rounded, size: 15),
+                              label: const Text('Recuperar contraseña'),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 10),
-                        const Text(
-                          'Demo: cualquier cuenta de la lista · clave 1234',
+                        Text(
+                          _usesFirebase
+                              ? 'Acceso con tu cuenta registrada.'
+                              : 'Demo: cualquier cuenta de la lista · clave 1234',
                           textAlign: TextAlign.center,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 11,
                             color: Color(0xFF78716C),
                           ),
@@ -171,46 +230,61 @@ class _LoginScreenState extends State<LoginScreen> {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 18),
-                  const Row(
-                    children: [
-                      Expanded(child: Divider()),
-                      Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 10),
-                        child: Text(
-                          'ACCESO RÁPIDO DEMO',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.8,
-                            color: Color(0xFF78716C),
-                          ),
+                  if (_usesFirebase)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 18),
+                      child: Text(
+                        'Los cambios se publican en la web con esta sesión.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: Color(0xFFA8A29E),
                         ),
                       ),
-                      Expanded(child: Divider()),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  GridView.count(
-                    crossAxisCount: 2,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    mainAxisSpacing: 10,
-                    crossAxisSpacing: 10,
-                    childAspectRatio: 1.55,
-                    children: UserRole.values
-                        .map((role) => _RoleCard(
-                              role: role,
-                              onTap: () => repository.loginAs(role),
-                            ))
-                        .toList(),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Modo demo offline · los datos se guardan en el dispositivo.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 10.5, color: Color(0xFFA8A29E)),
-                  ),
+                    )
+                  else ...[
+                    const SizedBox(height: 18),
+                    const Row(
+                      children: [
+                        Expanded(child: Divider()),
+                        Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 10),
+                          child: Text(
+                            'ACCESO RÁPIDO DEMO',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.8,
+                              color: Color(0xFF78716C),
+                            ),
+                          ),
+                        ),
+                        Expanded(child: Divider()),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    GridView.count(
+                      crossAxisCount: 2,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      childAspectRatio: 1.55,
+                      children: UserRole.values
+                          .map((role) => _RoleCard(
+                                role: role,
+                                onTap: () => repository.loginAs(role),
+                              ))
+                          .toList(),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Los datos se guardan en este dispositivo.',
+                      textAlign: TextAlign.center,
+                      style:
+                          TextStyle(fontSize: 10.5, color: Color(0xFFA8A29E)),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -218,6 +292,108 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _showPasswordResetDialog(RestaurantRepository repository) async {
+    final controller = TextEditingController(
+      text: _emailController.text.trim(),
+    );
+    var sending = false;
+    String? error;
+    final messenger = ScaffoldMessenger.of(context);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Recuperar contraseña'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Firebase enviará un correo para establecer la contraseña de la cuenta.',
+                style: TextStyle(fontSize: 12, color: Color(0xFF78716C)),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.emailAddress,
+                autocorrect: false,
+                enabled: !sending,
+                decoration: const InputDecoration(
+                  labelText: 'Correo',
+                  prefixIcon: Icon(Icons.mail_outline_rounded),
+                ),
+              ),
+              if (error != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  error!,
+                  style: const TextStyle(
+                    color: AppTheme.danger,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: sending
+                  ? null
+                  : () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: sending
+                  ? null
+                  : () async {
+                      setDialogState(() {
+                        sending = true;
+                        error = null;
+                      });
+                      try {
+                        await repository.sendPasswordReset(controller.text);
+                        if (!dialogContext.mounted) return;
+                        Navigator.of(dialogContext).pop();
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Enviamos un correo a ${controller.text.trim()} para establecer tu contraseña.',
+                            ),
+                          ),
+                        );
+                      } on AuthException catch (authError) {
+                        if (!dialogContext.mounted) return;
+                        setDialogState(() {
+                          sending = false;
+                          error = authError.message;
+                        });
+                      } catch (resetError) {
+                        if (!dialogContext.mounted) return;
+                        setDialogState(() {
+                          sending = false;
+                          error = 'No se pudo enviar el correo: $resetError';
+                        });
+                      }
+                    },
+              child: sending
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Text('Enviar enlace'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
   }
 }
 

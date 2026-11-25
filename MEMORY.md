@@ -429,3 +429,311 @@ ole.canViewRecipe (admin/cocinero). La receta estructurada y los pasos
 - Tests: 48 en Flutter (metadata, rangos de 30 días, cierre/rearme, permisos, UI de reportes, propagación del cobrador, historial de turnos) y 59 en web (metadata de pago, turnos idempotentes, endpoints). `flutter analyze --no-fatal-infos` ✅, `typecheck` ✅, `npm test` ✅. El test de dashboard dejó de depender de `todaySales` (a medianoche los pedidos semilla caen en el día anterior) y valida el total de 7 días. Sin commit/push y sin despliegue de Netlify.
 - Cierre de QA en dispositivo `a791bc16` (25/11/2026): APK final instalada con `WEB_API_URL=http://localhost:3001` y `adb reverse` activo. Turno activo `25/11 00:18` queda fuera del historial; el turno `00:02` aparece cerrado con su pedido y coincide con la web; `RM-20261125-1O35` conserva `Cobrado por: QA Cajero`. Sin commit/push ni despliegue.
 
+### Apariencia publicable desde la APK y rediseño web (2026-11-25, ronda 12)
+- **Documento canónico:** `restaurant/config` en Firestore se extendió con `slogan`, `heroTitle`, `heroDescription`, `heroBadge` y `appearance.preset` (`mania|fuego|verde|noche`), además de `updatedAt`. La web y la APK comparten exactamente ese contrato; los defaults coinciden (eslogan: «Cocina colombiana hecha con calma y servida con cariño.», preset `mania`).
+- **Web:** `src/lib/restaurant-config.ts` centraliza tipos, defaults, presets, `getRestaurantConfig()` con `cache()` por request, `tokensToCssVars()`, `presetThemeColor()` y `sanitizeConfigPatch()` (whitelist y longitudes). `GET /api/restaurant/config` es público; `PATCH /api/restaurant/config` exige `Authorization: Bearer <idToken>` y solo acepta los campos de apariencia. El layout inyecta variables CSS del preset y deriva metadata/viewport del documento; se rediseñaron home, menú, ficha, carrito, checkout, orden, cuenta y estados (`loading/error/not-found`); se añadieron `/api/og` (`next/og`) e iconos (`lucide-react`). SEO/GEO, carrito, checkout y stock se conservaron.
+- **Autorización:** `src/lib/firebase/admin.ts` verifica el ID token con `firebase-admin` y toma el rol del claim `role` **o** de `users/{uid}` / email en Firestore. El service account del proyecto tiene permisos de Firestore (`datastore.user`), no de Auth Admin, por eso no se pueden escribir custom claims. No hay secretos en cliente.
+- **APK:** tile «Apariencia» en «Más» (solo admin) abre `AppearanceScreen`: 4 presets con vista previa, campos con `maxLength`, estado Sincronizado/Pendiente/Sin conexión/Sin sesión y botones «Guardar en la web», «Recargar desde la web» y «Restablecer». **No se introdujo tema oscuro en la APK.** `RestaurantAppearance` se persiste en `rm_restaurant_appearance_v1` con cola offline `rm_pending_restaurant_config_v1`; 401/403 conservan la cola y piden re-login.
+- **Auth real sin SDK nativo:** `AuthService` usa Firebase Auth REST con tokens en `flutter_secure_storage` y `FIREBASE_WEB_API_KEY` inyectado con `--dart-define` (clave pública). El endpoint correcto es **`accounts:signInWithPassword`**; `accounts:signInWithEmailAndPassword` devuelve 404 y fue corregido. `loginWithFirebase()` conserva el rol del usuario local con el mismo correo, así que el login demo `1234` sigue vigente si no hay API key.
+- **Aprovisionamiento QA:** `firebase/scripts/provision-auth-users.mjs` crea usuarios con `accounts:signUp` (REST público) y escribe su rol en `users/{uid}`; no usa custom claims ni contraseñas en el repo. Usuarios creados: `admin@restaurante.com` (uid `xSvkhWqmvVRTX8ZI38Ym0BmJf5T2`, rol admin), `qa-waiter@restaurante.com` (waiter) y `qa-admin@restaurante.com` (admin).
+- **Smoke real (25/11/2026):** web: PATCH sin token → 401, con token admin → 200, con token waiter → 403, preset `fuego` visible en HTML y `/api/og` → 200. APK en `a791bc16`: login Firebase real, «Más → Apariencia», publicar `fuego` + eslogan `QA_APK_cocina_de_prueba`; la web reflejó ambos en API, HTML y `llms.txt`. «Recargar desde la web» restauró los valores originales. Configuración final: `preset=mania` y eslogan original.
+- **Checks:** web `typecheck` ✅, **74 tests** ✅, `build` ✅ (incluye `/api/og`); Flutter `analyze` ✅ y **53 tests** ✅; APK release recompilada con `WEB_API_URL=http://localhost:3001` y `FIREBASE_WEB_API_KEY=...`, instalada en `a791bc16` con `adb reverse tcp:3001` activo. Web sirviendo con `npx next start -p 3001` en `mode=firestore`.
+- **Pendiente:** no hay commit/push ni despliegue de Netlify; la configuración de apariencia se publica en localhost.
+
+### Integración de Firebase Crashlytics en la APK (2026-11-25)
+- Aclaración: Crashlytics **no es Firestore**; es un producto Firebase separado y solo reporta crashes de apps nativas. La consola del proyecto `restaurante-mania-e47a0` seguía «esperando el primer error» porque la app Flutter no tenía ningún SDK nativo de Firebase (decisión 6 del stack).
+- Se añadieron `firebase_core: ^5.2.0` y `firebase_crashlytics: ^6.1.0` a `app/pubspec.yaml` (resueltos con `flutter pub add`; versiones compatibles con Flutter 3.44.6 / Dart 3.12.2).
+- Nuevo `app/lib/core/services/crash_reporter.dart`: inicialización best-effort de Firebase, `FlutterError.onError` + `PlatformDispatcher.instance.onError` y `sendTestCrash()`. `main.dart` solo llama a `CrashReporter.initialize()`; sin configuración nativa la app sigue arrancando en modo demo.
+- Disparador de QA en `MoreScreen`: tile «Enviar crash de prueba» compilado solo con `--dart-define=ENABLE_CRASH_TEST=true`, con diálogo de confirmación. En builds de producción no aparece, pero la captura automática sigue activa.
+- Gradle: los plugins `com.google.gms.google-services` (4.4.4) y `com.google.firebase.crashlytics` (3.0.5) se declaran en `settings.gradle.kts` con `apply false` y se aplican en `app/build.gradle.kts` **solo si** existe `app/android/app/google-services.json`. Así no se rompe el build demo actual.
+- `app/.gitignore` ignora `google-services.json` y `GoogleService-Info.plist`. Instrucciones completas en `docs/CRASHLYTICS-SETUP.md`.
+- **Pendiente del usuario:** descargar `google-services.json` de Firebase console (app Android con package `com.example.app`; si no existe, registrarla) y colocarlo en `app/android/app/`. Sin ese archivo es imposible enviar el crash: no se puede generar un evento desde fuera de la app ni con el service account actual (solo rol `datastore.user`, sin permisos de Management API).
+- Checks: `flutter test` ✅ 53 tests; `flutter analyze --no-fatal-infos` ✅; build release en curso al cerrar esta nota.
+
+### Web llamativa y configurable desde la APK (2026-11-25, ronda 13)
+- **Contrato ampliado:** `restaurant/config` incorpora `countryCode`, `phone`,
+  `whatsapp` (compacto derivado para `wa.me`), `city`, `currency`,
+  `showOrderTypeOptions`, `deliveryOptions` (`pickup|delivery|table`),
+  `paymentMethods`, `paymentMethodLabels` y `appearance.{bannerUrl,logoUrl,
+  customColors,preset}`. Preset `custom` usa 7 colores base (`brand`, `accent`,
+  `surface`, `ink`, `heroFrom`, `heroTo`, `footer`) y `buildCustomTheme()`
+  deriva el resto de tokens. `formatMoney()` respeta la moneda publicada.
+- **Fusión de mapas:** `PATCH /api/restaurant/config` fusiona `appearance`,
+  `deliveryOptions` y `paymentMethodLabels` con la configuración actual; enviar
+  solo el preset ya no borra banner/logo. `appearance.bannerUrl/logoUrl`
+  aceptan `null` para eliminar la imagen.
+- **Streaming y Storage:** `MediaUploadService` sube/borra JPG/PNG/WEBP/GIF a
+  Firebase Storage vía REST con `Authorization: Firebase <idToken>`; no usa
+  plugins nativos. `firebase/storage.rules` permite lectura pública y escritura
+  solo admin (claim `role` o documento `users/{uid}`), con límite de 6 MB y
+  validación de MIME. Registro `storage` añadido a `firebase/firebase.json`
+  (emulador 9199) y reglas desplegadas con `firebase deploy --only storage`.
+- **Puente Storage↔Firestore:** como el service account no puede escribir custom
+  claims, Storage necesita leer `users/{uid}`. Se habilitó concediendo
+  `roles/firebaserules.firestoreServiceAgent` a
+  `service-815344581484@gcp-sa-firebasestorage.iam.gserviceaccount.com`. Sin ese
+  rol la subida devuelve 403 aunque el usuario sea admin en Firestore. El CLI de
+  Firebase se colgaba en Windows por el chequeo de actualizaciones: se usa
+  `$env:NO_UPDATE_NOTIFIER='1'; $env:FIREBASE_CLI_DISABLE_AUTOUPDATE='1'`.
+- **Home y navegación:** portada con banner de fondo atenuado + texto encima,
+  logo, favoritos en carrusel con enlace al plato y estado vacío; `Header` con
+  logo, sticky, CTA móvil fijo, WhatsApp flotante y microinteracciones. Si no hay
+  favoritos se muestra una invitación a marcarlos desde la app.
+- **Checkout dinámico:** lee `/api/restaurant/config`, filtra tipos de entrega y
+  métodos de pago publicados, aplica etiquetas y moneda, y oculta
+  «¿Cómo quieres recibirlo?» cuando `showOrderTypeOptions=false`. `orders.ts`
+  y `/api/orders/validate` validan la política también en servidor, así un
+  cliente no puede enviar una opción desactivada.
+- **Favoritos:** se reutiliza `menuItems.featured`. `PATCH /api/menu/[id]`
+  acepta `{featured: boolean}` y **ahora exige token de admin**: sin token 401,
+  con otro rol 403. La APK envía `Bearer` en los push de `status` y `featured`;
+  si falla la lectura del token, la cola conserva el cambio para reintentarlo.
+- **Colas offline nuevas:** `rm_pending_restaurant_config_v1`,
+  `rm_pending_config_patch_v1` y `rm_pending_featured_items_v1`.
+- **Smoke real (25/11/2026):** subida/lectura pública/borrado de un GIF QA en
+  `appearance/` con el token de `admin@restaurante.com` → OK. Config: PATCH admin
+  200, mesero 403, mapas anidados preservados, badge restaurado. Favoritos: sin
+  token 401, mesero 403, admin 200 y `featured` restaurado. `/api/og` → 200
+  `image/png` sin errores de fuentes emoji.
+- **Regresión nueva:** `web/src/app/api/menu/[id]/__tests__/route.test.ts` cubre 8 casos del endpoint: sin token 401, rol no admin 403, token inválido 401, Admin no disponible 503, admin publica `featured`/`status`, validación de cuerpo y 404 si el plato no existe.
+- **Checks de la ronda 13:** web `typecheck` ✅, **85 tests** ✅, `build` ✅
+  (24 rutas); Flutter `analyze` ✅, **58 tests** ✅; APK release ✅ instalada en
+  `a791bc16` con
+  `WEB_API_URL=http://localhost:3001` y `adb reverse tcp:3001`. Sin commit/push
+  y sin despliegue a Netlify.
+
+### Ajustes finales de portada y sesión (2026-11-25, ronda 14)
+- **Hero:** se quitó la ficha lateral derecha («Arepa con queso / Favorito de la
+  casa / $9.500») pero se conserva la columna vacía para lucir el banner. El
+  atenuado bajó a `from-ink/60 via-ink/40 to-ink/55` y el GIF se sirve con
+  `unoptimized` para que siga animado. QA real en HTML: `heroCardGone=true`,
+  `atenuacionLigera=true`, `bannerGifSinOptimizar=true`.
+- **Carrusel de favoritos:** `FavoritesCarousel` es Client Component; avanza
+  cada 3,2 s, vuelve al inicio, pausa en `mouseenter`/foco y respeta
+  `prefers-reduced-motion`. QA: `carruselClient=true`, `favoritos=true`.
+- **Logo:** `appearance.logoUrl` se usa también en el pie. QA con logo/banner QA
+  subidos: `logoVeces=4` (header + pie + attrs). Config QA restaurada
+  (`bannerUrl=null`, `logoUrl=null`, preset `noche`, COP, Medellín).
+- **Contraseña:** `AuthService.sendPasswordReset()` usa
+  `accounts:sendOobCode` con `PASSWORD_RESET`; el login muestra «Recuperar
+  contraseña» solo con API key Firebase. Llamada real: `Reset OK
+  email=admin@restaurante.com`.
+- **Colores propios:** `_ColorPickerDialog` HSV sin dependencias nuevas; al
+  tocar la muestra de color se abre cuadro SV, barra de tono y hex.
+- **Sesión/sincronización:** con API key compilada y sin idToken, `load()`
+  descarta la sesión local (borra `rm_session_v1`) sin tocar las colas;
+  `AuthGate` vuelve al login. Apariencia muestra
+  «Sin sesión Firebase · inicia sesión para publicar» o
+  «Inicia sesión Firebase para publicar» con botón «Ir a iniciar sesión».
+  «Sincronizar ahora» llama a `_flushPendingRestaurantConfig()` desde
+  `_runSync()` y su contador incluye la configuración pendiente.
+  `_syncRestaurantConfig()` quedó solo como `GET` para evitar dos PATCH al
+  reconectar; el flush del sondeo se llama por separado.
+- **Storage:** 401/403 dan «Sesión de Firebase vencida o sin permisos…»; la
+  falta de red y el timeout tienen mensajes propios (`networkMessage`,
+  `timeoutMessage`). Cubierto por `app/test/media_upload_service_test.dart`.
+- **Checks finales:** web `typecheck` ✅, **85 tests** ✅, `build` ✅ (24 rutas),
+  servidor `npx next start -p 3001` (`/api/health` 200) ✅; Flutter `analyze` ✅,
+  **63 tests** ✅, build release 56,4 MB ✅. APK reinstalada en `a791bc16` con
+  `adb reverse tcp:3001` y arranque sin `FATAL`; `FlutterSecureStorage` registró
+  el fallback a cifrado propio tras la reinstalación (esperado: fuerza login y
+  descarta el token anterior). Sin commit/push ni despliegue a Netlify.
+
+### Carrito flotante, badges y GIF animado (2026-11-25, ronda 15)
+- **Causa del GIF quieto confirmada:** `image_picker` con `imageQuality: 90`
+  decodificaba solo el primer frame y guardaba un JPEG con nombre `.gif`.
+  `_pickAsset()` ya llama a `pickImage()` sin `imageQuality`/tamaños: el plugin
+  devuelve la ruta original cuando no hay reescalado (verificado en
+  `ImageResizer.java`: `shouldScale = maxWidth != null || maxHeight != null ||
+  imageQuality < 100`).
+- **`MediaUploadService`:** `mimeTypeFromBytes()` detecta JPEG/PNG/WEBP/GIF
+  (`GIF87a`/`GIF89a`) por magic bytes y `resolveMimeType()` rechaza un `.gif`
+  cuyo contenido no es GIF antes de subirlo. 4 tests nuevos (total Flutter 67).
+- **QA real del banner:** se recuperó el GIF original de Descargas (3,5 MB,
+  `GIF89a`), se subió como `appearance/banner-1795622928864.gif` con token
+  admin, se actualizó `restaurant/config.appearance.bannerUrl` y se borró el
+  objeto antiguo que era un JPEG disfrazado. La URL pública responde
+  `image/gif`, 3.503.986 bytes y firma `GIF89a`; el hero la usa con
+  `unoptimized`, así que el GIF se anima.
+- **Carrito flotante:** `FloatingCartBar` (Client Component) aparece abajo al
+  centro con unidades y total `formatCOP(totals.total)`; se oculta en `/cart`,
+  `/checkout` y `/order/*`. `CartQuantityBadge` muestra la cantidad sobre la
+  imagen en `MenuItemCard` y en las tarjetas del carrusel de favoritos.
+- **Botones inferiores:** se eliminó la barra móvil «Ver menú» de `Header.tsx`
+  y el WhatsApp flotante pasó a `bottom-24 right-4 md:bottom-6 md:right-6` para
+  no solaparse con la barra del carrito. El `<main>` usa `pb-28 md:pb-24`.
+- **Pie:** «© 2026 Restaurante Manía. Otro software de Software Mania.
+  Adquierelo: +573125866072» enlaza a `wa.me/573125866072` con mensaje de
+  compra del software.
+- **QA HTML:** `heroGifUrl=true`, `footerText=true`, `footerPhoneLink=true`,
+  `oldVerMenuBar=false`, `waShifted=true`, `footerOldText=false`,
+  `/api/health` 200 en modo `firestore`.
+- **Checks:** web `typecheck` ✅, **85 tests** ✅, `build` ✅ (24 rutas);
+  Flutter `analyze` ✅, **67 tests** ✅, APK release 56,4 MB ✅ reinstalada en
+  `a791bc16` con `adb reverse tcp:3001` y arranque sin `FATAL EXCEPTION`
+  (`Fully drawn`, `FlutterSecureStorage` sin token → login). Sin commit/push ni
+  Netlify.
+
+### Recuperación de contraseña de castellanoseloy@gmail.com (2026-11-25)
+- Diagnóstico: `accounts:sendOobCode` devuelve 200 incluso para correos que no
+  existen (Firebase oculta la enumeración), así que la APK mostraba éxito sin
+  que hubiera cuenta. `addUser()` de la APK solo crea un usuario local; no crea
+  la cuenta en Firebase Auth. En Firestore solo había 3 usuarios QA, ninguno con
+  ese Gmail.
+- Solución aplicada con `firebase/scripts/provision-auth-users.mjs`: usuario
+  Firebase Auth `castellanoseloy@gmail.com` (uid
+  `Y72Vea5qAFcdW6AgBqBy0dSfyH92`) con contraseña temporal no guardada en el
+  repositorio y documento `users/{uid}` con `role: admin`, `status: active`.
+  Verificado en Firestore.
+- Se llamó a `accounts:sendOobCode` (`PASSWORD_RESET`) para ese correo: 200 OK.
+  El enlace llega desde Firebase; si no aparece, revisar SPAM/Promociones.
+- Para iniciar sesión en la APK, además debe existir el usuario local con ese
+  mismo correo (`loginWithFirebase` lo exige para conservar el rol).
+
+### Pérdidas y caducados de ingredientes (2026-11-25, ronda 16)
+- Nueva colección Firestore `inventoryLosses` y endpoints
+  `GET/POST /api/inventory-losses` con `Bearer` y rol `admin` o `cook`
+  (claim `role` o `users/{uid}`, como el resto de la web). El POST guarda
+  `createdBy`, `receivedBy`, `lines`, `reason`, `notes`, `photoUrl` y `auditLog`;
+  valida 1..30 ingredientes y cantidades > 0. **No descuenta stock**: la APK ya
+  envió el PATCH de inventario, así se evita un doble descuento.
+- APK: `core/models/inventory_loss.dart` (`LossReason`, `LossLine`,
+  `LossAuditEntry`, `InventoryLoss`), permisos `canRegisterInventoryLoss`
+  (admin/cook) y `canViewInventoryLosses` (admin). Persistencia
+  `rm_inventory_losses_v1`; `registerInventoryLoss()` descuenta stock local con
+  `upsertIngredient()` y encola el registro. `_flushInventoryLosses()` sube la
+  foto a `inventory-losses/...`, envía el POST con `Bearer` y añade la auditoría
+  «Sincronizado con la web»; `pullInventoryLosses()` reconcilia desde `GET`,
+  priorizando pendientes locales. El sondeo de 12 s, la reconexión,
+  `refreshAll` y «Sincronizar ahora» también vacían la cola.
+- UI: `features/inventory_losses/inventory_losses_screen.dart` contiene
+  `RegisterLossScreen` (motivo, varias líneas ingrediente/cantidad, notas, foto
+  con `ImageSource.camera` y opción de galería) e `InventoryLossesScreen`
+  (foto, estado, registrador, auditoría). Tile «Pérdidas de inventario» en
+  **Más** solo admin, con «Registrar pérdida» dentro; en **Inicio** el cocinero
+  ve tarjeta y FAB para registrar. Meseros/cajeros no lo ven.
+- `firebase/storage.rules`: nuevo `match /inventory-losses/{fileName}` con
+  lectura pública, `create/update` para admin o cocinero según
+  `users/{uid}.role` y `delete` solo admin. Reglas compiladas y desplegadas con
+  `firebase deploy --only storage` (sin tocar Netlify).
+- Checks: web `typecheck` ✅, **91 tests** ✅ (6 nuevos del endpoint), `build`
+  ✅; Flutter `analyze` ✅, **75 tests** ✅ (3 modelo, 2 repositorio, 3 UI).
+  APK release ✅ 56,6 MB en
+  `app/build/app/outputs/flutter-apk/app-release.apk`.
+- Smoke real (25/11/2026): con el servidor reiniciado en `:3001`,
+  `GET/POST /api/inventory-losses` dieron 200 con tokens de admin
+  (`admin@restaurante.com`) y cocinero (`cook-qa@restaurante.com`, creado con
+  contraseña temporal no guardada), 403 con mesero y 401 sin token. El `GET`
+  devolvió ambos documentos con `auditLog` de una entrada. Subida a
+  `inventory-losses/...` con token de cocinero → 200 y borrado con admin → 204;
+  los dos documentos QA se eliminaron de Firestore. `adb devices` no listó
+  dispositivo, así que no se reinstaló en `a791bc16`. Sin commit/push ni
+  Netlify.
+
+### Recibo de pedido en la APK (2026-11-25, ronda 17)
+- Web: el hero usa `object-right` en móvil (recorte al extremo derecho) y
+  `lg:object-center` en escritorio. El primer intento se revirtió porque el
+  rebuild se hizo con `next start` activo; desde entonces se detiene el servidor
+  antes de cada `next build` y se reinicia al terminar.
+- APK: nuevo `core/services/receipt_print_service.dart`. Genera un PDF de recibo
+  de 80 mm con `pdf`/`printing`, fuente Geist embebida en
+  `app/assets/fonts/Geist-Regular.ttf` (acentos sin Google Fonts), datos de
+  `RestaurantSettings`, productos, totales, pago, notas y cliente. Abre el
+  diálogo de impresión del sistema con `Printing.layoutPdf`; no es thermal ni
+  Bluetooth.
+- UI: `features/orders/order_detail_screen.dart` muestra un `IconButton` con
+  tooltip «Imprimir recibo» para cualquier rol y estado del pedido. Errores se
+  avisan con SnackBar. Tests: `test/receipt_print_test.dart` valida el PDF y el
+  botón. Flutter pasó de 75 a 77 tests.
+- Checks: Flutter `analyze` ✅, 77 tests ✅. Sin commit/push ni Netlify.
+
+### Redes sociales, GPS, búsqueda IA e icono APK (2026-11-25, ronda 18)
+- **Petición del usuario:** en Apariencia, campos para Instagram/TikTok/Facebook
+  y GPS; mostrarlos en el pie de la web solo si existen. En Configuración,
+  campos de datos para búsqueda de IA. Logo de la APK:
+  `C:\Users\eloy_\Pictures\Captura de pantalla 2026-11-20 104117.png`.
+- **Contrato:** `appearance.socialLinks.{instagram,tiktok,facebook}` y
+  `appearance.gpsUrl` (URLs `http(s)`, máx. 300/500 caracteres; `null` o vacío
+  borra). `aiSearch.{description,keywords,serviceArea,highlights}` (500/300/120/
+  300 caracteres, espacios colapsados). `sanitizeConfigPatch` y el `PATCH`
+  fusionan ambos mapas con el documento actual; las claves desconocidas se
+  ignoran. `RestaurantAppearance`/`RestaurantSettings` comparten el contrato con
+  la web y conservan los datos en la cola offline.
+- **Web:** `Footer.tsx` añade chips de redes y «Ver en el mapa» condicionales
+  (Lucide no trae iconos de marca: se usan `Camera`, `Music2` y `Share2` con
+  etiqueta textual). `generateMetadata()` usa `aiSearch.description` y sus
+  palabras clave/zona; `restaurantJsonLd()` publica `sameAs`, `hasMap`,
+  `areaServed` y `keywords`; `/llms.txt` incluye redes, mapa y la sección
+  «Datos para búsqueda con IA». El hero sigue `object-right lg:object-center`.
+- **APK:** `AppearanceScreen` normaliza dominios pegados prefijando `https://`
+  y publica los 4 enlaces; `SettingsScreen` añade «Datos para búsqueda de IA»
+  con otro botón de guardado. Se actualizaron tests de contrato, PATCH y widget
+  (los botones de Apariencia ahora requieren scroll en el test).
+- **Icono:** `app/android/app/src/main/res/mipmap-*/ic_launcher.png` regenerado
+  en 48/72/96/144/192 px desde la captura de 496×295, centrado sobre su fondo
+  verde oscuro y con interpolación bicúbica; sin distorsión ni tema oscuro nuevo.
+- **Checks:** web `npm test -- --run` 95 ✅, `typecheck` ✅, `build` ✅; servidor
+  `next start -p 3001` detenido antes del build, reiniciado después y home 200.
+  Flutter `analyze` ✅ y `flutter test` 79 ✅. Release compilado con los mismos
+  dart-defines (61,6 MB) e instalado con `adb install -r` en `a791bc16`; el
+  arranque por `monkey` no dejó `FATAL EXCEPTION`. Sin commit, push ni Netlify.
+
+### Surtido de inventario y colores del logo (2026-11-25, ronda 19)
+- **Petición del usuario:** botón «Surtir» en los ítems de ingredientes que abra
+  un cuadro de texto para preguntar cuánto agregar, sumarlo al inventario y
+  confirmar; además, colores de la APK relacionados con los del logo
+  `C:\Users\eloy_\Pictures\Captura de pantalla 2026-11-20 104117.png`.
+- **Muestreo del logo:** dominan `#0C110F` (fondo), `#FFFFFF` y `#D3FA30`
+  (limón). Paleta APK: `ink #0C110F`, `accent #D3FA30`, `brand #4B5A00`,
+  `brandDark #303A00`, `canvas #F6F8F3`, `success #3F7D20`, `warning #B45309`,
+  `danger #C62828`. Se conserva `Brightness.light`; el indicador de
+  `NavigationBar` usa el limón al 40 %.
+- **Surtido:** `_IngredientTile` muestra `FilledButton.tonalIcon` «Surtir» solo
+  si `role.canManageMenu`. `_openRestock()` pasa por `_RestockDialog`
+  (decimales con `.`/`,`, error si ≤ 0, vista previa del nuevo stock) y llama a
+  `adjustIngredientStock()`, que **suma** al stock, encola el PATCH de insumo,
+  recalcula estados de menú y muestra SnackBar con el nuevo `stockLabel`.
+- **Tests:** nuevos `app/test/inventory_screen_test.dart` (suma 250 g a
+  `masa-maiz`, validación y rol mesero sin botón) y
+  `app/test/app_theme_test.dart` (paleta y tema claro). `flutter analyze` ✅,
+  `flutter test` ✅ 84 tests.
+- **APK:** release 61,6 MB compilada con `WEB_API_URL=http://localhost:3001` y
+  `FIREBASE_WEB_API_KEY=AIzaSyBycOm9eJ1KlhTXwxUcaGx2ZZwvfE5TJns`, instalada con
+  `adb install -r` en `a791bc16` tras `adb reverse tcp:3001 tcp:3001`; arranque
+  por `monkey` sin `FATAL EXCEPTION`, actividad `com.example.app/.MainActivity`
+  en primer plano y `/api/health` 200 en modo `firestore`. Sin commit, push ni
+  despliegue a Netlify.
+
+### Ajustes finales de UI y commit (2026-11-25, ronda 20)
+- **Petición del usuario:** revertir el tema experimental (no gustó), quitar
+  «Pedidos hoy» del inicio del administrador, hacer visible el surtido en la
+  ficha del insumo, eliminar mensajes al programador en APK/web, hacer commit y
+  push, y distinguir los pedidos de origen web de los hechos por meseros.
+- **Tema:** se restauró `AppTheme` a `brand #EF6408`, `brandDark #C64B09`,
+  `ink #1C1917`, `canvas #FAF8F5`, `success #059669`, `warning #D97706` y
+  `danger #E11D48`. Se eliminó la constante `accent`; `NavigationBar` usa
+  `brand.withValues(alpha: 0.14)` y el avatar el mismo tono. Se mantuvieron los
+  iconos de launcher generados desde la captura y el tema claro.
+- **Surtido visible:** `_IngredientTile` pasó a `StatefulWidget`; `_openRestock()`
+  devuelve `bool` y, al confirmar, la tarjeta se resalta en verde con
+  «¡Surtido!» / «Stock actualizado» durante 3 s (`Timer` cancelado en `dispose`)
+  además de un SnackBar verde de 4 s. Sigue sumando con
+  `adjustIngredientStock()` y respetando offline/roles.
+- **Pedidos web:** `OrderCard` usa fondo `#F0F9FF` y borde `#BAE6FD` cuando
+  `source == 'web'`, conservando la insignia «Web». Se añadió
+  `app/test/order_card_test.dart` (2 tests).
+- **Limpieza de mensajes técnicos:** se quitó el tile/diálogo «Enviar crash de
+  prueba» y la constante `ENABLE_CRASH_TEST` de `MoreScreen`; se simplificaron los
+  textos de Acerca de, Configuración, Login, Apariencia y el pie del shell, y se
+  eliminó el aviso de Firestore en `/menu`. `CrashReporter.initialize()` sigue
+  activo en segundo plano; no se tocó el `debugShowCheckedModeBanner` ni los
+  `console.*` de servidor.
+- **Pedidos hoy:** se eliminó solo la ficha del rol `admin`; cajero y cocinero
+  conservan la suya.
+- **Checks:** `flutter analyze` ✅, `flutter test` ✅ 86 tests; web `typecheck` ✅,
+  95 tests ✅ y `build` ✅; servidor `next start -p 3001` detenido antes del build,
+  reiniciado después y `/api/health` 200. APK release 61,6 MB compilada con los
+  dart-defines habituales, reinstalada en `a791bc16` y arrancada sin
+  `FATAL EXCEPTION`. Commit y push realizados en la rama
+  `feature/app-reportes-cierre-caja`; sin despliegue a Netlify.
+

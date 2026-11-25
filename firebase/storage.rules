@@ -1,0 +1,59 @@
+rules_version = '2';
+
+// Las imágenes de la web pública (banner, logo y fotos de platos) son de lectura
+// pública. Solo un administrador puede subirlas o borrarlas.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAdminClaim() {
+      return request.auth != null && request.auth.token.role == 'admin';
+    }
+
+    // El service account de desarrollo no puede escribir custom claims, así
+    // que el rol también se acepta desde users/{uid} en Firestore.
+    // Requiere habilitar la conexión Storage ↔ Firestore en la consola.
+    function isAdminDocument() {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function isAdmin() {
+      return isAdminClaim() || isAdminDocument();
+    }
+
+    // Administradores y cocineros pueden subir la foto de una pérdida;
+    // la lectura es pública para que el administrador vea el historial.
+    function isKitchenStaffDocument() {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role in ['admin', 'cook'];
+    }
+
+    function isKitchenStaff() {
+      return isAdmin() || isKitchenStaffDocument();
+    }
+
+    function isAllowedImage() {
+      return request.resource.size < 6 * 1024 * 1024
+        && request.resource.contentType != null
+        && request.resource.contentType.matches('image/(jpeg|png|webp|gif)');
+    }
+
+    match /appearance/{fileName} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isAllowedImage();
+      allow delete: if isAdmin();
+    }
+
+    match /inventory-losses/{fileName} {
+      allow read: if true;
+      allow create, update: if isKitchenStaff() && isAllowedImage();
+      allow delete: if isAdmin();
+    }
+
+    match /{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}
