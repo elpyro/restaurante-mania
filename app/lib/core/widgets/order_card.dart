@@ -29,6 +29,7 @@ class OrderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final statusColor = orderStatusColor(order.status);
+    final isWebOrder = order.source == 'web';
     final itemsSummary = order.items
         .take(3)
         .map((item) => '${item.quantity}× ${item.name}')
@@ -36,7 +37,7 @@ class OrderCard extends StatelessWidget {
     final remaining = order.items.length - 3;
 
     return Material(
-      color: Colors.white,
+      color: isWebOrder ? const Color(0xFFF0F9FF) : Colors.white,
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
@@ -45,7 +46,11 @@ class OrderCard extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: const Color(0xFFEDEAE6)),
+            border: Border.all(
+              color: isWebOrder
+                  ? const Color(0xFFBAE6FD)
+                  : const Color(0xFFEDEAE6),
+            ),
             boxShadow: const [
               BoxShadow(
                 color: Color(0x081C1917),

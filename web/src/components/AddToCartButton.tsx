@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { CircleCheck, Plus } from "lucide-react";
 import { useCart } from "./CartProvider";
 import type { MenuItem } from "@/lib/types";
 
@@ -47,8 +48,10 @@ export function AddToCartButton({
           className ??
           `inline-flex items-center justify-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold transition ${
             disabled
-              ? "cursor-not-allowed bg-stone-200 text-stone-500"
-              : "bg-brand-600 text-white hover:bg-brand-700 active:scale-[0.98]"
+              ? "cursor-not-allowed bg-surface-muted text-ink-400"
+              : added
+                ? "bg-accent text-white"
+                : "bg-brand text-white hover:bg-brand-strong active:scale-[0.98]"
           }`
         }
       >
@@ -57,11 +60,19 @@ export function AddToCartButton({
           : atMax
             ? "Límite por insumos"
             : added
-              ? "¡Agregado! ✓"
-              : `+ ${label}`}
+              ? (
+                <>
+                  <CircleCheck size={15} aria-hidden /> ¡Agregado!
+                </>
+              )
+              : (
+                <>
+                  <Plus size={15} aria-hidden /> {label}
+                </>
+              )}
       </button>
       {limitedMsg && !atMax ? (
-        <span className="text-[11px] font-medium text-amber-700">
+        <span className="text-[11px] font-medium text-brand-strong">
           Sin ingredientes para más unidades
         </span>
       ) : null}

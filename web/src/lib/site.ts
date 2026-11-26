@@ -15,11 +15,14 @@ export const siteConfig = {
   country: "CO",
 };
 
-export function whatsappUrl(message?: string): string {
+export function whatsappUrl(
+  message?: string,
+  whatsapp = siteConfig.whatsapp,
+  name = siteConfig.name,
+): string {
   const text =
-    message ??
-    `Hola ${siteConfig.name}, quiero hacer un pedido o una reserva.`;
-  return `https://wa.me/${siteConfig.whatsapp}?text=${encodeURIComponent(text)}`;
+    message ?? `Hola ${name}, quiero hacer un pedido o una reserva.`;
+  return `https://wa.me/${whatsapp}?text=${encodeURIComponent(text)}`;
 }
 
 export function absoluteUrl(path = "/"): string {

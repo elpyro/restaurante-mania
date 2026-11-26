@@ -3,7 +3,13 @@ import {
   isFirestoreConfigured,
   listDocuments,
   setDocument,
+  tenantPath,
 } from "@/lib/firebase/rest";
+import { getDemoState } from "@/lib/demo-store";
+import {
+  isDemoTenant,
+  resolveTenantFromRequest,
+} from "@/lib/tenants";
 import { normalizeDayKey, visitDocumentId } from "@/lib/visit-identity";
 
 export const runtime = "nodejs";
@@ -50,6 +56,21 @@ const globalForVisits = globalThis as typeof globalThis & {
 const demoStore =
   globalForVisits.__restauranteWebVisits ??
   (globalForVisits.__restauranteWebVisits = { visits: [] });
+
+function demoVisits(tenantId: string): StoredVisit[] {
+  if (isDemoTenant(tenantId)) {
+    return getDemoState(tenantId).visits as unknown as StoredVisit[];
+  }
+  return demoStore.visits;
+}
+
+function setDemoVisits(tenantId: string, visits: StoredVisit[]): void {
+  if (isDemoTenant(tenantId)) {
+    getDemoState(tenantId).visits = visits as unknown as Record<string, unknown>[];
+    return;
+  }
+  demoStore.visits = visits;
+}
 
 function text(value: unknown, max = 160): string {
   return String(value ?? "").trim().slice(0, max);
@@ -129,17 +150,18 @@ function sorted(visits: StoredVisit[]): StoredVisit[] {
     .slice(0, MAX_RESPONSE);
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const tenantId = resolveTenantFromRequest(request);
   if (!isFirestoreConfigured()) {
     return NextResponse.json(
-      { visits: sorted(demoStore.visits), configured: false },
+      { tenantId, visits: sorted(demoVisits(tenantId)), configured: false },
       { headers: { "Cache-Control": "no-store" } },
     );
   }
   try {
-    const visits = await listDocuments(COLLECTION, mapDoc, 0);
+    const visits = await listDocuments(tenantPath(tenantId, COLLECTION), mapDoc, 0);
     return NextResponse.json(
-      { visits: sorted(visits), configured: true },
+      { tenantId, visits: sorted(visits), configured: true },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
@@ -152,6 +174,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const tenantId = resolveTenantFromRequest(request);
   let body: unknown;
   try {
     body = await request.json();
@@ -198,12 +221,12 @@ export async function POST(request: Request) {
 
   try {
     if (isFirestoreConfigured()) {
-      await setDocument(COLLECTION, visit.id, visit);
+      await setDocument(tenantPath(tenantId, COLLECTION), visit.id, visit);
     } else {
-      const withoutId = demoStore.visits.filter((v) => v.id !== visit.id);
-      demoStore.visits = [visit, ...withoutId].slice(0, MAX_VISITS);
+      const withoutId = demoVisits(tenantId).filter((v) => v.id !== visit.id);
+      setDemoVisits(tenantId, [visit, ...withoutId].slice(0, MAX_VISITS));
     }
-    return NextResponse.json({ ok: true, visit });
+    return NextResponse.json({ ok: true, tenantId, visit });
   } catch (error) {
     console.error("[api/visits] POST", error);
     return NextResponse.json(

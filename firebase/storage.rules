@@ -1,0 +1,11 @@
+rules_version = '2';
+
+// TEMPORAL (DEBUG): reglas abiertas para descartar permisos.
+// REVERTIR antes de producción real.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if true;
+    }
+  }
+}

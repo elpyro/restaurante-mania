@@ -1,5 +1,11 @@
 ﻿import { NextResponse } from "next/server";
-import { isFirestoreConfigured, listDocuments, setDocument } from "@/lib/firebase/rest";
+import {
+  isFirestoreConfigured,
+  listDocuments,
+  setDocument,
+  tenantPath,
+} from "@/lib/firebase/rest";
+import { resolveTenantFromRequest } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,12 +33,13 @@ function normalizePhone(value: string): string {
   return value.replace(/\D/g, "");
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const tenantId = resolveTenantFromRequest(request);
   if (!isFirestoreConfigured()) {
-    return NextResponse.json({ customers: [], configured: false });
+    return NextResponse.json({ tenantId, customers: [], configured: false });
   }
   try {
-    const customers = await listDocuments("customers", (doc) => {
+    const customers = await listDocuments(tenantPath(tenantId, "customers"), (doc) => {
       const d = doc.data as Record<string, unknown>;
       const rawHistory = d.visitHistory;
       const visitHistory: Record<string, number> = {};
@@ -61,7 +68,7 @@ export async function GET() {
       };
     }, 0);
     return NextResponse.json(
-      { customers, configured: true },
+      { tenantId, customers, configured: true },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
@@ -71,6 +78,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const tenantId = resolveTenantFromRequest(request);
   if (!isFirestoreConfigured()) {
     return NextResponse.json({ ok: false, configured: false, error: "Firestore no configurado" }, { status: 503 });
   }
@@ -114,8 +122,8 @@ export async function POST(request: Request) {
     visitHistory,
   };
   try {
-    await setDocument("customers", id, record);
-    return NextResponse.json({ ok: true, customer: record });
+    await setDocument(tenantPath(tenantId, "customers"), id, record);
+    return NextResponse.json({ ok: true, tenantId, customer: record });
   } catch (error) {
     console.error("[api/customers] POST", error);
     return NextResponse.json({ ok: false, error: "No se pudo guardar cliente" }, { status: 500 });

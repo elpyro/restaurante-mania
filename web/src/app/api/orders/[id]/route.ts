@@ -1,16 +1,19 @@
 import { NextResponse } from "next/server";
+import { syncMenuStatusesFromStock } from "@/lib/menu";
 import { getOrderById, OrderValidationError, updateOrder } from "@/lib/orders";
+import { resolveTenantFromRequest } from "@/lib/tenants";
 import type { OrderStatus, PaymentStatus } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const tenantId = resolveTenantFromRequest(request);
   const { id } = await params;
-  const order = await getOrderById(id);
+  const order = await getOrderById(id, tenantId);
   if (!order) {
     return NextResponse.json(
       { error: "Pedido no encontrado o no accesible." },
@@ -24,6 +27,7 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const tenantId = resolveTenantFromRequest(request);
   const { id } = await params;
   let body: unknown;
   try {
@@ -35,12 +39,32 @@ export async function PATCH(
     return NextResponse.json({ error: "Cuerpo inválido." }, { status: 400 });
   }
   const raw = body as Record<string, unknown>;
-  const patch: { status?: OrderStatus; paymentStatus?: PaymentStatus } = {};
+  const patch: {
+    status?: OrderStatus;
+    paymentStatus?: PaymentStatus;
+    inventoryDeducted?: boolean;
+    paidAt?: string;
+    paidBy?: string;
+    paidByName?: string;
+  } = {};
   if (typeof raw.status === "string") patch.status = raw.status as OrderStatus;
   if (typeof raw.paymentStatus === "string") {
     patch.paymentStatus = raw.paymentStatus as PaymentStatus;
   }
-  if (!patch.status && !patch.paymentStatus) {
+  if (typeof raw.inventoryDeducted === "boolean") {
+    patch.inventoryDeducted = raw.inventoryDeducted;
+  }
+  if (typeof raw.paidAt === "string") patch.paidAt = raw.paidAt;
+  if (typeof raw.paidBy === "string") patch.paidBy = raw.paidBy;
+  if (typeof raw.paidByName === "string") patch.paidByName = raw.paidByName;
+  if (
+    !patch.status &&
+    !patch.paymentStatus &&
+    patch.inventoryDeducted === undefined &&
+    !patch.paidAt &&
+    !patch.paidBy &&
+    !patch.paidByName
+  ) {
     return NextResponse.json(
       { error: "No hay cambios para aplicar." },
       { status: 400 },
@@ -48,14 +72,23 @@ export async function PATCH(
   }
 
   try {
-    const order = await updateOrder(id, patch);
+    const order = await updateOrder(id, patch, tenantId);
     if (!order) {
       return NextResponse.json(
         { error: "Pedido no encontrado." },
         { status: 404 },
       );
     }
-    return NextResponse.json({ order }, { headers: { "Cache-Control": "no-store" } });
+    let updatedMenuItems: string[] = [];
+    try {
+      updatedMenuItems = await syncMenuStatusesFromStock(tenantId);
+    } catch (error) {
+      console.error("[api/orders] No se pudo reconciliar el menú:", error);
+    }
+    return NextResponse.json(
+      { order, updatedMenuItems },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     if (error instanceof OrderValidationError) {
       return NextResponse.json({ errors: error.errors }, { status: 400 });

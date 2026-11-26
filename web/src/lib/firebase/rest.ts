@@ -1,5 +1,13 @@
 import { webcrypto } from "node:crypto";
 
+import { DEFAULT_TENANT_ID, normalizeTenantId } from "../tenants";
+
+/** Ruta de una colección dentro del espacio aislado de un tenant. */
+export function tenantPath(tenantId: string, collection: string): string {
+  const id = normalizeTenantId(tenantId) ?? DEFAULT_TENANT_ID;
+  return `tenants/${id}/${collection}`;
+}
+
 type FsValue =
   | { stringValue: string }
   | { integerValue: string }
@@ -99,6 +107,13 @@ export function isFirestoreConfigured(): boolean {
   return readConfig() !== null;
 }
 
+function isDynamicUsageError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { digest?: unknown }).digest === "DYNAMIC_SERVER_USAGE"
+  );
+}
+
 function readServiceAccount(): ServiceAccount | null {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
   if (!raw) return null;
@@ -194,7 +209,9 @@ async function authHeaders(): Promise<Record<string, string>> {
     const token = await googleAccessToken(account);
     headers.Authorization = `Bearer ${token}`;
   } catch (error) {
-    console.warn("[firebase/rest] No se pudo obtener token de servicio:", error);
+    if (!isDynamicUsageError(error)) {
+      console.warn("[firebase/rest] No se pudo obtener token de servicio:", error);
+    }
   }
   return headers;
 }
@@ -273,6 +290,25 @@ export async function createDocument(
   }
   const document = (await response.json()) as FirestoreDocument;
   return docId(document);
+}
+
+export async function deleteDocument(
+  collection: string,
+  id: string,
+): Promise<void> {
+  const config = readConfig();
+  if (!config) throw new Error("Firestore no está configurado");
+  const url = `${baseUrl(config)}/${collection}/${encodeURIComponent(id)}?key=${config.apiKey}`;
+  const response = await fetch(url, {
+    method: "DELETE",
+    headers: await authHeaders(),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Firestore DELETE ${collection}/${id} respondió ${response.status}: ${await response.text()}`,
+    );
+  }
 }
 
 export async function setDocument(

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/data/repository.dart';
@@ -12,6 +12,7 @@ import '../../core/widgets/common.dart';
 import '../../core/widgets/order_card.dart';
 import '../orders/new_order_screen.dart';
 import '../inventory/inventory_screen.dart';
+import '../inventory_losses/inventory_losses_screen.dart';
 import '../orders/order_detail_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
@@ -29,16 +30,24 @@ class DashboardScreen extends StatelessWidget {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (_) => const NewOrderScreen(),
+            builder: (_) => role == UserRole.cook
+                ? const RegisterLossScreen()
+                : const NewOrderScreen(),
           ),
         ),
         backgroundColor: AppTheme.brand,
         foregroundColor: Colors.white,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('Nuevo pedido'),
+        icon: Icon(
+          role == UserRole.cook
+              ? Icons.report_problem_outlined
+              : Icons.add_rounded,
+        ),
+        label: Text(
+          role == UserRole.cook ? 'Registrar pérdida' : 'Nuevo pedido',
+        ),
       ),
       body: RefreshIndicator(
-        onRefresh: repository.syncPendingOrders,
+        onRefresh: repository.refreshAll,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
@@ -47,10 +56,42 @@ class DashboardScreen extends StatelessWidget {
               _OfflineBanner(pending: repository.pendingSyncCount),
               const SizedBox(height: 12),
             ],
-            _KpiGrid(repository: repository, role: role, onNavigate: onNavigate),
+            _KpiGrid(
+              repository: repository,
+              role: role,
+              onNavigate: onNavigate,
+            ),
             if (role == UserRole.cook) ...[
               const SectionHeader(title: 'Cola de cocina'),
               _KitchenQueue(repository: repository),
+              const SectionHeader(title: 'Pérdidas de ingredientes'),
+              Card(
+                child: ListTile(
+                  leading: const Icon(
+                    Icons.report_problem_outlined,
+                    color: AppTheme.danger,
+                  ),
+                  title: const Text(
+                    'Registrar pérdida',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text(
+                    repository.hasPendingInventoryLosses
+                        ? '${repository.pendingInventoryLosses.length} registro(s) pendiente(s) de sincronizar'
+                        : 'Caducados y mermas con foto y auditoría',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const RegisterLossScreen(),
+                    ),
+                  ),
+                ),
+              ),
             ],
             if (role == UserRole.waiter) ...[
               SectionHeader(
@@ -69,10 +110,6 @@ class DashboardScreen extends StatelessWidget {
                   ),
                 ),
               ),
-            ],
-            if (role == UserRole.admin || role == UserRole.cashier) ...[
-              const SectionHeader(title: 'Ventas últimos 7 días'),
-              _SalesSpark(repository: repository),
             ],
           ],
         ),
@@ -97,7 +134,11 @@ class _OfflineBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(Icons.cloud_off_rounded, size: 18, color: AppTheme.warning),
+          const Icon(
+            Icons.cloud_off_rounded,
+            size: 18,
+            color: AppTheme.warning,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -118,7 +159,11 @@ class _OfflineBanner extends StatelessWidget {
 }
 
 class _KpiGrid extends StatelessWidget {
-  const _KpiGrid({required this.repository, required this.role, required this.onNavigate});
+  const _KpiGrid({
+    required this.repository,
+    required this.role,
+    required this.onNavigate,
+  });
 
   final RestaurantRepository repository;
   final UserRole role;
@@ -128,146 +173,144 @@ class _KpiGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final cards = switch (role) {
       UserRole.admin => [
-          StatCard(
-            label: 'Ventas hoy',
-            value: formatCop(repository.todaySales),
-            icon: Icons.payments_outlined,
-            accent: AppTheme.success,
-            subtitle: '${repository.todayOrderCount} pedidos',
-            onTap: () => onNavigate(AppTab.reports),
-          ),
-          StatCard(
-            label: 'Pedidos por cobrar',
-            value: '${repository.ordersToCollect.length}',
-            icon: Icons.payments_outlined,
-            accent: AppTheme.warning,
-            subtitle: '${repository.ordersToCollect.length} pendientes de pago',
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-          StatCard(
-            label: 'En preparación',
-            value: '${repository.preparingCount}',
-            icon: Icons.soup_kitchen_outlined,
-            accent: const Color(0xFF2563EB),
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-          StatCard(
-            label: 'Pedidos listos',
-            value: '${repository.readyCount}',
-            icon: Icons.room_service_outlined,
-            accent: AppTheme.success,
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-          StatCard(
-            label: 'Ingredientes agotados',
-            value:
-                '${repository.ingredients.where((i) => i.stock <= 0).length}',
-            icon: Icons.inventory_2_outlined,
-            accent: AppTheme.danger,
-            subtitle:
-                '${repository.lowStockIngredients.length} con stock bajo',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => const InventoryScreen(),
-              ),
+        StatCard(
+          label: 'Ventas hoy',
+          value: formatCop(repository.todaySales),
+          icon: Icons.payments_outlined,
+          accent: AppTheme.success,
+          subtitle: '${repository.todayOrderCount} pedidos',
+          onTap: () => onNavigate(AppTab.reports),
+        ),
+        StatCard(
+          label: 'Pedidos por cobrar',
+          value: '${repository.ordersToCollect.length}',
+          icon: Icons.payments_outlined,
+          accent: AppTheme.warning,
+          subtitle: '${repository.ordersToCollect.length} pendientes de pago',
+          onTap: () => onNavigate(AppTab.orders),
+        ),
+        StatCard(
+          label: 'En preparación',
+          value: '${repository.preparingCount}',
+          icon: Icons.soup_kitchen_outlined,
+          accent: const Color(0xFF2563EB),
+          onTap: () => onNavigate(AppTab.orders),
+        ),
+        StatCard(
+          label: 'Pedidos listos',
+          value: '${repository.readyCount}',
+          icon: Icons.room_service_outlined,
+          accent: AppTheme.success,
+          onTap: () => onNavigate(AppTab.orders),
+        ),
+        StatCard(
+          label: 'Ingredientes agotados',
+          value: '${repository.ingredients.where((i) => i.stock <= 0).length}',
+          icon: Icons.inventory_2_outlined,
+          accent: AppTheme.danger,
+          subtitle: '${repository.lowStockIngredients.length} con stock bajo',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const InventoryScreen(showAppBar: true),
             ),
           ),
-          StatCard(
-            label: 'Pedidos hoy',
-            value: '${repository.todayOrderCount}',
-            icon: Icons.today_outlined,
-            accent: const Color(0xFF7C3AED),
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-        ],
+        ),
+        StatCard(
+          label: 'Mesas ocupadas',
+          value: '${repository.occupiedTables}/${repository.tables.length}',
+          icon: Icons.table_restaurant_outlined,
+          accent: const Color(0xFF2563EB),
+          onTap: () => onNavigate(AppTab.tables),
+        ),
+      ],
       UserRole.cashier => [
-          StatCard(
-            label: 'Ventas hoy',
-            value: formatCop(repository.todaySales),
-            icon: Icons.payments_outlined,
-            accent: AppTheme.success,
-            onTap: () => onNavigate(AppTab.reports),
-          ),
-          StatCard(
-            label: 'Pedidos por cobrar',
-            value: '${repository.ordersToCollect.length}',
-            icon: Icons.payments_outlined,
-            accent: AppTheme.warning,
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-          StatCard(
-            label: 'Listos para entregar',
-            value: '${repository.readyCount}',
-            icon: Icons.room_service_outlined,
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-          StatCard(
-            label: 'Pedidos hoy',
-            value: '${repository.todayOrderCount}',
-            icon: Icons.receipt_long_outlined,
-            accent: const Color(0xFF2563EB),
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-        ],
+        StatCard(
+          label: 'Ventas hoy',
+          value: formatCop(repository.todaySales),
+          icon: Icons.payments_outlined,
+          accent: AppTheme.success,
+          onTap: () => onNavigate(AppTab.reports),
+        ),
+        StatCard(
+          label: 'Pedidos por cobrar',
+          value: '${repository.ordersToCollect.length}',
+          icon: Icons.payments_outlined,
+          accent: AppTheme.warning,
+          onTap: () => onNavigate(AppTab.orders),
+        ),
+        StatCard(
+          label: 'Listos para entregar',
+          value: '${repository.readyCount}',
+          icon: Icons.room_service_outlined,
+          onTap: () => onNavigate(AppTab.orders),
+        ),
+        StatCard(
+          label: 'Pedidos hoy',
+          value: '${repository.todayOrderCount}',
+          icon: Icons.receipt_long_outlined,
+          accent: const Color(0xFF2563EB),
+          onTap: () => onNavigate(AppTab.orders),
+        ),
+      ],
       UserRole.waiter => [
-          StatCard(
-            label: 'Mesas libres',
-            value: '${repository.freeTables}',
-            icon: Icons.check_circle_outline_rounded,
-            accent: AppTheme.success,
-            onTap: () => onNavigate(AppTab.tables),
-          ),
-          StatCard(
-            label: 'Mesas ocupadas',
-            value: '${repository.occupiedTables}',
-            icon: Icons.groups_outlined,
-            accent: const Color(0xFF2563EB),
-            onTap: () => onNavigate(AppTab.tables),
-          ),
-          StatCard(
-            label: 'Pedidos por cobrar',
-            value: '${repository.ordersToCollect.length}',
-            icon: Icons.payments_outlined,
-            accent: AppTheme.warning,
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-          StatCard(
-            label: 'Listos',
-            value: '${repository.readyCount}',
-            icon: Icons.room_service_outlined,
-            accent: AppTheme.success,
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-        ],
+        StatCard(
+          label: 'Mesas libres',
+          value: '${repository.freeTables}',
+          icon: Icons.check_circle_outline_rounded,
+          accent: AppTheme.success,
+          onTap: () => onNavigate(AppTab.tables),
+        ),
+        StatCard(
+          label: 'Mesas ocupadas',
+          value: '${repository.occupiedTables}',
+          icon: Icons.groups_outlined,
+          accent: const Color(0xFF2563EB),
+          onTap: () => onNavigate(AppTab.tables),
+        ),
+        StatCard(
+          label: 'Pedidos por cobrar',
+          value: '${repository.ordersToCollect.length}',
+          icon: Icons.payments_outlined,
+          accent: AppTheme.warning,
+          onTap: () => onNavigate(AppTab.orders),
+        ),
+        StatCard(
+          label: 'Listos',
+          value: '${repository.readyCount}',
+          icon: Icons.room_service_outlined,
+          accent: AppTheme.success,
+          onTap: () => onNavigate(AppTab.orders),
+        ),
+      ],
       UserRole.cook => [
-          StatCard(
-            label: 'Pendientes',
-            value: '${repository.pendingCount}',
-            icon: Icons.hourglass_top_rounded,
-            accent: AppTheme.warning,
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-          StatCard(
-            label: 'En preparación',
-            value: '${repository.preparingCount}',
-            icon: Icons.soup_kitchen_outlined,
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-          StatCard(
-            label: 'Listos',
-            value: '${repository.readyCount}',
-            icon: Icons.room_service_outlined,
-            accent: AppTheme.success,
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-          StatCard(
-            label: 'Pedidos hoy',
-            value: '${repository.todayOrderCount}',
-            icon: Icons.receipt_long_outlined,
-            accent: const Color(0xFF2563EB),
-            onTap: () => onNavigate(AppTab.orders),
-          ),
-        ],
+        StatCard(
+          label: 'Pendientes',
+          value: '${repository.pendingCount}',
+          icon: Icons.hourglass_top_rounded,
+          accent: AppTheme.warning,
+          onTap: () => onNavigate(AppTab.orders),
+        ),
+        StatCard(
+          label: 'En preparación',
+          value: '${repository.preparingCount}',
+          icon: Icons.soup_kitchen_outlined,
+          onTap: () => onNavigate(AppTab.orders),
+        ),
+        StatCard(
+          label: 'Listos',
+          value: '${repository.readyCount}',
+          icon: Icons.room_service_outlined,
+          accent: AppTheme.success,
+          onTap: () => onNavigate(AppTab.orders),
+        ),
+        StatCard(
+          label: 'Pedidos hoy',
+          value: '${repository.todayOrderCount}',
+          icon: Icons.receipt_long_outlined,
+          accent: const Color(0xFF2563EB),
+          onTap: () => onNavigate(AppTab.orders),
+        ),
+      ],
     };
 
     return GridView.count(
@@ -290,10 +333,12 @@ class _KitchenQueue extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final queue = repository.activeOrders
-        .where((order) =>
-            order.status == OrderStatus.pending ||
-            order.status == OrderStatus.confirmed ||
-            order.status == OrderStatus.preparing)
+        .where(
+          (order) =>
+              order.status == OrderStatus.pending ||
+              order.status == OrderStatus.confirmed ||
+              order.status == OrderStatus.preparing,
+        )
         .toList();
 
     if (queue.isEmpty) {
@@ -320,15 +365,19 @@ class _KitchenQueue extends StatelessWidget {
                   if (order.status == OrderStatus.pending ||
                       order.status == OrderStatus.confirmed)
                     FilledButton.tonalIcon(
-                      onPressed: () =>
-                          repository.updateOrderStatus(order.id, OrderStatus.preparing),
+                      onPressed: () => repository.updateOrderStatus(
+                        order.id,
+                        OrderStatus.preparing,
+                      ),
                       icon: const Icon(Icons.play_arrow_rounded, size: 16),
                       label: const Text('Empezar'),
                     ),
                   if (order.status == OrderStatus.preparing)
                     FilledButton.icon(
-                      onPressed: () =>
-                          repository.updateOrderStatus(order.id, OrderStatus.ready),
+                      onPressed: () => repository.updateOrderStatus(
+                        order.id,
+                        OrderStatus.ready,
+                      ),
                       icon: const Icon(Icons.check_rounded, size: 16),
                       label: const Text('Marcar listo'),
                     ),
@@ -390,7 +439,11 @@ class _TablesOverview extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 4),
-                        Icon(tableStatusIcon(table.status), size: 14, color: color),
+                        Icon(
+                          tableStatusIcon(table.status),
+                          size: 14,
+                          color: color,
+                        ),
                       ],
                     ),
                     const Spacer(),
@@ -419,75 +472,6 @@ class _TablesOverview extends StatelessWidget {
             ),
           );
         },
-      ),
-    );
-  }
-}
-
-class _SalesSpark extends StatelessWidget {
-  const _SalesSpark({required this.repository});
-
-  final RestaurantRepository repository;
-
-  @override
-  Widget build(BuildContext context) {
-    final sales = repository.salesByDay(days: 7);
-    final maxValue = sales.fold<double>(
-      0,
-      (max, entry) => entry.total > max ? entry.total : max,
-    );
-    const weekdays = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFEDEAE6)),
-      ),
-      child: SizedBox(
-        height: 120,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: sales.map((entry) {
-            final ratio = maxValue <= 0 ? 0.0 : entry.total / maxValue;
-            return Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 3),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Text(
-                      entry.total <= 0 ? '' : '${(entry.total / 1000).round()}k',
-                      style: const TextStyle(
-                        fontSize: 8.5,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF78716C),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Container(
-                      height: 12 + ratio * 62,
-                      decoration: BoxDecoration(
-                        color: AppTheme.brand.withValues(alpha: 0.25 + ratio * 0.75),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      weekdays[entry.day.weekday - 1],
-                      style: const TextStyle(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF78716C),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }).toList(),
-        ),
       ),
     );
   }

@@ -7,6 +7,7 @@ import '../models/restaurant_settings.dart';
 import '../models/restaurant_table.dart';
 import '../models/role.dart';
 import '../utils/formatters.dart';
+import 'tenant.dart';
 
 class SeedData {
   static const demoPassword = '1234';
@@ -354,7 +355,7 @@ class SeedData {
     _ing('hielo', 'Hielo', IngredientUnit.gramo, 5000, 800, 0.5),
     _ing('lulo', 'Lulo', IngredientUnit.unidad, 40, 8, 900),
     _ing('agua', 'Agua', IngredientUnit.mililitro, 20000, 3000, 0.2),
-    _ing('cafe-huila', 'Café de Huila', IngredientUnit.gramo, 1500, 250, 32),
+    _ing('cafe', 'Café de Huila', IngredientUnit.gramo, 1500, 250, 32),
     _ing('vainilla', 'Vainilla', IngredientUnit.mililitro, 500, 100, 20),
   ];
 
@@ -441,8 +442,8 @@ class SeedData {
       'azucar': 25.0,
     },
     'item-cafe': {
-      'cafe-huila': 18.0,
-      'agua': 180.0,
+      'cafe': 15.0,
+      'agua': 200.0,
     },
   };
 
@@ -533,6 +534,72 @@ class SeedData {
     }).toList();
   }
 
+  /// Catálogo inicial de una instancia demo. Manía conserva el seed histórico.
+  static List<MenuItem> menuItemsFor(String tenantId) {
+    final items = menuItemsWithRecipes();
+    if (tenantId == 'fuego') {
+      items.add(
+        MenuItem(
+          id: 'item-fuego-parrilla',
+          name: 'Parrilla de la casa',
+          slug: 'parrilla-de-la-casa',
+          description: 'Corte de res a la brasa con hogao y papa criolla.',
+          price: 42000,
+          categoryId: 'cat-fuertes',
+          categorySlug: 'platos-fuertes',
+          status: MenuItemStatus.available,
+          ingredients: ['Carne de res', 'Hogao', 'Papa criolla'],
+          allergens: const [],
+          emoji: '🔥',
+          featured: true,
+          prepMinutes: 22,
+          calories: 780,
+          sku: 'SKU-FUEGO-PARRILLA',
+          recipe: const [
+            RecipeIngredient(ingredientId: 'carne-res', quantity: 350),
+            RecipeIngredient(ingredientId: 'hogao', quantity: 80),
+          ],
+        ),
+      );
+      final index = items.indexWhere((item) => item.id == 'item-empanadas');
+      if (index >= 0) {
+        items[index] = items[index].copyWith(price: items[index].price + 2000);
+      }
+    }
+    if (tenantId == 'verde') {
+      final index = items.indexWhere((item) => item.id == 'item-ajiaco');
+      if (index >= 0) {
+        items[index] = items[index].copyWith(
+          status: MenuItemStatus.unavailable,
+          manualUnavailable: true,
+        );
+      }
+    }
+    return items;
+  }
+
+  static List<Ingredient> ingredientsFor(String tenantId) {
+    final list = List<Ingredient>.from(ingredients);
+
+    void setStock(String id, double stock) {
+      final index = list.indexWhere((ingredient) => ingredient.id == id);
+      if (index >= 0) list[index] = list[index].copyWith(stock: stock);
+    }
+
+    if (tenantId == 'fuego') {
+      setStock('maiz-blanco', 0);
+      setStock('camaron', 1200);
+    }
+    if (tenantId == 'verde') {
+      setStock('carne-res', 0);
+      setStock('lechuga', 40);
+    }
+    return list;
+  }
+
+  static List<Order> ordersFor(String tenantId) =>
+      tenantId == defaultTenantId ? orders() : <Order>[];
+
   static const users = <AppUser>[
     AppUser(
       id: 'u-admin',
@@ -556,6 +623,30 @@ class SeedData {
       id: 'u-cook',
       name: 'Jorge Salazar',
       email: 'cocina@restaurante.com',
+      role: UserRole.cook,
+    ),
+    AppUser(
+      id: 'u-qa-admin',
+      name: 'Administrador QA',
+      email: 'admin.qa@restaurante.com',
+      role: UserRole.admin,
+    ),
+    AppUser(
+      id: 'u-qa-cashier',
+      name: 'Cajero QA',
+      email: 'cajero.qa@restaurante.com',
+      role: UserRole.cashier,
+    ),
+    AppUser(
+      id: 'u-qa-waiter',
+      name: 'Mesero QA',
+      email: 'mesero.qa@restaurante.com',
+      role: UserRole.waiter,
+    ),
+    AppUser(
+      id: 'u-qa-cook',
+      name: 'Cocinero QA',
+      email: 'cocina.qa@restaurante.com',
       role: UserRole.cook,
     ),
   ];

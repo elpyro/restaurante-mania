@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -8,7 +10,6 @@ import '../../core/theme/app_theme.dart';
 import '../../core/widgets/common.dart';
 import '../crm/crm_screen.dart';
 import '../dashboard/dashboard_screen.dart';
-import '../menu/menu_admin_screen.dart';
 import '../more/more_screen.dart';
 import '../orders/orders_screen.dart';
 import '../reports/reports_screen.dart';
@@ -54,13 +55,6 @@ class _AppShellState extends State<AppShell> {
       selectedIcon: Icons.table_restaurant_rounded,
       builder: () => const TablesScreen(),
     );
-    final menu = _Destination(
-      tab: AppTab.menu,
-      label: 'Menú',
-      icon: Icons.restaurant_menu_outlined,
-      selectedIcon: Icons.restaurant_menu_rounded,
-      builder: () => const MenuAdminScreen(),
-    );
     final reports = _Destination(
       tab: AppTab.reports,
       label: 'Reportes',
@@ -84,10 +78,10 @@ class _AppShellState extends State<AppShell> {
     );
 
     return switch (role) {
-      UserRole.admin => [dashboard, orders, crm, menu, more],
+      UserRole.admin => [dashboard, orders, tables, crm, more],
       UserRole.cashier => [dashboard, orders, tables, reports],
-      UserRole.waiter => [dashboard, tables, orders, menu],
-      UserRole.cook => [dashboard, orders, menu],
+      UserRole.waiter => [dashboard, tables, orders],
+      UserRole.cook => [dashboard, orders],
     };
   }
 
@@ -98,6 +92,14 @@ class _AppShellState extends State<AppShell> {
     final destinations = _destinationsFor(role);
     final index = _index < destinations.length ? _index : 0;
     final destination = destinations[index];
+    // El admin abre «Mesas» desde una tarjeta del Inicio: el destino sigue en
+    // el IndexedStack, pero no se muestra en la barra inferior.
+    final navDestinations = role == UserRole.admin
+        ? destinations.where((item) => item.tab != AppTab.tables).toList()
+        : destinations;
+    final navIndex = navDestinations.indexWhere(
+      (item) => item.tab == destination.tab,
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -119,7 +121,7 @@ class _AppShellState extends State<AppShell> {
           PopupMenuButton<String>(
             tooltip: 'Cuenta',
             onSelected: (value) {
-              if (value == 'logout') repository.logout();
+              if (value == 'logout') unawaited(repository.logout());
             },
             itemBuilder: (context) => [
               PopupMenuItem<String>(
@@ -197,7 +199,7 @@ class _AppShellState extends State<AppShell> {
                   )
                 else
                   Text(
-                    'Datos locales offline · ${repository.todayOrderCount} pedidos hoy',
+                    'Datos guardados en este dispositivo',
                     style: const TextStyle(
                       fontSize: 10.5,
                       color: Color(0xFFA8A29E),
@@ -232,9 +234,13 @@ class _AppShellState extends State<AppShell> {
         children: destinations.map((item) => item.builder()).toList(),
       ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: index,
-        onDestinationSelected: (value) => setState(() => _index = value),
-        destinations: destinations
+        // NavigationBar no admite -1; mientras el admin ve «Mesas» (sin icono
+        // en la barra) se marca «Inicio», que es desde donde se accede.
+        selectedIndex: navIndex < 0 ? 0 : navIndex,
+        onDestinationSelected: (value) => setState(
+          () => _index = destinations.indexOf(navDestinations[value]),
+        ),
+        destinations: navDestinations
             .map(
               (item) => NavigationDestination(
                 icon: Icon(item.icon),

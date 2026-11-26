@@ -5,6 +5,35 @@
 :root {
   --font-sans: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --font-display: "Georgia", "Times New Roman", serif;
+
+  --surface: 255 250 245;
+  --surface-raised: 255 255 255;
+  --surface-muted: 246 241 234;
+  --ink: 28 25 23;
+  --ink-soft: 68 64 60;
+  --ink-muted: 120 113 108;
+  --ink-400: 168 162 158;
+  --ink-500: 120 113 108;
+  --ink-700: 68 64 60;
+  --ink-900: 28 25 23;
+  --brand-50: 255 248 237;
+  --brand-100: 255 239 212;
+  --brand-200: 255 220 168;
+  --brand-300: 255 194 113;
+  --brand-400: 255 157 56;
+  --brand-500: 254 127 18;
+  --brand-600: 239 100 8;
+  --brand-700: 198 75 9;
+  --brand-800: 157 60 16;
+  --brand-900: 126 51 16;
+  --accent: 5 150 105;
+  --accent-strong: 4 120 87;
+  --accent-soft: 209 250 229;
+  --line: 231 229 228;
+  --hero-from: 255 248 237;
+  --hero-to: 236 253 245;
+  --footer: 28 25 23;
+  --footer-ink: 255 255 255;
 }
 
 html {
@@ -12,21 +41,80 @@ html {
 }
 
 body {
-  @apply bg-stone-50 text-ink-900 antialiased;
+  @apply min-h-screen bg-surface text-ink antialiased;
 }
 
 ::selection {
   @apply bg-brand-200 text-ink-900;
 }
 
+:focus-visible {
+  outline: 3px solid rgb(var(--brand-400) / 0.75);
+  outline-offset: 2px;
+}
+
 @layer components {
-  .btn-primary {
-    @apply inline-flex items-center justify-center rounded-full bg-brand-600 px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-brand-700 active:scale-[0.99];
+  .surface-card {
+    @apply rounded-3xl border border-line bg-surface-raised shadow-card;
   }
-  .btn-secondary {
-    @apply inline-flex items-center justify-center rounded-full border border-stone-300 bg-white px-6 py-3 text-sm font-semibold text-ink-900 transition hover:border-brand-400 hover:bg-brand-50;
+
+  .eyebrow {
+    @apply text-xs font-bold uppercase tracking-[0.2em] text-brand-strong;
   }
+
   .section-title {
-    @apply font-display text-3xl font-bold tracking-tight text-ink-900 sm:text-4xl;
+    @apply font-display text-3xl font-bold tracking-tight text-ink sm:text-4xl;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-brand px-6 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-brand-strong active:scale-[0.99];
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-line bg-surface-raised px-6 py-3 text-sm font-semibold text-ink transition hover:border-brand-300 hover:bg-brand-50;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-white/20 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-white/10;
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-line bg-surface-raised px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink-400 focus:border-brand-400 focus:ring-2 focus:ring-brand-100;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full bg-surface-muted px-3 py-1 text-xs font-medium text-ink-soft;
+  }
+
+  .skeleton {
+    @apply animate-pulse rounded-2xl bg-surface-muted;
+  }
+}
+
+::view-transition-group(.morph) {
+  animation-duration: 420ms;
+}
+
+::view-transition-image-pair(.morph) {
+  animation-name: via-blur;
+}
+
+@keyframes via-blur {
+  30% {
+    filter: blur(3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

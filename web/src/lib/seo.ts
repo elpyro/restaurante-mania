@@ -1,51 +1,89 @@
+import {
+  DEFAULT_RESTAURANT_CONFIG,
+  SOCIAL_NETWORKS,
+  WEEKDAYS,
+  type RestaurantConfig,
+  type Weekday,
+} from "./restaurant-config";
 import { absoluteUrl, siteConfig } from "./site";
 import type { Category, MenuItem } from "./types";
 
 type JsonLd = Record<string, unknown>;
 
-export function restaurantJsonLd(): JsonLd {
+const FULL_WEEKDAYS: Record<Weekday, string> = {
+  mon: "Monday",
+  tue: "Tuesday",
+  wed: "Wednesday",
+  thu: "Thursday",
+  fri: "Friday",
+  sat: "Saturday",
+  sun: "Sunday",
+};
+
+function openingHours(config: RestaurantConfig) {
+  const days = config.openingDays.length > 0 ? config.openingDays : WEEKDAYS;
+  return {
+    "@type": "OpeningHoursSpecification",
+    dayOfWeek: WEEKDAYS.filter((day) => days.includes(day)).map(
+      (day) => FULL_WEEKDAYS[day],
+    ),
+    opens: config.openTime,
+    closes: config.closeTime,
+  };
+}
+
+export function restaurantJsonLd(
+  config: RestaurantConfig = DEFAULT_RESTAURANT_CONFIG,
+): JsonLd {
+  const socialProfiles = SOCIAL_NETWORKS.map(
+    (network) => config.appearance.socialLinks?.[network],
+  ).filter((url): url is string => Boolean(url));
+  const aiKeywords = [
+    config.aiSearch.keywords ?? "",
+    config.aiSearch.highlights ?? "",
+  ]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join(", ");
+
   return {
     "@context": "https://schema.org",
     "@type": "Restaurant",
     "@id": absoluteUrl("/#restaurant"),
-    name: siteConfig.name,
-    description: siteConfig.description,
+    name: config.name,
+    description: config.aiSearch.description?.trim() || config.slogan,
+    slogan: config.heroBadge,
     url: absoluteUrl("/"),
-    telephone: siteConfig.phone,
+    telephone: config.phone,
     servesCuisine: ["Colombiana", "Latinoamericana"],
     priceRange: "$$",
     currenciesAccepted: siteConfig.currency,
     paymentAccepted: "Efectivo, Tarjeta, Nequi, Daviplata",
+    ...(aiKeywords ? { keywords: aiKeywords } : {}),
+    ...(config.aiSearch.serviceArea?.trim()
+      ? { areaServed: config.aiSearch.serviceArea.trim() }
+      : {}),
+    ...(socialProfiles.length > 0 ? { sameAs: socialProfiles } : {}),
+    ...(config.appearance.gpsUrl ? { hasMap: config.appearance.gpsUrl } : {}),
     address: {
       "@type": "PostalAddress",
-      streetAddress: siteConfig.address,
-      addressLocality: siteConfig.city,
+      streetAddress: config.address,
+      addressLocality: config.city,
       addressCountry: siteConfig.country,
     },
-    openingHoursSpecification: {
-      "@type": "OpeningHoursSpecification",
-      dayOfWeek: [
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-        "Sunday",
-      ],
-      opens: siteConfig.hours.split("-")[0]?.trim() ?? "11:00",
-      closes: siteConfig.hours.split("-")[1]?.trim() ?? "22:00",
-    },
+    openingHoursSpecification: openingHours(config),
     hasMenu: absoluteUrl("/menu"),
     acceptsReservations: true,
   };
 }
 
-export function websiteJsonLd(): JsonLd {
+export function websiteJsonLd(
+  config: RestaurantConfig = DEFAULT_RESTAURANT_CONFIG,
+): JsonLd {
   return {
     "@context": "https://schema.org",
     "@type": "WebSite",
-    name: siteConfig.name,
+    name: config.name,
     url: absoluteUrl("/"),
     inLanguage: "es-CO",
     potentialAction: {
@@ -56,12 +94,16 @@ export function websiteJsonLd(): JsonLd {
   };
 }
 
-export function menuJsonLd(categories: Category[], items: MenuItem[]): JsonLd {
+export function menuJsonLd(
+  categories: Category[],
+  items: MenuItem[],
+  config: RestaurantConfig = DEFAULT_RESTAURANT_CONFIG,
+): JsonLd {
   return {
     "@context": "https://schema.org",
     "@type": "Menu",
     "@id": absoluteUrl("/menu#menu"),
-    name: `Menú de ${siteConfig.name}`,
+    name: `Menú de ${config.name}`,
     url: absoluteUrl("/menu"),
     inLanguage: "es-CO",
     hasMenuSection: categories.map((category) => ({
@@ -76,7 +118,9 @@ export function menuJsonLd(categories: Category[], items: MenuItem[]): JsonLd {
           description: item.description,
           url: absoluteUrl(`/menu/${item.slug}`),
           suitableForDiet:
-            item.allergens.length === 0 ? "https://schema.org/VegetarianDiet" : undefined,
+            item.allergens.length === 0
+              ? "https://schema.org/VegetarianDiet"
+              : undefined,
           offers: {
             "@type": "Offer",
             price: item.price,
@@ -91,7 +135,11 @@ export function menuJsonLd(categories: Category[], items: MenuItem[]): JsonLd {
   };
 }
 
-export function menuItemJsonLd(item: MenuItem, category: Category): JsonLd {
+export function menuItemJsonLd(
+  item: MenuItem,
+  category: Category,
+  config: RestaurantConfig = DEFAULT_RESTAURANT_CONFIG,
+): JsonLd {
   return {
     "@context": "https://schema.org",
     "@type": "MenuItem",
@@ -101,7 +149,9 @@ export function menuItemJsonLd(item: MenuItem, category: Category): JsonLd {
     url: absoluteUrl(`/menu/${item.slug}`),
     menuAddOn: item.ingredients,
     suitableForDiet:
-      item.allergens.length === 0 ? "https://schema.org/VegetarianDiet" : undefined,
+      item.allergens.length === 0
+        ? "https://schema.org/VegetarianDiet"
+        : undefined,
     offers: {
       "@type": "Offer",
       price: item.price,
@@ -120,6 +170,11 @@ export function menuItemJsonLd(item: MenuItem, category: Category): JsonLd {
     nutrition: {
       "@type": "NutritionInformation",
       calories: `${item.calories} calories`,
+    },
+    seller: {
+      "@type": "Restaurant",
+      name: config.name,
+      url: absoluteUrl("/"),
     },
   };
 }

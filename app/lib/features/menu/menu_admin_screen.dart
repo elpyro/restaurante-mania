@@ -14,9 +14,12 @@ import '../../core/models/role.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/common.dart';
+import '../inventory/inventory_screen.dart';
 
 class MenuAdminScreen extends StatefulWidget {
-  const MenuAdminScreen({super.key});
+  const MenuAdminScreen({super.key, this.showAppBar = false});
+
+  final bool showAppBar;
 
   @override
   State<MenuAdminScreen> createState() => _MenuAdminScreenState();
@@ -110,6 +113,97 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
     if (confirmed == true) await repository.deleteMenuItem(item.id);
   }
 
+  /// Explica por qué el plato no se puede activar y ofrece ir a Inventario.
+  Future<void> _explainOutOfStock(
+    RestaurantRepository repository,
+    MenuItem item,
+  ) async {
+    final shortages = repository.outOfStockIngredientsFor(item);
+    final goToIngredients = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.inventory_2_outlined, color: AppTheme.danger),
+        title: const Text('No se puede poner disponible'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '"${item.name}" no tiene insumos suficientes para preparar '
+                'una porción.',
+                style: const TextStyle(fontSize: 13, color: AppTheme.ink),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Insumos faltantes',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.danger,
+                ),
+              ),
+              const SizedBox(height: 6),
+              ...shortages.map(
+                (shortage) => Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.warning_amber_rounded,
+                        size: 18,
+                        color: AppTheme.danger,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${shortage.ingredient.name}: hay '
+                          '${shortage.ingredient.stockLabel}, se necesitan '
+                          '${_formatAmount(shortage.required)} '
+                          '${shortage.ingredient.unit.symbol}.',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppTheme.ink,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Ir a ingredientes'),
+          ),
+        ],
+      ),
+    );
+    if (goToIngredients != true || !mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const InventoryScreen(showAppBar: true),
+      ),
+    );
+  }
+
+  static String _formatAmount(double value) =>
+      value == value.roundToDouble()
+          ? value.toStringAsFixed(0)
+          : value.toStringAsFixed(2);
+
   @override
   Widget build(BuildContext context) {
     final repository = context.watch<RestaurantRepository>();
@@ -128,6 +222,15 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
+      appBar: widget.showAppBar
+          ? AppBar(
+              title: const Text('Menú'),
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back_rounded),
+                onPressed: () => Navigator.of(context).maybePop(),
+              ),
+            )
+          : null,
       floatingActionButton: canEdit
           ? FloatingActionButton.extended(
               onPressed: () => _openEditor(repository),
@@ -226,9 +329,10 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
                           repository.isMenuItemEffectivelyAvailable(item);
                       final statusColor =
                           effectivelyAvailable ? AppTheme.success : AppTheme.danger;
-                      final statusLabel = outByIngredients && item.isAvailable
-                          ? 'Agotado (sin insumos)'
-                          : item.status.label;
+                      final statusLabel =
+                          outByIngredients && !item.manualUnavailable
+                              ? 'Agotado (sin insumos)'
+                              : item.status.label;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Container(
@@ -281,11 +385,30 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
                                 ),
                               ),
                               if (canEdit) ...[
+                                IconButton(
+                                  tooltip: item.featured
+                                      ? 'Quitar de favoritos de la web'
+                                      : 'Mostrar en favoritos de la web',
+                                  color: item.featured
+                                      ? const Color(0xFFF59E0B)
+                                      : const Color(0xFFA8A29E),
+                                  icon: Icon(
+                                    item.featured
+                                        ? Icons.star_rounded
+                                        : Icons.star_border_rounded,
+                                  ),
+                                  onPressed: () =>
+                                      repository.toggleFavorite(item.id),
+                                ),
                                 Switch.adaptive(
                                   value: effectivelyAvailable,
-                                  onChanged: outByIngredients
-                                      ? null
-                                      : (_) => repository.toggleAvailability(item.id),
+                                  onChanged: (value) {
+                                    if (value && outByIngredients) {
+                                      _explainOutOfStock(repository, item);
+                                      return;
+                                    }
+                                    repository.toggleAvailability(item.id);
+                                  },
                                 ),
                                 PopupMenuButton<String>(
                                   onSelected: (value) {

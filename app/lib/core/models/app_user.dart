@@ -20,6 +20,18 @@ class AppUser {
     return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
   }
 
+  AppUser copyWith({
+    String? name,
+    String? email,
+    UserRole? role,
+  }) =>
+      AppUser(
+        id: id,
+        name: name ?? this.name,
+        email: email ?? this.email,
+        role: role ?? this.role,
+      );
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,

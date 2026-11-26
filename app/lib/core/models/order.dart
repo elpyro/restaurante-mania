@@ -216,6 +216,9 @@ class Order {
     this.createdByName,
     this.updatedBy,
     this.updatedByName,
+    this.paidAt,
+    this.paidBy,
+    this.paidByName,
     this.auditLog = const [],
   });
 
@@ -248,9 +251,33 @@ class Order {
   final String? createdByName;
   final String? updatedBy;
   final String? updatedByName;
+
+  /// Momento y autor del cobro. Se guarda explícitamente porque `updatedAt`
+  /// y `updatedByName` pueden cambiar con actualizaciones posteriores.
+  final DateTime? paidAt;
+  final String? paidBy;
+  final String? paidByName;
+
   final List<OrderAuditEntry> auditLog;
 
   int get itemCount => items.fold(0, (sum, item) => sum + item.quantity);
+
+  /// Pedidos heredados no tenían `paidAt`; se usa la última actualización y,
+  /// como último recurso, la creación, para no perderlos de los reportes.
+  DateTime get paidAtOrFallback =>
+      paidAt ??
+      (paymentStatus == PaymentStatus.paid ? updatedAt : createdAt);
+
+  String get paidByNameOrFallback {
+    final name = paidByName?.trim();
+    if (name != null && name.isNotEmpty) return name;
+    if (source == 'web') return 'Web pública';
+    final updated = updatedByName?.trim();
+    if (updated != null && updated.isNotEmpty) return updated;
+    final created = createdByName?.trim();
+    if (created != null && created.isNotEmpty) return created;
+    return 'Sin registro';
+  }
 
   Order copyWith({
     String? customerName,
@@ -275,6 +302,9 @@ class Order {
     String? createdByName,
     String? updatedBy,
     String? updatedByName,
+    DateTime? paidAt,
+    String? paidBy,
+    String? paidByName,
     List<OrderAuditEntry>? auditLog,
   }) {
     return Order(
@@ -303,6 +333,9 @@ class Order {
       createdByName: createdByName ?? this.createdByName,
       updatedBy: updatedBy ?? this.updatedBy,
       updatedByName: updatedByName ?? this.updatedByName,
+      paidAt: paidAt ?? this.paidAt,
+      paidBy: paidBy ?? this.paidBy,
+      paidByName: paidByName ?? this.paidByName,
       auditLog: auditLog ?? this.auditLog,
     );
   }
@@ -333,6 +366,9 @@ class Order {
         'createdByName': createdByName,
         'updatedBy': updatedBy,
         'updatedByName': updatedByName,
+        'paidAt': paidAt?.toIso8601String(),
+        'paidBy': paidBy,
+        'paidByName': paidByName,
         'auditLog': auditLog.map((e) => e.toJson()).toList(),
       };
 
@@ -370,6 +406,9 @@ class Order {
         createdByName: json['createdByName'] as String?,
         updatedBy: json['updatedBy'] as String?,
         updatedByName: json['updatedByName'] as String?,
+        paidAt: DateTime.tryParse(json['paidAt'] as String? ?? ''),
+        paidBy: json['paidBy'] as String?,
+        paidByName: json['paidByName'] as String?,
         auditLog: (json['auditLog'] as List<dynamic>? ?? const [])
             .whereType<Map<String, dynamic>>()
             .map(OrderAuditEntry.fromJson)

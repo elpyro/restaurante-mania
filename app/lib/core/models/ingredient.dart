@@ -56,6 +56,7 @@ class Ingredient {
   }
 
   Ingredient copyWith({
+    String? id,
     String? name,
     IngredientUnit? unit,
     double? stock,
@@ -63,7 +64,7 @@ class Ingredient {
     double? cost,
   }) {
     return Ingredient(
-      id: id,
+      id: id ?? this.id,
       name: name ?? this.name,
       unit: unit ?? this.unit,
       stock: stock ?? this.stock,
@@ -117,4 +118,18 @@ class RecipeIngredient {
         ingredientId: json['ingredientId'] as String? ?? '',
         quantity: (json['quantity'] as num?)?.toDouble() ?? 0,
       );
+}
+
+/// Insumo de una receta que no alcanza para preparar una porción.
+/// Explica por qué un plato aparece como «Agotado (sin insumos)».
+class IngredientShortage {
+  const IngredientShortage({
+    required this.ingredient,
+    required this.required,
+  });
+
+  final Ingredient ingredient;
+
+  /// Cantidad que exige una porción de la receta.
+  final double required;
 }

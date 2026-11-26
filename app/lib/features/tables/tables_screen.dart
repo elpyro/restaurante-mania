@@ -191,7 +191,7 @@ class _TableSheet extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFFFAF8F5),
+                color: AppTheme.canvas,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: const Color(0xFFEDEAE6)),
               ),

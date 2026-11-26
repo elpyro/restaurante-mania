@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Firebase Crashlytics / Google Services (configuración por entorno)
+/android/app/google-services.json
+/ios/Runner/GoogleService-Info.plist

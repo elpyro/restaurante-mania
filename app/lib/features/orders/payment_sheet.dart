@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../../core/data/repository.dart';
 import '../../core/models/order.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
@@ -10,6 +12,14 @@ Future<List<OrderPayment>?> showPaymentSheet(
   required String title,
   String subtitle = '',
 }) {
+  final settings = context.read<RestaurantRepository>().settings;
+  final enabled = PaymentMethod.values
+      .where((method) => settings.paymentMethods.contains(method.name))
+      .toList();
+  if (enabled.isEmpty) enabled.add(PaymentMethod.cash);
+  final labels = <PaymentMethod, String>{
+    for (final method in enabled) method: settings.paymentLabel(method.name),
+  };
   return showModalBottomSheet<List<OrderPayment>>(
     context: context,
     isScrollControlled: true,
@@ -18,7 +28,13 @@ Future<List<OrderPayment>?> showPaymentSheet(
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
-    builder: (_) => _PaymentSheet(total: total, title: title, subtitle: subtitle),
+    builder: (_) => _PaymentSheet(
+      total: total,
+      title: title,
+      subtitle: subtitle,
+      methods: enabled,
+      labels: labels,
+    ),
   );
 }
 
@@ -30,26 +46,32 @@ class _PaymentEntry {
 }
 
 class _PaymentSheet extends StatefulWidget {
-  const _PaymentSheet({required this.total, required this.title, required this.subtitle});
+  const _PaymentSheet({
+    required this.total,
+    required this.title,
+    required this.subtitle,
+    required this.methods,
+    required this.labels,
+  });
 
   final double total;
   final String title;
   final String subtitle;
+  final List<PaymentMethod> methods;
+  final Map<PaymentMethod, String> labels;
 
   @override
   State<_PaymentSheet> createState() => _PaymentSheetState();
 }
 
 class _PaymentSheetState extends State<_PaymentSheet> {
-  final List<_PaymentEntry> _entries = [
-    _PaymentEntry(method: PaymentMethod.cash, amount: 0),
-  ];
+  late final List<_PaymentEntry> _entries;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _entries.first.amount = widget.total;
+    _entries = [_PaymentEntry(method: widget.methods.first, amount: widget.total)];
   }
 
   double get _sum => _entries.fold(0, (s, e) => s + e.amount);
@@ -58,7 +80,7 @@ class _PaymentSheetState extends State<_PaymentSheet> {
     setState(() {
       final remaining = widget.total - _sum;
       _entries.add(_PaymentEntry(
-        method: PaymentMethod.nequi,
+        method: widget.methods.first,
         amount: remaining > 0 ? remaining : 0,
       ));
       _error = null;
@@ -119,7 +141,7 @@ class _PaymentSheetState extends State<_PaymentSheet> {
             const SizedBox(height: 8),
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: const Color(0xFFFAF8F5), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFEDEAE6))),
+              decoration: BoxDecoration(color: AppTheme.canvas, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFEDEAE6))),
               child: Row(children: [
                 const Text('Total a cobrar', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
                 const Spacer(),
@@ -143,9 +165,9 @@ class _PaymentSheetState extends State<_PaymentSheet> {
                     if (_entries.length > 1)
                       IconButton(onPressed: () => _removeEntry(i), icon: const Icon(Icons.delete_outline_rounded, size: 18, color: AppTheme.danger), visualDensity: VisualDensity.compact),
                   ]),
-                  Wrap(spacing: 6, runSpacing: 6, children: PaymentMethod.values.map((m) {
+                  Wrap(spacing: 6, runSpacing: 6, children: widget.methods.map((m) {
                     return ChoiceChip(
-                      label: Text(m.label),
+                      label: Text(widget.labels[m] ?? m.label),
                       selected: e.method == m,
                       showCheckmark: false,
                       onSelected: (_) => setState(() => e.method = m),

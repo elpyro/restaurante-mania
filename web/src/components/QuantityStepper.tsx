@@ -1,5 +1,7 @@
 "use client";
 
+import { Minus, Plus } from "lucide-react";
+
 interface Props {
   value: number;
   onChange: (value: number) => void;
@@ -17,7 +19,7 @@ export function QuantityStepper({
 }: Props) {
   return (
     <div
-      className="inline-flex items-center rounded-full border border-stone-300 bg-white"
+      className="inline-flex items-center rounded-full border border-line bg-surface-raised"
       role="group"
       aria-label={label}
     >
@@ -26,11 +28,11 @@ export function QuantityStepper({
         aria-label="Disminuir cantidad"
         onClick={() => onChange(Math.max(min, value - 1))}
         disabled={value <= min}
-        className="grid h-8 w-8 place-items-center rounded-full text-lg font-semibold text-ink-700 transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:text-stone-300"
+        className="grid h-8 w-8 place-items-center rounded-full text-ink-soft transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:text-ink-400"
       >
-        −
+        <Minus size={15} aria-hidden />
       </button>
-      <span className="min-w-7 text-center text-sm font-bold tabular-nums text-ink-900">
+      <span className="min-w-7 text-center text-sm font-bold tabular-nums text-ink">
         {value}
       </span>
       <button
@@ -38,9 +40,9 @@ export function QuantityStepper({
         aria-label="Aumentar cantidad"
         onClick={() => onChange(Math.min(max, value + 1))}
         disabled={value >= max}
-        className="grid h-8 w-8 place-items-center rounded-full text-lg font-semibold text-ink-700 transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:text-stone-300"
+        className="grid h-8 w-8 place-items-center rounded-full text-ink-soft transition hover:bg-brand-50 disabled:cursor-not-allowed disabled:text-ink-400"
       >
-        +
+        <Plus size={15} aria-hidden />
       </button>
     </div>
   );

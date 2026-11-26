@@ -4,6 +4,14 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Crashlytics se activa solo cuando el proyecto tiene el archivo nativo.
+// Así el APK sigue compilando en modo demo mientras no se descarga
+// google-services.json desde la consola de Firebase.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+    apply(plugin = "com.google.firebase.crashlytics")
+}
+
 android {
     namespace = "com.example.app"
     compileSdk = flutter.compileSdkVersion

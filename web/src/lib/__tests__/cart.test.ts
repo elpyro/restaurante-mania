@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addLine,
+  adjustLinesForStock,
   cartCount,
   cartTotals,
   isValidCartLine,
@@ -60,6 +61,23 @@ describe("carrito", () => {
     expect(totals.total).toBe(totals.subtotal + totals.tax);
     expect(totals.count).toBe(3);
     expect(cartCount(lines)).toBe(3);
+  });
+
+  it("recorta cantidades extras y quita las líneas sin stock", () => {
+    const lines = addLine(addLine([], empanada, 4), ajiaco, 3);
+    const adjusted = adjustLinesForStock(lines, [
+      { menuItemId: empanada.id, available: 2 },
+      { menuItemId: ajiaco.id, available: 0 },
+    ]);
+    expect(adjusted).toHaveLength(1);
+    expect(adjusted[0].quantity).toBe(2);
+  });
+
+  it("no modifica el carrito si las cantidades ya son válidas", () => {
+    const lines = addLine([], empanada, 1);
+    expect(
+      adjustLinesForStock(lines, [{ menuItemId: empanada.id, available: 3 }]),
+    ).toBe(lines);
   });
 
   it("valida líneas corruptas de localStorage", () => {

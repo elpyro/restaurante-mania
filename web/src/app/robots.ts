@@ -6,8 +6,8 @@ export default function robots(): MetadataRoute.Robots {
     rules: [
       {
         userAgent: "*",
-        allow: "/",
-        disallow: ["/api/", "/checkout", "/order/", "/cart"],
+        allow: ["/", "/menu", "/llms.txt", "/sitemap.xml"],
+        disallow: ["/api/", "/cart", "/checkout", "/cuenta", "/order/"],
       },
       {
         userAgent: ["GPTBot", "ChatGPT-User", "PerplexityBot", "Google-Extended"],

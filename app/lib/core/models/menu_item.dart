@@ -35,6 +35,7 @@ class MenuItem {
     this.videoUrl = '',
     this.recipeSteps = '',
     this.recipe = const [],
+    this.manualUnavailable = false,
   });
 
   final String id;
@@ -69,6 +70,9 @@ class MenuItem {
   /// Insumos y cantidades que consume una porción.
   final List<RecipeIngredient> recipe;
 
+  /// «Agotado» fijado por un administrador: el stock no puede levantarlo.
+  final bool manualUnavailable;
+
   bool get isAvailable => status != MenuItemStatus.unavailable;
 
   bool get hasMedia => imageUrl.trim().isNotEmpty || videoUrl.trim().isNotEmpty;
@@ -93,6 +97,7 @@ class MenuItem {
     String? videoUrl,
     String? recipeSteps,
     List<RecipeIngredient>? recipe,
+    bool? manualUnavailable,
   }) {
     return MenuItem(
       id: id,
@@ -114,6 +119,7 @@ class MenuItem {
       videoUrl: videoUrl ?? this.videoUrl,
       recipeSteps: recipeSteps ?? this.recipeSteps,
       recipe: recipe ?? this.recipe,
+      manualUnavailable: manualUnavailable ?? this.manualUnavailable,
     );
   }
 
@@ -137,6 +143,7 @@ class MenuItem {
         'videoUrl': videoUrl,
         'recipeSteps': recipeSteps,
         'recipe': recipe.map((line) => line.toJson()).toList(),
+        'manualUnavailable': manualUnavailable,
       };
 
   factory MenuItem.fromJson(Map<String, dynamic> json) => MenuItem(
@@ -168,5 +175,6 @@ class MenuItem {
             .whereType<Map<String, dynamic>>()
             .map(RecipeIngredient.fromJson)
             .toList(),
+        manualUnavailable: json['manualUnavailable'] as bool? ?? false,
       );
 }

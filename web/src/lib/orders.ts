@@ -1,15 +1,23 @@
 import { cartTotals } from "./cart";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
+import { getDemoState } from "./demo-store";
 import {
   createDocument,
   getDocument,
   isFirestoreConfigured,
+  tenantPath,
   listDocuments,
   setDocument,
 } from "./firebase/rest";
 import { getMenu } from "./menu";
+import { getRestaurantConfig } from "./restaurant-config";
 import { demoIngredientStocks } from "./seed";
+import {
+  DEFAULT_TENANT_ID,
+  isDemoTenant,
+  tenantDefinition,
+} from "./tenants";
 import type {
   MenuItem,
   Order,
@@ -22,6 +30,29 @@ import type {
 
 const ORDER_TYPES: OrderType[] = ["pickup", "delivery", "table"];
 const PAYMENT_METHODS: PaymentMethod[] = ["cash", "card", "nequi", "daviplata"];
+
+/** Política publicada desde la APK; por defecto todo está disponible. */
+export interface OrderPolicy {
+  showOrderTypeOptions: boolean;
+  deliveryOptions: Record<OrderType, boolean>;
+  paymentMethods: PaymentMethod[];
+}
+
+export const DEFAULT_ORDER_POLICY: OrderPolicy = {
+  showOrderTypeOptions: true,
+  deliveryOptions: { pickup: true, delivery: true, table: true },
+  paymentMethods: [...PAYMENT_METHODS],
+};
+
+export function restaurantOrderPolicy(
+  config: Awaited<ReturnType<typeof getRestaurantConfig>>["config"],
+): OrderPolicy {
+  return {
+    showOrderTypeOptions: config.showOrderTypeOptions,
+    deliveryOptions: config.deliveryOptions,
+    paymentMethods: config.paymentMethods,
+  };
+}
 
 export interface OrderInputItem {
   menuItemId: string;
@@ -89,7 +120,10 @@ export function validateOrderItems(raw: unknown): ItemsValidationResult {
   return { ok: true, items };
 }
 
-export function validateOrderInput(raw: unknown): ValidationResult {
+export function validateOrderInput(
+  raw: unknown,
+  policy: OrderPolicy = DEFAULT_ORDER_POLICY,
+): ValidationResult {
   const errors: string[] = [];
   if (!raw || typeof raw !== "object") {
     return { ok: false, errors: ["El cuerpo del pedido es inválido."] };
@@ -105,6 +139,8 @@ export function validateOrderInput(raw: unknown): ValidationResult {
 
   if (!ORDER_TYPES.includes(type)) {
     errors.push("El tipo de pedido no es válido.");
+  } else if (!policy.deliveryOptions[type]) {
+    errors.push("Ese tipo de pedido no está disponible en este momento.");
   }
 
   if (!isTable) {
@@ -144,8 +180,11 @@ export function validateOrderInput(raw: unknown): ValidationResult {
   }
 
   const paymentMethod = text(body.paymentMethod) as PaymentMethod;
-  if (!PAYMENT_METHODS.includes(paymentMethod)) {
-    errors.push("El método de pago no es válido.");
+  if (
+    !PAYMENT_METHODS.includes(paymentMethod) ||
+    !policy.paymentMethods.includes(paymentMethod)
+  ) {
+    errors.push("El método de pago no está disponible en este momento.");
   }
 
   const notes = text(body.notes);
@@ -192,17 +231,20 @@ export class OrderValidationError extends Error {
   }
 }
 
-function orderCode(): string {
+function orderCode(tenantId = DEFAULT_TENANT_ID): string {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const random = Math.random().toString(36).slice(2, 6).toUpperCase();
-  return `RM-${date}-${random}`;
+  const prefix = tenantDefinition(tenantId).orderPrefix;
+  return `${prefix}-${date}-${random}`;
 }
 
 const globalStore = globalThis as unknown as {
   __restauranteOrders?: Map<string, Order>;
 };
 
-function demoOrders(): Map<string, Order> {
+/** Los tenants demo tienen su propio mapa; Manía conserva el global histórico. */
+function demoOrders(tenantId = DEFAULT_TENANT_ID): Map<string, Order> {
+  if (isDemoTenant(tenantId)) return getDemoState(tenantId).orders;
   if (!globalStore.__restauranteOrders) {
     globalStore.__restauranteOrders = new Map();
   }
@@ -248,28 +290,43 @@ function mapOrderDoc(doc: {
     createdAt: String(d.createdAt ?? new Date().toISOString()),
     updatedAt: String(d.updatedAt ?? d.createdAt ?? new Date().toISOString()),
     source: d.source === "app" ? "app" : "web",
+    ...(typeof d.inventoryDeducted === "boolean"
+      ? { inventoryDeducted: d.inventoryDeducted }
+      : {}),
+    ...(typeof d.paidAt === "string" && d.paidAt.trim()
+      ? { paidAt: d.paidAt }
+      : {}),
+    ...(typeof d.paidBy === "string" ? { paidBy: d.paidBy } : {}),
+    ...(typeof d.paidByName === "string" ? { paidByName: d.paidByName } : {}),
   };
 }
 
 const DATA_DIR = path.join(process.cwd(), ".data");
-const DATA_FILE = path.join(DATA_DIR, "orders.json");
 const disablePersistence =
   process.env.VITEST === "true" ||
   process.env.NODE_ENV === "test" ||
   process.env.DISABLE_ORDER_PERSISTENCE === "true";
 
-let diskLoaded = false;
+const diskLoaded = new Set<string>();
 
-async function loadFromDisk() {
-  if (disablePersistence || diskLoaded) return;
-  diskLoaded = true;
+function ordersFile(tenantId: string): string {
+  // El archivo histórico sigue siendo de Manía; los tenants nuevos tienen
+  // directorios propios y nunca se mezclan.
+  return isDemoTenant(tenantId)
+    ? path.join(DATA_DIR, tenantId, "orders.json")
+    : path.join(DATA_DIR, "orders.json");
+}
+
+async function loadFromDisk(tenantId = DEFAULT_TENANT_ID) {
+  if (disablePersistence || diskLoaded.has(tenantId)) return;
+  diskLoaded.add(tenantId);
   try {
-    const raw = await readFile(DATA_FILE, "utf8");
+    const raw = await readFile(ordersFile(tenantId), "utf8");
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       for (const entry of parsed) {
         if (entry && typeof entry.id === "string") {
-          demoOrders().set(entry.id, entry as Order);
+          demoOrders(tenantId).set(entry.id, entry as Order);
         }
       }
     }
@@ -278,13 +335,14 @@ async function loadFromDisk() {
   }
 }
 
-async function persistOrdersToDisk() {
-  if (disablePersistence) return;
+async function persistOrdersToDisk(tenantId = DEFAULT_TENANT_ID) {
+  if (disablePersistence || isFirestoreConfigured()) return;
   try {
-    await mkdir(DATA_DIR, { recursive: true });
+    const file = ordersFile(tenantId);
+    await mkdir(path.dirname(file), { recursive: true });
     await writeFile(
-      DATA_FILE,
-      JSON.stringify(listDemoOrders().slice(0, 200), null, 2),
+      file,
+      JSON.stringify(listDemoOrders(tenantId).slice(0, 200), null, 2),
       "utf8",
     );
   } catch {
@@ -292,30 +350,134 @@ async function persistOrdersToDisk() {
   }
 }
 
-async function loadIngredientStocks(): Promise<Map<string, number>> {
+async function loadIngredientStocks(
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<Map<string, number>> {
+  if (!isFirestoreConfigured() && isDemoTenant(tenantId)) {
+    return new Map(Object.entries(getDemoState(tenantId).stocks));
+  }
   if (isFirestoreConfigured()) {
-    const ingredientDocs = await listDocuments("ingredients", (doc) => ({
-      id: doc.id,
-      stock:
-        typeof doc.data.stock === "number" && Number.isFinite(doc.data.stock)
-          ? (doc.data.stock as number)
-          : 0,
-    }));
+    const ingredientDocs = await listDocuments(
+      tenantPath(tenantId, "ingredients"),
+      (doc) => ({
+        id: doc.id,
+        stock:
+          typeof doc.data.stock === "number" && Number.isFinite(doc.data.stock)
+            ? (doc.data.stock as number)
+            : 0,
+      }),
+      0,
+    );
     return new Map(ingredientDocs.map((i) => [i.id, i.stock]));
   }
   return new Map(Object.entries(demoIngredientStocks));
 }
 
+type StockLine = Pick<OrderInputItem, "menuItemId" | "quantity">;
+type StockUpdate = { id: string; stock: number };
+
+/** Estado a partir del cual el pedido ya consume insumos (pendiente no consume). */
+function isDeductibleStatus(status: OrderStatus): boolean {
+  return (
+    status !== "pending" &&
+    status !== "cancelled" &&
+    ORDER_STATUSES.includes(status)
+  );
+}
+
+function stockConsumption(
+  items: StockLine[],
+  menuById: Map<string, MenuItem>,
+): Map<string, number> {
+  const consumption = new Map<string, number>();
+  for (const line of items) {
+    const menuItem = menuById.get(line.menuItemId);
+    if (!menuItem?.recipe?.length) continue;
+    for (const recipeLine of menuItem.recipe) {
+      if (!recipeLine.ingredientId || recipeLine.quantity <= 0) continue;
+      consumption.set(
+        recipeLine.ingredientId,
+        (consumption.get(recipeLine.ingredientId) ?? 0) +
+          recipeLine.quantity * line.quantity,
+      );
+    }
+  }
+  return consumption;
+}
+
+async function applyStockUpdates(
+  updates: StockUpdate[],
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<void> {
+  if (updates.length === 0) return;
+  if (!isFirestoreConfigured() && isDemoTenant(tenantId)) {
+    const stocks = getDemoState(tenantId).stocks;
+    for (const { id, stock } of updates) stocks[id] = stock;
+    return;
+  }
+  if (isFirestoreConfigured()) {
+    const updatedAt = new Date().toISOString();
+    await Promise.all(
+      updates.map(({ id, stock }) =>
+        setDocument(tenantPath(tenantId, "ingredients"), id, { stock, updatedAt }),
+      ),
+    );
+  } else {
+    for (const { id, stock } of updates) demoIngredientStocks[id] = stock;
+  }
+}
+
+/** Descuenta los insumos cuando el pedido avanza más allá de `pending`. */
+async function deductStockForItems(
+  items: StockLine[],
+  menuById: Map<string, MenuItem>,
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<StockUpdate[]> {
+  const consumption = stockConsumption(items, menuById);
+  if (consumption.size === 0) return [];
+
+  const stocks = await loadIngredientStocks(tenantId);
+  const updates: StockUpdate[] = [];
+  for (const [ingredientId, required] of consumption) {
+    const current = stocks.get(ingredientId);
+    if (current === undefined) continue;
+    updates.push({ id: ingredientId, stock: Math.max(0, current - required) });
+  }
+  await applyStockUpdates(updates, tenantId);
+  return updates;
+}
+
+/** Repone los insumos al cancelar un pedido que ya había descontado. */
+async function restoreStockForItems(
+  items: StockLine[],
+  menuById: Map<string, MenuItem>,
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<StockUpdate[]> {
+  const consumption = stockConsumption(items, menuById);
+  if (consumption.size === 0) return [];
+
+  const stocks = await loadIngredientStocks(tenantId);
+  const updates: StockUpdate[] = [];
+  for (const [ingredientId, required] of consumption) {
+    const current = stocks.get(ingredientId);
+    if (current === undefined) continue;
+    updates.push({ id: ingredientId, stock: current + required });
+  }
+  await applyStockUpdates(updates, tenantId);
+  return updates;
+}
+
 export async function getInsufficientItems(
   inputItems: OrderInputItem[],
   menuById: Map<string, MenuItem>,
+  tenantId = DEFAULT_TENANT_ID,
 ): Promise<InsufficientItem[]> {
   const hasRecipe = inputItems.some(
     (line) => (menuById.get(line.menuItemId)?.recipe?.length ?? 0) > 0,
   );
   if (!hasRecipe) return [];
 
-  const stocks = await loadIngredientStocks();
+  const stocks = await loadIngredientStocks(tenantId);
   const consumption = new Map<string, number>();
   for (const line of inputItems) {
     const menuItem = menuById.get(line.menuItemId);
@@ -328,9 +490,10 @@ export async function getInsufficientItems(
     }
   }
 
+  // Un insumo de la receta sin documento de stock está agotado, no ilimitado.
   const overStock = [...consumption.entries()].filter(([ingredientId, required]) => {
-    const stock = stocks.get(ingredientId);
-    return stock !== undefined && required > stock + 0.0001;
+    const stock = stocks.get(ingredientId) ?? 0;
+    return required > stock + 0.0001;
   });
   if (overStock.length === 0) return [];
 
@@ -358,8 +521,7 @@ export async function getInsufficientItems(
 
     let available = line.quantity;
     for (const r of menuItem.recipe) {
-      const stock = stocks.get(r.ingredientId);
-      if (stock === undefined) continue;
+      const stock = stocks.get(r.ingredientId) ?? 0;
       const remaining = stock - (othersConsumption.get(r.ingredientId) ?? 0);
       const canMake = remaining <= 0 ? 0 : Math.floor(remaining / r.quantity);
       if (canMake < available) available = canMake;
@@ -377,8 +539,12 @@ export async function getInsufficientItems(
   return insufficient;
 }
 
-export async function createOrder(raw: unknown): Promise<Order> {
-  const validation = validateOrderInput(raw);
+export async function createOrder(
+  raw: unknown,
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<Order> {
+  const { config } = await getRestaurantConfig(tenantId);
+  const validation = validateOrderInput(raw, restaurantOrderPolicy(config));
   if (!validation.ok) throw new OrderValidationError(validation.errors);
 
   const input = validation.value;
@@ -386,7 +552,7 @@ export async function createOrder(raw: unknown): Promise<Order> {
     input.type === "table" && input.customerName.trim().length < 2
       ? `Mesa ${input.tableNumber}`
       : input.customerName;
-  const { items: menuItems } = await getMenu();
+  const { items: menuItems } = await getMenu(tenantId);
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
 
   const errors: string[] = [];
@@ -418,7 +584,7 @@ export async function createOrder(raw: unknown): Promise<Order> {
     );
     if (hasRecipe) {
       try {
-        insufficientItems = await getInsufficientItems(input.items, menuById);
+        insufficientItems = await getInsufficientItems(input.items, menuById, tenantId);
       } catch (error) {
         console.warn("[orders] No se pudo validar stock de ingredientes:", error);
         errors.push(
@@ -441,10 +607,12 @@ export async function createOrder(raw: unknown): Promise<Order> {
 
   if (errors.length > 0) throw new OrderValidationError(errors, insufficientItems);
 
+  // Un pedido recién creado queda en `pending` y aún no consume insumos.
+  // El descuento ocurre al avanzar a un estado superior (ver `updateOrder`).
   const totals = cartTotals(orderItems);
   const now = new Date();
   const base = {
-    code: orderCode(),
+    code: orderCode(tenantId),
     customerName: resolvedCustomerName,
     customerPhone: input.customerPhone,
     deliveryAddress: input.type === "delivery" ? input.deliveryAddress : "",
@@ -456,6 +624,7 @@ export async function createOrder(raw: unknown): Promise<Order> {
     total: totals.total,
     status: "pending" as const,
     paymentStatus: "pending" as const,
+    inventoryDeducted: false,
     paymentMethod: input.paymentMethod,
     notes: input.notes,
     source: "web" as const,
@@ -466,7 +635,7 @@ export async function createOrder(raw: unknown): Promise<Order> {
   let id: string;
   if (isFirestoreConfigured()) {
     try {
-      id = await createDocument("orders", base);
+      id = await createDocument(tenantPath(tenantId, "orders"), base);
     } catch (error) {
       console.warn("[orders] No se pudo escribir en Firestore:", error);
       id = `demo-${now.getTime()}`;
@@ -482,49 +651,60 @@ export async function createOrder(raw: unknown): Promise<Order> {
     updatedAt: now.toISOString(),
   };
 
-  const store = demoOrders();
+  const store = demoOrders(tenantId);
   store.set(order.id, order);
   if (store.size > 200) {
     const oldest = store.keys().next().value;
     if (oldest) store.delete(oldest);
   }
-  await persistOrdersToDisk();
+  await persistOrdersToDisk(tenantId);
   return order;
 }
 
-export async function getOrderById(id: string): Promise<Order | null> {
-  await loadFromDisk();
-  const demo = demoOrders().get(id);
-  if (demo && !isFirestoreConfigured()) return demo;
-  if (!isFirestoreConfigured()) return null;
+export async function getOrderById(
+  id: string,
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<Order | null> {
+  if (!isFirestoreConfigured()) {
+    await loadFromDisk(tenantId);
+    return demoOrders(tenantId).get(id) ?? null;
+  }
   try {
-    const data = await getDocument<Record<string, unknown>>("orders", id);
+    const data = await getDocument<Record<string, unknown>>(
+      tenantPath(tenantId, "orders"),
+      id,
+    );
     if (data) return mapOrderDoc({ id, data });
   } catch (error) {
     console.warn("[orders] No se pudo leer el pedido de Firestore:", error);
   }
-  return demo ?? null;
+  return demoOrders(tenantId).get(id) ?? null;
 }
 
-export function listDemoOrders(): Order[] {
-  return [...demoOrders().values()].sort(
+export function listDemoOrders(tenantId = DEFAULT_TENANT_ID): Order[] {
+  return [...demoOrders(tenantId).values()].sort(
     (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
   );
 }
 
-export async function listOrders(): Promise<Order[]> {
-  await loadFromDisk();
-  if (isFirestoreConfigured()) {
-    try {
-      const orders = await listDocuments("orders", mapOrderDoc, 0);
-      return orders.sort(
-        (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
-      );
-    } catch (error) {
-      console.warn("[orders] Firestore no disponible, usando pedidos locales:", error);
-    }
+export async function listOrders(tenantId = DEFAULT_TENANT_ID): Promise<Order[]> {
+  if (!isFirestoreConfigured()) {
+    await loadFromDisk(tenantId);
+    return listDemoOrders(tenantId);
   }
-  return listDemoOrders();
+  try {
+    const orders = await listDocuments(
+      tenantPath(tenantId, "orders"),
+      mapOrderDoc,
+      0,
+    );
+    return orders.sort(
+      (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+    );
+  } catch (error) {
+    console.warn("[orders] Firestore no disponible, usando pedidos locales:", error);
+  }
+  return listDemoOrders(tenantId);
 }
 
 const ORDER_STATUSES: OrderStatus[] = [
@@ -538,16 +718,41 @@ const ORDER_STATUSES: OrderStatus[] = [
 ];
 const PAYMENT_STATUSES: PaymentStatus[] = ["pending", "paid", "refunded"];
 
+function normalizePaidAt(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const timestamp = Date.parse(trimmed);
+  return Number.isNaN(timestamp) ? undefined : new Date(timestamp).toISOString();
+}
+
+export interface OrderPaymentPatch {
+  paidAt?: string;
+  paidBy?: string;
+  paidByName?: string;
+}
+
 export async function updateOrder(
   id: string,
-  patch: { status?: OrderStatus; paymentStatus?: PaymentStatus },
+  patch: {
+    status?: OrderStatus;
+    paymentStatus?: PaymentStatus;
+    inventoryDeducted?: boolean;
+  } & OrderPaymentPatch,
+  tenantId = DEFAULT_TENANT_ID,
 ): Promise<Order | null> {
-  await loadFromDisk();
-  const cached = demoOrders().get(id);
-  const current =
-    cached ?? (isFirestoreConfigured() ? await getOrderById(id) : null);
+  if (!isFirestoreConfigured()) await loadFromDisk(tenantId);
+  // Con Firestore, la fuente de verdad es el documento remoto: la copia en
+  // memoria puede tener un `inventoryDeducted` viejo (p. ej. el pedido ya
+  // descontó en otro proceso del servidor) y Reponer/Deductir se decidiría mal.
+  // `getOrderById` ya cae al caché local si la lectura remota falla.
+  const useFirestore = isFirestoreConfigured();
+  const current = useFirestore
+    ? await getOrderById(id, tenantId)
+    : demoOrders(tenantId).get(id) ?? null;
   if (!current) return null;
 
+  const wasDeducted = current.inventoryDeducted === true;
   const next: Order = { ...current };
   if (patch.status) {
     if (!ORDER_STATUSES.includes(patch.status)) {
@@ -561,18 +766,79 @@ export async function updateOrder(
     }
     next.paymentStatus = patch.paymentStatus;
   }
+  // Con cambio de estado, el flag lo decide esta función desde el documento
+  // persistido. Aceptar el del cliente permite que un PATCH de la APK con
+  // `inventoryDeducted:false` borre un descuento ya aplicado (o impida que se
+  // aplicara). Sin status, el flag explícito sigue siendo una corrección válida.
+  if (typeof patch.inventoryDeducted === "boolean" && !patch.status) {
+    next.inventoryDeducted = patch.inventoryDeducted;
+  }
+  const paidAt = normalizePaidAt(patch.paidAt);
+  if (paidAt) next.paidAt = paidAt;
+  if (typeof patch.paidBy === "string") {
+    const paidBy = patch.paidBy.trim();
+    if (paidBy) next.paidBy = paidBy;
+  }
+  if (typeof patch.paidByName === "string") {
+    const paidByName = patch.paidByName.trim();
+    if (paidByName) next.paidByName = paidByName;
+  }
+  // Cobros heredados o desde la web pública: dejar huella aunque el cliente
+  // no envíe metadata. Los datos enviados por la app tienen prioridad.
+  if (next.paymentStatus === "paid" && current.paymentStatus !== "paid") {
+    next.paidAt ??= new Date().toISOString();
+    next.paidByName ??= current.source === "web" ? "Web pública" : "Sistema";
+  }
   next.updatedAt = new Date().toISOString();
 
-  if (isFirestoreConfigured()) {
+  // `pending` no descuenta insumos. El descuento se hace una sola vez al
+  // avanzar a cualquier estado superior y se repone al cancelar/reabrir.
+  if (patch.status) {
+    const { items: menuItems } = await getMenu(tenantId);
+    const menuById = new Map(menuItems.map((item) => [item.id, item]));
+    // La decisión la manda el flag persistido, no el que envía el cliente: la
+    // app reenvía `inventoryDeducted: true` junto al cambio de estado después
+    // de descontar localmente, pero la web aún no había descontado.
+    if (isDeductibleStatus(patch.status) && !wasDeducted) {
+      try {
+        const updates = await deductStockForItems(current.items, menuById, tenantId);
+        if (updates.length > 0) next.inventoryDeducted = true;
+      } catch (error) {
+        console.error("[orders] No se pudo descontar el inventario:", error);
+        throw new OrderValidationError([
+          "No se pudo descontar el inventario. Intenta de nuevo.",
+        ]);
+      }
+    } else if (
+      (patch.status === "cancelled" || patch.status === "pending") &&
+      wasDeducted
+    ) {
+      try {
+        await restoreStockForItems(current.items, menuById, tenantId);
+        next.inventoryDeducted = false;
+      } catch (error) {
+        console.error("[orders] No se pudo reponer el inventario:", error);
+        throw new OrderValidationError([
+          "No se pudo reponer el inventario. Intenta de nuevo.",
+        ]);
+      }
+    }
+  }
+
+  if (useFirestore) {
     try {
-      await setDocument("orders", id, next as unknown as Record<string, unknown>);
+      await setDocument(
+        tenantPath(tenantId, "orders"),
+        id,
+        next as unknown as Record<string, unknown>,
+      );
     } catch (error) {
       console.error("[orders] No se pudo actualizar Firestore:", error);
       throw error;
     }
   }
 
-  demoOrders().set(id, next);
-  await persistOrdersToDisk();
+  demoOrders(tenantId).set(id, next);
+  await persistOrdersToDisk(tenantId);
   return next;
 }
