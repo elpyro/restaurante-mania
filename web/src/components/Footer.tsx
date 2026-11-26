@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import {
+  formatOpeningHours,
   SOCIAL_NETWORKS,
   type RestaurantConfig,
   type SocialNetwork,
@@ -127,7 +128,7 @@ export function Footer({ config }: { config: RestaurantConfig }) {
               )}
               <li className="flex items-center gap-2">
                 <Clock size={16} className="shrink-0 text-brand-300" aria-hidden />
-                <span>Todos los días · {config.hours}</span>
+                <span>{formatOpeningHours(config)}</span>
               </li>
               <li className="flex items-center gap-2">
                 <Phone size={16} className="shrink-0 text-brand-300" aria-hidden />

@@ -5,7 +5,8 @@ import {
   type App,
 } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getDocument, listDocuments } from "@/lib/firebase/rest";
+import { getDocument, listDocuments, tenantPath } from "@/lib/firebase/rest";
+import { DEFAULT_TENANT_ID } from "@/lib/tenants";
 
 /**
  * Helper exclusivo de servidor: verifica ID tokens con Firebase Admin.
@@ -40,15 +41,21 @@ interface StoredUserRole {
 /**
  * El service account del proyecto tiene permisos de Firestore, no de Firebase
  * Auth Admin, así que no siempre es posible escribir custom claims. El rol se
- * acepta desde el claim `role` o, en su defecto, desde `users/{uid}` (o por
- * email). Ambos mecanismos son datos controlados por el servidor.
+ * acepta desde el claim `role` o, en su defecto, desde
+ * `tenants/{tenantId}/users/{uid}` (o por email). Ambos mecanismos son datos
+ * controlados por el servidor y aislados por restaurante.
  */
 async function resolveStoredRole(
   uid: string,
+  tenantId: string,
   email?: string,
 ): Promise<unknown> {
   try {
-    const direct = await getDocument<StoredUserRole>("users", uid, 0);
+    const direct = await getDocument<StoredUserRole>(
+      tenantPath(tenantId, "users"),
+      uid,
+      0,
+    );
     if (direct?.role) return direct.role;
   } catch {
     // Se intenta por email si el documento por uid no existe o falla.
@@ -57,7 +64,7 @@ async function resolveStoredRole(
   if (!email) return undefined;
   try {
     const matches = await listDocuments<StoredUserRole>(
-      "users",
+      tenantPath(tenantId, "users"),
       ({ data }) => data as StoredUserRole,
       0,
     );
@@ -126,7 +133,10 @@ function resolveApp(): Promise<App | null> {
   return appPromise;
 }
 
-export async function verifyAdminIdToken(token: string): Promise<AdminIdentity> {
+export async function verifyAdminIdToken(
+  token: string,
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<AdminIdentity> {
   const app = await resolveApp();
   if (!app) {
     throw new AdminUnavailableError("Firebase Admin no está configurado en el servidor.");
@@ -141,7 +151,7 @@ export async function verifyAdminIdToken(token: string): Promise<AdminIdentity> 
     };
   }
 
-  const storedRole = await resolveStoredRole(decoded.uid, decoded.email);
+  const storedRole = await resolveStoredRole(decoded.uid, tenantId, decoded.email);
   return {
     uid: decoded.uid,
     email: decoded.email,

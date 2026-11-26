@@ -21,8 +21,11 @@ import {
   type StockAdjustment,
 } from "@/lib/cart";
 import type { CartLine, CartTotals, MenuItem } from "@/lib/types";
+import { getClientTenantId, tenantStorageKey } from "@/lib/client-tenant";
 
-const STORAGE_KEY = "rm_cart_v1";
+function storageKey(): string {
+  return tenantStorageKey(getClientTenantId(), "rm_cart_v1");
+}
 
 interface CartContextValue {
   lines: CartLine[];
@@ -46,7 +49,7 @@ const CartContext = createContext<CartContextValue | null>(null);
 function readStorage(): CartLine[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey());
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter(isValidCartLine) : [];
@@ -69,7 +72,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     linesRef.current = lines;
     if (!ready) return;
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(lines));
+      window.localStorage.setItem(storageKey(), JSON.stringify(lines));
     } catch {
       /* almacenamiento lleno o bloqueado */
     }

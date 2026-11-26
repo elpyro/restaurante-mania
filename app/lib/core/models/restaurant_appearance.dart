@@ -21,6 +21,10 @@ enum AppearancePreset {
   }
 }
 
+const defaultCtaTitle = '¿Hambre? Tu mesa o domicilio te espera.';
+const defaultCtaDescription =
+    'Abrimos todos los días de Lun–Sáb 11:30–20:30. Haz tu pedido en línea o escríbenos por WhatsApp.';
+
 /// Colores base del estilo propio. La web deriva el resto de la paleta.
 const customColorKeys = <String>[
   'brand',
@@ -54,6 +58,8 @@ class RestaurantAppearance {
     required this.heroTitle,
     required this.heroDescription,
     required this.heroBadge,
+    this.ctaTitle = defaultCtaTitle,
+    this.ctaDescription = defaultCtaDescription,
     this.preset = AppearancePreset.mania,
     this.bannerUrl,
     this.logoUrl,
@@ -72,6 +78,8 @@ class RestaurantAppearance {
         'Pide tu bandeja paisa, un ajiaco bien caliente o una limonada de coco. '
         'Preparamos todo al momento y lo tienes listo en minutos.',
     heroBadge: '🇨🇴 Cocina colombiana · Medellín',
+    ctaTitle: defaultCtaTitle,
+    ctaDescription: defaultCtaDescription,
     preset: AppearancePreset.mania,
   );
 
@@ -80,6 +88,8 @@ class RestaurantAppearance {
   static const heroTitleMaxLength = 120;
   static const heroDescriptionMaxLength = 500;
   static const heroBadgeMaxLength = 80;
+  static const ctaTitleMaxLength = 120;
+  static const ctaDescriptionMaxLength = 300;
   static const socialUrlMaxLength = 300;
   static const gpsUrlMaxLength = 500;
 
@@ -87,6 +97,8 @@ class RestaurantAppearance {
   final String heroTitle;
   final String heroDescription;
   final String heroBadge;
+  final String ctaTitle;
+  final String ctaDescription;
   final AppearancePreset preset;
   final String? bannerUrl;
   final String? logoUrl;
@@ -101,6 +113,8 @@ class RestaurantAppearance {
     String? heroTitle,
     String? heroDescription,
     String? heroBadge,
+    String? ctaTitle,
+    String? ctaDescription,
     AppearancePreset? preset,
     String? bannerUrl,
     bool clearBanner = false,
@@ -121,6 +135,8 @@ class RestaurantAppearance {
       heroTitle: heroTitle ?? this.heroTitle,
       heroDescription: heroDescription ?? this.heroDescription,
       heroBadge: heroBadge ?? this.heroBadge,
+      ctaTitle: ctaTitle ?? this.ctaTitle,
+      ctaDescription: ctaDescription ?? this.ctaDescription,
       preset: preset ?? this.preset,
       bannerUrl: clearBanner ? null : bannerUrl ?? this.bannerUrl,
       logoUrl: clearLogo ? null : logoUrl ?? this.logoUrl,
@@ -140,6 +156,8 @@ class RestaurantAppearance {
         'heroTitle': heroTitle,
         'heroDescription': heroDescription,
         'heroBadge': heroBadge,
+        'ctaTitle': ctaTitle,
+        'ctaDescription': ctaDescription,
         'appearance': {
           'preset': preset.name,
           'bannerUrl': bannerUrl,
@@ -197,6 +215,8 @@ class RestaurantAppearance {
       heroTitle: text('heroTitle', defaults.heroTitle),
       heroDescription: text('heroDescription', defaults.heroDescription),
       heroBadge: text('heroBadge', defaults.heroBadge),
+      ctaTitle: text('ctaTitle', defaults.ctaTitle),
+      ctaDescription: text('ctaDescription', defaults.ctaDescription),
       preset: AppearancePreset.fromName(
         json['preset'] ?? nested['preset'] ?? defaults.preset.name,
       ),
@@ -237,6 +257,8 @@ class RestaurantAppearance {
           heroTitle == other.heroTitle &&
           heroDescription == other.heroDescription &&
           heroBadge == other.heroBadge &&
+          ctaTitle == other.ctaTitle &&
+          ctaDescription == other.ctaDescription &&
           preset == other.preset &&
           bannerUrl == other.bannerUrl &&
           logoUrl == other.logoUrl &&
@@ -252,6 +274,8 @@ class RestaurantAppearance {
         heroTitle,
         heroDescription,
         heroBadge,
+        ctaTitle,
+        ctaDescription,
         preset,
         bannerUrl,
         logoUrl,

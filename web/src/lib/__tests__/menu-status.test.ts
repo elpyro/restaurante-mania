@@ -5,6 +5,9 @@ const rest = vi.hoisted(() => ({
   isFirestoreConfigured: vi.fn(),
   listDocuments: vi.fn(),
   setDocument: vi.fn(),
+  tenantPath: vi.fn(
+    (tenantId: string, collection: string) => `tenants/${tenantId}/${collection}`,
+  ),
 }));
 
 vi.mock("../firebase/rest", () => rest);
@@ -33,12 +36,12 @@ describe("setMenuItemStatus", () => {
       status: "unavailable",
     });
     expect(rest.getDocument).toHaveBeenCalledWith(
-      "menuItems",
+      "tenants/mania/menuItems",
       "item-limonada-coco",
       0,
     );
     expect(rest.setDocument).toHaveBeenCalledWith(
-      "menuItems",
+      "tenants/mania/menuItems",
       "item-limonada-coco",
       expect.objectContaining({
         status: "unavailable",
@@ -76,7 +79,7 @@ describe("setMenuItemStatus", () => {
     await setMenuItemStatus("item-cafe", "unavailable", false, "ingredients");
 
     expect(rest.setDocument).toHaveBeenCalledWith(
-      "menuItems",
+      "tenants/mania/menuItems",
       "item-cafe",
       expect.objectContaining({
         status: "unavailable",
@@ -94,7 +97,7 @@ describe("setMenuItemStatus", () => {
     await setMenuItemStatus("item-limonada-coco", "available", false);
 
     expect(rest.setDocument).toHaveBeenCalledWith(
-      "menuItems",
+      "tenants/mania/menuItems",
       "item-limonada-coco",
       expect.objectContaining({ status: "available", manualStatus: null }),
     );
@@ -103,7 +106,7 @@ describe("setMenuItemStatus", () => {
   it("persiste el estado derivado del stock sin pisar bloqueos manuales", async () => {
     rest.isFirestoreConfigured.mockReturnValue(true);
     rest.listDocuments.mockImplementation(async (collection: string) =>
-      collection === "ingredients"
+      collection === "tenants/mania/ingredients"
         ? [{ id: "cafe", stock: 0 }]
         : [
             {
@@ -127,7 +130,7 @@ describe("setMenuItemStatus", () => {
     expect(updated).toEqual(["item-cafe"]);
     expect(rest.setDocument).toHaveBeenCalledTimes(1);
     expect(rest.setDocument).toHaveBeenCalledWith(
-      "menuItems",
+      "tenants/mania/menuItems",
       "item-cafe",
       expect.objectContaining({ status: "unavailable", statusReason: "ingredients" }),
     );

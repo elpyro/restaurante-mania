@@ -15,6 +15,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useCart } from "./CartProvider";
+import { DEFAULT_TENANT_ID, withTenant } from "@/lib/tenants";
+import {
+  getClientTenantId,
+  tenantFetchHeaders,
+  tenantStorageKey,
+} from "@/lib/client-tenant";
 import { formatMoney } from "@/lib/format";
 import {
   DEFAULT_RESTAURANT_CONFIG,
@@ -36,7 +42,18 @@ const paymentOptions: Array<{ value: PaymentMethod; label: string }> = [
   { value: "daviplata", label: "Daviplata" },
 ];
 
-const CUSTOMER_PROFILE_KEY = "rm_customer_profile_v1";
+function customerProfileKey(): string {
+  return tenantStorageKey(getClientTenantId(), "rm_customer_profile_v1");
+}
+function ordersKey(): string {
+  return tenantStorageKey(getClientTenantId(), "rm_orders_v1");
+}
+function lastOrderKey(): string {
+  return tenantStorageKey(getClientTenantId(), "rm_last_order_id");
+}
+function orderKey(id: string): string {
+  return tenantStorageKey(getClientTenantId(), `rm_order_${id}`);
+}
 
 type InsufficientItem = {
   menuItemId: string;
@@ -47,6 +64,8 @@ type InsufficientItem = {
 
 export function CheckoutForm() {
   const router = useRouter();
+  const [tenantId, setTenantId] = useState(DEFAULT_TENANT_ID);
+  useEffect(() => { setTenantId(getClientTenantId()); }, []);
   const { lines, totals, ready, clear, adjustForStock } = useCart();
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -72,7 +91,7 @@ export function CheckoutForm() {
   // La configuración la publica la APK; aquí solo leemos la política vigente.
   useEffect(() => {
     let active = true;
-    fetch("/api/restaurant/config", { cache: "no-store" })
+    fetch("/api/restaurant/config", { cache: "no-store", headers: tenantFetchHeaders() })
       .then((response) => (response.ok ? response.json() : null))
       .then((data: { config?: PublicRestaurantConfig } | null) => {
         if (!active || !data?.config) return;
@@ -100,7 +119,7 @@ export function CheckoutForm() {
 
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(CUSTOMER_PROFILE_KEY);
+      const raw = window.localStorage.getItem(customerProfileKey());
       if (!raw) return;
       const profile = JSON.parse(raw) as {
         customerName?: string;
@@ -166,7 +185,7 @@ export function CheckoutForm() {
       try {
         const response = await fetch("/api/orders/validate", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...tenantFetchHeaders() },
           body: JSON.stringify({
             stockOnly: true,
             items: lines.map((line) => ({
@@ -229,7 +248,7 @@ export function CheckoutForm() {
           Agrega algo del menú antes de continuar con el pedido.
         </p>
         <Link
-          href="/menu"
+          href={withTenant("/menu", tenantId)}
           className="btn-primary mt-6"
         >
           Ir al menú
@@ -294,7 +313,7 @@ export function CheckoutForm() {
     try {
       const checkResponse = await fetch("/api/orders/validate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...tenantFetchHeaders() },
         body: JSON.stringify(payloadBody),
       });
       const checkPayload = (await checkResponse.json()) as {
@@ -319,7 +338,7 @@ export function CheckoutForm() {
 
       const response = await fetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...tenantFetchHeaders() },
         body: JSON.stringify(payloadBody),
       });
       const payload = (await response.json()) as {
@@ -343,14 +362,14 @@ export function CheckoutForm() {
       }
       const order = payload.order;
       try {
-        window.sessionStorage.setItem(`rm_order_${order.id}`, JSON.stringify(order));
-        const raw = window.localStorage.getItem("rm_orders_v1");
+        window.sessionStorage.setItem(orderKey(order.id), JSON.stringify(order));
+        const raw = window.localStorage.getItem(ordersKey());
         const stored = raw ? (JSON.parse(raw) as Order[]) : [];
         window.localStorage.setItem(
-          "rm_orders_v1",
+          ordersKey(),
           JSON.stringify([order, ...stored].slice(0, 50)),
         );
-        window.localStorage.setItem("rm_last_order_id", order.id);
+        window.localStorage.setItem(lastOrderKey(), order.id);
         const phoneDigits = customerPhone.replace(/\D/g, "");
         if (phoneDigits.length >= 7 || customerName.trim().length >= 2) {
           const addr = deliveryAddress.trim();
@@ -358,7 +377,7 @@ export function CheckoutForm() {
             ? [addr, ...savedAddresses.filter((a) => a.toLowerCase() !== addr.toLowerCase())].slice(0, 10)
             : savedAddresses;
           window.localStorage.setItem(
-            CUSTOMER_PROFILE_KEY,
+            customerProfileKey(),
             JSON.stringify({
               customerName: customerName.trim(),
               customerPhone: customerPhone.trim(),

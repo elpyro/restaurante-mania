@@ -1,14 +1,20 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeft, ShieldCheck, ShoppingBag, Trash2, Wallet } from "lucide-react";
 import { useCart } from "./CartProvider";
 import { QuantityStepper } from "./QuantityStepper";
 import { formatCOP } from "@/lib/format";
+import { getClientTenantId } from "@/lib/client-tenant";
+import { DEFAULT_TENANT_ID, withTenant } from "@/lib/tenants";
 
 export function CartView() {
   const { lines, totals, ready, setQuantity, remove, clear } = useCart();
+  const [tenantId, setTenantId] = useState(DEFAULT_TENANT_ID);
+  useEffect(() => { setTenantId(getClientTenantId()); }, []);
 
   if (!ready) {
     return (
@@ -31,7 +37,7 @@ export function CartView() {
         <p className="mt-2 text-sm text-ink-muted">
           Agrega tus platos favoritos y vuelve aquí para confirmar el pedido.
         </p>
-        <Link href="/menu" className="btn-primary mt-6">
+        <Link href={withTenant("/menu", tenantId)} className="btn-primary mt-6">
           Explorar el menú <ArrowLeft size={15} className="rotate-180" aria-hidden />
         </Link>
       </div>
@@ -86,7 +92,7 @@ export function CartView() {
           </article>
         ))}
         <div className="flex items-center justify-between pt-2">
-          <Link href="/menu" className="inline-flex items-center gap-1 text-sm font-medium text-brand-strong hover:underline">
+          <Link href={withTenant("/menu", tenantId)} className="inline-flex items-center gap-1 text-sm font-medium text-brand-strong hover:underline">
             <ArrowLeft size={14} aria-hidden /> Seguir pidiendo
           </Link>
           <button
@@ -121,7 +127,7 @@ export function CartView() {
             <dd className="font-bold text-brand-strong">{formatCOP(totals.total)}</dd>
           </div>
         </dl>
-        <Link href="/checkout" className="btn-primary mt-5 w-full">
+        <Link href={withTenant("/checkout", tenantId)} className="btn-primary mt-5 w-full">
           Continuar con el pedido <ArrowLeft size={15} className="rotate-180" aria-hidden />
         </Link>
         <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-ink-muted">

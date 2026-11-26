@@ -4,6 +4,9 @@ const mocks = vi.hoisted(() => ({
   verifyIdToken: vi.fn(),
   getDocument: vi.fn(),
   listDocuments: vi.fn(),
+  tenantPath: vi.fn(
+    (tenantId: string, collection: string) => `tenants/${tenantId}/${collection}`,
+  ),
 }));
 
 vi.mock("firebase-admin/app", () => ({
@@ -19,6 +22,7 @@ vi.mock("firebase-admin/auth", () => ({
 vi.mock("@/lib/firebase/rest", () => ({
   getDocument: mocks.getDocument,
   listDocuments: mocks.listDocuments,
+  tenantPath: mocks.tenantPath,
 }));
 
 import { verifyAdminIdToken } from "@/lib/firebase/admin";
@@ -58,7 +62,11 @@ describe("verifyAdminIdToken", () => {
 
     expect(identity.role).toBe("admin");
     expect(identity.roleSource).toBe("firestore");
-    expect(mocks.getDocument).toHaveBeenCalledWith("users", "uid-1", 0);
+    expect(mocks.getDocument).toHaveBeenCalledWith(
+      "tenants/mania/users",
+      "uid-1",
+      0,
+    );
   });
 
   it("busca por email cuando el documento por uid no existe", async () => {

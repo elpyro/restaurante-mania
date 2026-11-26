@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { ArrowLeft, UtensilsCrossed } from "lucide-react";
+import { getServerTenantId } from "@/lib/tenant-server";
+import { withTenant } from "@/lib/tenants";
 
-export default function NotFound() {
+export default async function NotFound() {
+  const tenantId = await getServerTenantId();
   return (
     <div className="mx-auto flex max-w-xl flex-col items-center px-4 py-20 text-center sm:px-6">
       <div className="surface-card w-full animate-fade-up p-8 sm:p-10">
@@ -15,10 +18,10 @@ export default function NotFound() {
           menú. Explora el catálogo para seguir pidiendo.
         </p>
         <div className="mt-7 flex flex-wrap justify-center gap-3">
-          <Link href="/menu" className="btn-primary">
+          <Link href={withTenant("/menu", tenantId)} className="btn-primary">
             Ver el menú <ArrowLeft size={16} aria-hidden className="rotate-180" />
           </Link>
-          <Link href="/" className="btn-secondary">
+          <Link href={withTenant("/", tenantId)} className="btn-secondary">
             Volver al inicio
           </Link>
         </div>

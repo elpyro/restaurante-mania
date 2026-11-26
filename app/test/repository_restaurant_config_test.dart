@@ -129,7 +129,15 @@ void main() {
     expect(patches.single.authorization, 'Bearer firebase-token');
     expect(
       patches.single.body.keys.toSet(),
-      {'slogan', 'heroTitle', 'heroDescription', 'heroBadge', 'appearance'},
+      {
+        'slogan',
+        'heroTitle',
+        'heroDescription',
+        'heroBadge',
+        'ctaTitle',
+        'ctaDescription',
+        'appearance',
+      },
     );
     expect(patches.single.body['appearance'], {
       'preset': 'verde',

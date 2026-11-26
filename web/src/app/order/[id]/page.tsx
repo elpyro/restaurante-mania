@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Bell, QrCode } from "lucide-react";
 import { OrderConfirmation } from "@/components/OrderConfirmation";
 import { getRestaurantConfig } from "@/lib/restaurant-config";
+import { getServerTenantId } from "@/lib/tenant-server";
 
 export const metadata: Metadata = {
   title: "Estado del pedido",
@@ -13,7 +14,11 @@ export default async function OrderPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const [{ id }, { config }] = await Promise.all([params, getRestaurantConfig()]);
+  const tenantId = await getServerTenantId();
+  const [{ id }, { config }] = await Promise.all([
+    params,
+    getRestaurantConfig(tenantId),
+  ]);
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-14">
       <header className="mb-8 animate-fade-up">

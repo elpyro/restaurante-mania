@@ -40,7 +40,10 @@ describe("disponibilidad derivada del stock (Cloud Functions)", () => {
     ).toBe("unavailable");
   });
 
-  it("ignora insumos sin documento de stock", () => {
-    expect(computeMaxServings(recipe, new Map())).toBeNull();
+  it("trata insumos sin documento de stock como agotados", () => {
+    expect(computeMaxServings(recipe, new Map())).toBe(0);
+    expect(
+      deriveMenuItemStatus(recipe, new Map([["agua", 20000]])),
+    ).toEqual({ status: "unavailable", maxServings: 0 });
   });
 });

@@ -830,6 +830,10 @@ class _HeaderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = orderStatusColor(order.status);
+    final paymentLabel = context
+        .read<RestaurantRepository>()
+        .settings
+        .paymentLabel(order.paymentMethod.name);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -921,7 +925,7 @@ class _HeaderCard extends StatelessWidget {
               ),
               _MetaChip(
                 icon: Icons.payments_outlined,
-                label: order.paymentMethod.label,
+                label: paymentLabel,
               ),
               _MetaChip(
                 icon: Icons.inventory_2_outlined,

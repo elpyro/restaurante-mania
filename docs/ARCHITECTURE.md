@@ -1,4 +1,4 @@
-﻿# ARCHITECTURE.md — Arquitectura del Sistema
+# ARCHITECTURE.md — Arquitectura del Sistema
 
 ## 1. Vista General
 
@@ -24,6 +24,74 @@ App Flutter ──┘        ▲
 - **App**: POS por roles con persistencia local y cola de sincronización.
 - **Functions**: validación de pedidos, transiciones de estado y métricas.
 - **Firestore**: fuente de verdad del catálogo y de los pedidos.
+
+## 1.1 Instancias aisladas (multi-tenant real)
+
+Tres tenants operativos: **`mania`** (por defecto), **`fuego`** y **`verde`**,
+en el mismo proyecto Firebase (`restaurante-mania-e47a0`) y la misma base
+Firestore `(default)`. La fuente de verdad es `tenants/{tenantId}/{collection}`
+(`restaurant/config`, `categories`, `menuItems`, `ingredients`, `orders`,
+`cashShifts`, `customers`, `users`, `inventoryLosses`, `webVisits`, `tables`).
+No hay colecciones raíz operativas. El helper central es `tenantPath()` en
+`web/src/lib/firebase/rest.ts`. El estado en memoria/local (`.data/`,
+`localStorage`, `SharedPreferences`) es **solo caché/fallback** cuando Firestore
+no está configurado (tests y desarrollo sin credenciales), nunca la fuente de
+verdad.
+
+Resolución del tenant activo (primera señal que gana):
+
+1. Query string `?tenant=`.
+2. Header `X-Tenant-Id`.
+3. Cookie `rm_tenant_id`.
+4. Subdominio (`fuego.ejemplo.com`).
+5. Fallback `mania`.
+
+### Web
+
+- `src/lib/tenants.ts`: registry, `normalizeTenantId`, `resolveTenantId`,
+  `resolveTenantFromRequest` y `tenantStorageKey`.
+- `src/proxy.ts` inyecta `x-tenant-id` y la cookie; `tenant-server.ts` lee las
+  cabeceras con `headers()` async en componentes servidor; `client-tenant.ts`
+  añade el header en `fetch` del cliente.
+- `src/lib/demo-store.ts` mantiene un estado por tenant **solo como fallback**
+  cuando Firestore no está configurado. `menu.ts`, `orders.ts`,
+  `cash-shifts.ts`, `restaurant-config.ts` y todas las rutas API resuelven el
+  `tenantId` y escriben/leen bajo `tenants/{tenantId}/...` vía `tenantPath()`.
+- Persistencia local (caché/offline): `.data/{tenantId}/orders.json` y
+  `.data/{tenantId}/cash-shifts.json`; Manía sigue en `.data/orders.json` y
+  `.data/cash-shifts.json`.
+- `localStorage`: `mania` mantiene las claves legacy (`rm_cart_v1`); los demás
+  usan `rm_{tenantId}_cart_v1`, `rm_{tenantId}_customer_profile_v1`, etc.
+- El layout publica `window.__RM_TENANT_ID__`; RSC, metadata, sitemap y
+  `llms.txt` resuelven el tenant desde la request.
+
+### App Flutter
+
+- `core/data/tenant.dart`: registry, normalización, `tenantHeader`,
+  `tenantStorageKey` y `TenantPreferences` (envuelve `SharedPreferences` y
+  prefija `rm_*_v1` por tenant). La preferencia global `rm_tenant_id_v1` no se
+  prefija.
+- `RestaurantRepository.load({tenantId})` resuelve el tenant y usa
+  `SeedData.menuItemsFor/ingredientsFor/ordersFor`. Los 18 puntos HTTP envían
+  `X-Tenant-Id`.
+- `switchTenant(id)` cambia de instancia **sobre el mismo repositorio**:
+  cancela el polling, desconecta el listener de conectividad, carga el nuevo
+  tenant sin `watchConnectivity`, persiste la preferencia, copia el estado y
+  reactiva listener y polling. Así el `ChangeNotifierProvider` no se recrea.
+- `LoginScreen` muestra el selector de instancia con `mania`, `fuego` y
+  `verde`; el header `X-Tenant-Id` viaja en las 18 peticiones HTTP.
+
+### Aislamiento verificado
+
+Tests dedicados web (`src/lib/__tests__/tenants.test.ts` y
+`tenant-isolation.test.ts`) y Flutter (`test/tenant_test.dart`) comprueban la
+prioridad de resolución, las claves de almacenamiento y que catálogo, stock,
+pedidos, turnos, visitas y configuración de un tenant no aparecen en los demás.
+Además se verificó en vivo: un pedido QA creado en `fuego` responde 200 en
+`fuego` y 404 en `mania` (documento borrado después). Las reglas de Firestore
+confirman el aislamiento a nivel de base de datos: rol de administrador resuelto
+desde `tenants/{tenantId}/users/{uid}`, lectura pública del catálogo y
+denegación de colecciones raíz.
 
 ## 2. Web (Next.js 16, App Router)
 
@@ -202,17 +270,26 @@ Marcador de idempotencia para triggers.
 
 ## 5. Cloud Functions (v2, TypeScript, stateless)
 
+Todas las Functions leen y escriben bajo `tenants/{tenantId}/...`.
+`resolveTenantId()` prioriza el `tenantId` del payload, después el claim
+`tenantId` y por último `mania`. `roleInTenant()` resuelve el rol desde
+`tenants/{tenantId}/users/{uid}` y usa el claim global solo como fallback, para
+que un rol de otra instancia no habilite acciones en ésta.
+
 | Función | Tipo | Descripción |
 |---|---|---|
 | `health` | HTTP | Estado del servicio |
 | `placeOrder` | Callable | Valida contrato, resuelve precios desde Firestore y crea el pedido en `pending` (sin descuento de inventario) |
-| `updateOrderStatus` | Callable | Transacción con control de rol, descuenta/repone inventario de forma idempotente y libera mesa al cerrar |
-| `onOrderCreated` | Trigger Firestore | Métricas diarias idempotentes |
-| `dailySalesReport` | Scheduler (03:00 America/Bogota) | Consolidado del día anterior |
+| `updateOrderStatus` | Callable | Transacción con control de rol, descuenta/repone inventario de forma idempotente al cambiar desde `pending` y libera mesa al cerrar |
+| `syncMenuStatusOnIngredientChange` | Trigger Firestore | Escrituras en `tenants/{tenantId}/ingredients/{ingredientId}`; recalcula disponibilidad del menú del tenant |
+| `onOrderCreated` | Trigger Firestore | Creaciones en `tenants/{tenantId}/orders/{orderId}`; métricas diarias idempotentes |
+| `dailySalesReport` | Scheduler (03:00 America/Bogota) | Consolidado del día anterior por tenant |
 
 `src/domain.ts` contiene la lógica pura: `computeTotals`, `canTransition`,
-`ROLE_TRANSITIONS`, `nextStatus`, `dayKey`, `buildOrderCode` y validadores.
-No importa el SDK, por lo que es testeable en aislamiento.
+`ROLE_TRANSITIONS`, `nextStatus`, `computeMaxServings`, `dayKey`,
+`buildOrderCode` y validadores. No importa el SDK, por lo que es testeable en
+aislamiento. Un insumo de receta sin documento de stock cuenta como `0`: el
+plato se marca agotado en web, APK y Functions, nunca ilimitado.
 
 ## 6. Matriz de Permisos por Rol
 
@@ -229,6 +306,12 @@ No importa el SDK, por lo que es testeable en aislamiento.
 ## 7. Reglas de Seguridad (resumen)
 
 Archivo completo: `firebase/firestore.rules`.
+
+> El bloque siguiente resume el esquema histórico de colecciones raíz. El
+> contrato vigente antepone `tenants/{tenantId}` a cada ruta
+> (`tenants/{tenantId}/orders/{id}`, `tenants/{tenantId}/menuItems/{id}`, ...),
+> resuelve `role(tenantId)` desde el claim o desde
+> `tenants/{tenantId}/users/{uid}` y deniega las colecciones raíz.
 
 ```javascript
 rules_version = '2';
@@ -375,7 +458,9 @@ core/data/repository.dart                → loginWithFirebase, PATCH autenticad
 ```
 
 `AuthService.firebaseApiKey` se inyecta con
-`--dart-define=FIREBASE_WEB_API_KEY=...`. El endpoint de sign-in es
+`--dart-define=FIREBASE_WEB_API_KEY=...`; en builds **release** cae en la clave
+pública de producción `restaurante-mania-e47a0`, en debug/tests queda vacía. El
+endpoint de sign-in es
 `POST https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=...`;
 el alias `signInWithEmailAndPassword` no existe y devuelve 404. Los tokens se
 renuevan automáticamente 60 s antes de caducar. Si no hay API key se conserva
@@ -383,8 +468,27 @@ el login demo con contraseña `1234`. «Recuperar contraseña» envía
 `accounts:sendOobCode` con `requestType=PASSWORD_RESET`: Firebase manda el correo
 para establecer la clave y no requiere permisos de Auth Admin.
 
+**Rol:** `loginWithFirebase` no exige un usuario local con el mismo correo; tras
+`accounts:signInWithPassword` lee `tenants/{tenantId}/users/{uid}` con el idToken
+(`GET /api/users/{uid}` → `_Route.get('users', uid, 'user')`) y resuelve el rol
+(`admin`, `cashier`, `waiter`, `cook`); rol inválido/ausente → `ArgumentError`;
+fallback local por email. `pullServerUsers()` solo para admin. **401** (sesión)
+dispara re-login; **403** no.
+
+**Transporte:** `DIRECT_FIRESTORE=true` (default producción): la APK habla
+directamente con Firestore REST (`https://firestore.googleapis.com/v1/projects/
+restaurante-mania-e47a0/databases/(default)/documents/tenants/{tenantId}`) con
+idToken + `X-Goog-Api-Key`; `firestore.rules` es la única barrera. Todo `PATCH`
+envía `updateMask.fieldPaths` repetido por campo (merge parcial; sin máscara
+Firestore reemplaza el documento). Un pedido offline avanzado se crea en
+`pending` y luego `PATCH` con estado real. Límites `isValidOrder` replicados en
+`createOrder`. `DIRECT_FIRESTORE=false` + `WEB_API_URL=...` usa el transporte
+web. `WEB_API_URL` ya no tiene IP LAN por defecto.
+
 `provision-auth-users.mjs` crea usuarios con `accounts:signUp` y escribe su rol
-en `users/{uid}`; no depende de custom claims ni de permisos de Auth Admin.
+en `tenants/{tenantId}/users/{uid}` (antes `users/{uid}`); acepta `TENANT=all`
+para los tres tenants y no depende de custom claims ni de permisos de Auth
+Admin.
 
 El detalle de pedido (`features/orders/order_detail_screen.dart`) expone
 **Imprimir recibo**. `ReceiptPrintService` genera un PDF de 80 mm con fuente
@@ -410,9 +514,13 @@ async pero no usa canales de plataforma, así que se prueba en `flutter test`.
 
 - Solo administradores pueden publicar configuración, favoritos y disponibilidad;
   `GET` es público y no expone secretos ni tokens.
-- `firebase/storage.rules`: lectura pública de `appearance/**`, escritura solo
-  admin (claim `role` o `users/{uid}`), MIME `image/(jpeg|png|webp|gif)` y
-  tamaño < 6 MB. Reglas desplegadas con `firebase deploy --only storage`.
+- `firebase/storage.rules`: lectura pública. Escritura por tenant:
+  `tenants/{tenantId}/appearance/**` solo admin del tenant;
+  `tenants/{tenantId}/inventory-losses/**` admin o cocinero; rol =
+  `tenants/{tenantId}/users/{uid}.role` (o claim `role`); se conservan rutas
+  antiguas `appearance/**` / `inventory-losses/**`. MIME
+  `image/(jpeg|png|webp|gif)`, tamaño < 6 MB. Reglas desplegadas con
+  `firebase deploy --only storage`.
 - Como el service account no puede escribir custom claims, las reglas leen el rol
   desde Firestore. Eso exige el puente Storage↔Firestore: rol IAM
   `roles/firebaserules.firestoreServiceAgent` para
@@ -458,9 +566,9 @@ ya lo hace la APK con el PATCH de inventario.
 `canViewInventoryLosses` (admin). El repositorio persiste
 `rm_inventory_losses_v1`, descuenta el stock local con
 `upsertIngredient()` → `_queueIngredientPatch()`, y encola el registro. Al
-reconectar: sube la foto a `inventory-losses/...` con `MediaUploadService`,
+reconectar: sube la foto a `tenants/{tenantId}/inventory-losses/...` con `MediaUploadService`,
 envía el POST con `Bearer` y añade la entrada «Sincronizado con la web»; en
-401/403 conserva la cola y pide re-login. `pullInventoryLosses()` reconcilia con
+401 conserva la cola y pide re-login; **403 no dispara re-login**. `pullInventoryLosses()` reconcilia con
 `GET`, priorizando los pendientes locales.
 
 **UI:** `features/inventory_losses/` contiene `RegisterLossScreen` (motivo,
@@ -523,4 +631,172 @@ no listó dispositivo en la última pasada, así que no se reinstaló en `a791bc
   `WEB_API_URL` y `FIREBASE_WEB_API_KEY`, reinstalada en `a791bc16` con
   `adb reverse tcp:3001`, arranque sin `FATAL EXCEPTION` y `/api/health` 200.
   Commit y push realizados en `feature/app-reportes-cierre-caja`; sin Netlify.
+
+## Migración total a multi-tenant real / limpieza (2026-11-26)
+
+A petición del usuario se borraron **todos** los datos de prueba y se sembró
+una estructura limpia con los tres tenants en el mismo proyecto y base
+`(default)` (no se creó proyecto nuevo ni base secundaria).
+
+- **Respaldos previos:** Firestore exportado en
+  `gs://restaurante-mania-e47a0-backup-20261126/firestore`; Storage copiado en
+  `%TEMP%/opencode/backup-20261126/storage` (3 objetos). Restauración Firestore:
+  `gcloud firestore import gs://restaurante-mania-e47a0-backup-20261126/firestore`.
+- **Borrado:** 211 documentos Firestore y 3 objetos Storage eliminados;
+  `(ninguna)` colección raíz restante.
+- **Siembra:** 230 documentos bajo `tenants/{tenantId}/...`. Conteos
+  (categorías/platos/insumos/turnos/clientes): `mania` 4/7/42/10/10,
+  `fuego` 4/12/43/1/0, `verde` 4/10/43/1/0; 10 mesas y 1 usuario admin por
+  tenant (`Y72Vea5qAFcdW6AgBqBy0dSfyH92`, rol `admin`). Las URLs de logo/banner
+  apuntaban a Storage borrado: se dejaron vacías para evitar enlaces rotos.
+- **Reglas/índices:** `firebase/firestore.rules` y
+  `firebase/firestore.indexes.json` reescritos para el prefijo
+  `tenants/{tenantId}` y desplegados con
+  `firebase deploy --only firestore:rules,firestore:indexes`. Verificación:
+  `tenants/mania/restaurant/config` → 200 anónimo, `restaurant/config` → 403.
+- **Checks:** web `typecheck` ✅, 107 tests ✅, `build` ✅ (sin warnings 403);
+  Flutter `analyze` ✅ y 96 tests ✅. En vivo en `:3001` los siete endpoints de
+  los tres tenants responden 200 con el `tenantId` correcto; `config` y `menú`
+  declaran `source=firestore` y el resto `configured=true` con los conteos
+  sembrados. Resolución por query/header/cookie/subdominio ✅; pedido QA
+  aislado y borrado. Sin commit/push salvo solicitud.
+- **SEO/GEO tras la siembra:** Next 16 entrega `params.slug` codificado en la
+  página pero decodificado en `generateMetadata`; `decodedSlug()` en
+  `src/app/menu/[slug]/page.tsx` normaliza ambos casos. Sin él, las fichas con
+  `ñ` caían en `notFound()` y `robots: noindex`. Verificado con el build de
+  producción en `:3001`: `ajiaco-santafereño` en `mania`/`fuego` y
+  `arepa-con-queso` en `verde` → 200, `<h1>`, JSON-LD `MenuItem` y
+  `robots: index, follow`. Tras el fix: 107 tests ✅ y `build` ✅.
+- **APK en vivo:** release 61,6 MB instalada en `a791bc16` con
+  `adb reverse tcp:3001`. El proxy de log registró el cambio
+  `fuego → verde → manía` con `X-Tenant-Id` correcto en todas las peticiones y
+  la persistencia del tenant tras `am force-stop`/relanzamiento; no hubo
+  `FATAL EXCEPTION`. Quedó sin verificar el flujo autenticado (sin contraseña y
+  el token de `gcloud` carece de permisos de Auth Admin), por lo que la prueba
+  cubrió endpoints públicos y el header de tenant.
+- **Usuarios QA y login real (2026-11-26):** se añadieron cuatro cuentas a la
+  semilla local de la APK (`SeedData.users`) y a Firebase Auth con rol en los
+  tres tenants: `admin.qa@restaurante.com` (admin), `cajero.qa@restaurante.com`
+  (cashier), `mesero.qa@restaurante.com` (waiter) y `cocina.qa@restaurante.com`
+  (cook). La contraseña se entregó fuera del repositorio. `flutter test` quedó
+  en 96/96 tras aislar el test del «último administrador». En la web,
+  `GET /api/inventory-losses` responde 200 para admin/cook y 403 para
+  cashier/waiter en `mania`, `fuego` y `verde`.
+- **Pantallas autenticadas verificadas:** APK recompilada, instalada con
+  `pm clear`, tenant **Manía** y login con `admin.qa@restaurante.com`. Se
+  recorrieron Inicio, Pedidos, Mesas, CRM y Más → Usuarios (8 cuentas, QA con
+  su rol); sin `FATAL EXCEPTION`. El aviso «INSTANCIA DE LA DEMO» del login es
+  texto heredado, no modo demo: la API key compilada habilita Firebase Auth y
+  oculta los accesos rápidos.
+
+### Sincronización de cuentas y diagnóstico de tenant (2026-11-26)
+- El celular apunta a `http://localhost:3001` vía `adb reverse` con tenant
+  **Manía**; la web en `:3001` prioriza `?tenant=` sobre la cookie
+  `rm_tenant_id`. Un pedido creado sin el query quedó en `verde` y por eso no
+  apareció en la APK. Para forzar Manía: `http://localhost:3001/?tenant=mania`.
+- `web/src/app/api/users/route.ts` expone GET/POST/DELETE de
+  `tenants/{tenantId}/users`, exige `Authorization: Bearer <idToken>` y rol
+  `admin`, y valida id, nombre, correo y rol. `_pushUserToServer()` en
+  `repository.dart` publica altas, ediciones y bajas desde la APK con el token
+  y `X-Tenant-Id`; si falla, el cambio permanece en `SharedPreferences`.
+- El documento en Firestore guarda `{uid, name, email, role, status,
+  createdAt, updatedAt}` con el mismo contrato que
+  `provision-auth-users.mjs`. Verificado GET/POST/DELETE con token QA y
+  aislamiento entre `mania` y `verde`. El alta desde la APK **no** crea cuenta
+  en Firebase Auth: hace falta la contraseña y el aprovisionamiento por script.
+- El login ya distingue «INSTANCIA CON FIREBASE» de «INSTANCIA DE LA DEMO» según
+  la API key compilada, y la pantalla de usuarios aclara que las cuentas se
+  sincronizan con Firebase.
+- **Prueba en vivo (2026-11-26):** con la APK reinstalada y el tenant Manía, un
+  pedido creado en la web con `?tenant=mania` (`RM-20261126-OZH5`) apareció en
+  Pedidos como «Web». Una cuenta creada desde Más → Usuarios
+  (`sync.verificada@restaurante.com`) se creó en Firestore, el cambio de nombre
+  se propagó con una edición y la baja eliminó el documento; en `verde` nunca
+  existió. Sin `FATAL EXCEPTION`.
+
+### Contrato multi-tenant de Functions y cierre QA (2026-11-26)
+- **Despliegue verificado:** `6 Functions Deployed`, `0 Errors` en
+  `restaurante-mania-e47a0`, base `(default)`. `firebase functions:list --json`
+  confirma los triggers `tenants/{tenantId}/ingredients/{ingredientId}` y
+  `tenants/{tenantId}/orders/{orderId}`. El primer deploy sin `--debug` agotó
+  el timeout al resolver el backend; el retry con `--debug` finalizó
+  correctamente.
+- **Contrato compartido:** las callables y los triggers derivan `tenantId` de
+  payload → claim → `mania`, y el rol se lee del documento del tenant con
+  fallback al claim global. Las Functions siguen siendo stateless y usan la SDK
+  de Firestore con `async/await`. Son la API de referencia; el flujo diario de
+  web/APK usa sus propios endpoints/repositorio con el mismo contrato.
+- **Inventario:** el usuario confirmó que el descuento no debe ocurrir al
+  confirmar, sino al pasar de `pending` a un estado superior. Un insumo de
+  receta sin documento se trata como stock `0` en `web/src/lib/orders.ts`,
+  `web/src/lib/menu.ts`, `app/lib/core/data/repository.dart` y
+  `firebase/functions/src/domain.ts`; el plato queda agotado, nunca ilimitado.
+- **ID canónico de insumos:** `PATCH /api/ingredients/[id]` pasó de
+  `createDocument` a `setDocument(tenantPath(...), documentId, ...)`, con test
+  de regresión en `web/src/app/api/ingredients/[id]/__tests__/route.test.ts`.
+  Se eliminó el documento aleatorio `adrxhCHsTiAuP6uRg46K` y se recreó `cafe`
+  con stock `2000`; `mania` volvió a 43 insumos y 5 platos.
+- **Prueba end-to-end:** `pollo3` → 409 (`available: 2`) y `cafe20` → 200. El
+  pedido QA `RM-20261126-LXON` se creó `pending` con
+  `inventoryDeducted=false`; `preparing` descontó pechuga 400→200, papa
+  2300→2150, mantequilla 30→15 y lechuga 5.5→5.25; `cancelled` restauró los
+  valores exactos. Los pedidos QA se borraron.
+- **Checks finales:** web `typecheck` ✅, 116 tests ✅ y `build` ✅; Flutter
+  `analyze --no-fatal-infos` ✅ y 97 tests ✅. APK release recompilada con
+  `WEB_API_URL=http://localhost:3001` y la API key pública, instalada en
+  `a791bc16` con `adb reverse tcp:3001`; arranque sin `FATAL EXCEPTION`. El
+  servidor QA quedó en `:3001` con `/api/health` 200. Sin commit, push ni
+  despliegue a Netlify.
+
+### Horario configurable, estado en portada y propiedad del inventario (2026-11-26)
+- **Configuración publicada por la APK:** `PATCH /api/restaurant/config`
+  acepta `isOpen`, `timeZone` (IANA), `openingDays`, `openTime`, `closeTime`,
+  `ctaTitle` y `ctaDescription`. La web normaliza y valida (`restaurant-config.ts`)
+  y deriva `hours` del horario estructurado; por defecto `America/Bogota`,
+  Lun–Sáb 11:30–20:30. `seo.ts`/`/llms.txt` usan días y horas reales.
+- **Portada (SSR):** `opening-hours.ts` calcula
+  `Abierto: recibiendo pedidos` / `Cerrado: abre a las HH:mm` en la zona
+  configurada; si el siguiente día hábil cambia, incluye el día. El cierre
+  manual (`isOpen=false`) usa la misma hora sin día. Es informativo: el
+  checkout sigue abierto. Los dos textos del bloque final son editables desde
+  Apariencia en la APK.
+- **Cobro:** el hoja de pago solo muestra métodos activos y sus etiquetas
+  configuradas; el detalle del pedido, el recibo PDF y el detalle de ventas
+  muestran esa misma etiqueta.
+- **Inventario sin doble descuento:** la APK descuenta sus propios pedidos al
+  crearlos en `pending` (`createOrder`, flag `inventoryDeducted`) y repone al
+  cancelar. Los pedidos `source='web'` los descuenta la web al pasar a
+  `confirmed` (`updateOrder` decide desde el documento persistido, ignora el
+  flag del PATCH con cambio de estado); la APK omite el flag en el PATCH y
+  reconcilia el valor devuelto. Las Functions conservan su contrato por
+  `tenants/{tenantId}`.
+- **Checks:** web `typecheck` ✅, 125 tests ✅, `build` ✅; Flutter `analyze` ✅
+  y 101 tests ✅. APK release instalada en `a791bc16` sin crashes y servidor QA
+  `:3001` verificado (config, portada, `/api/og`, `/llms.txt`). Sin commit/push.
+
+### Producción final: APK directa a Firestore y despliegue completo (2026-11-26)
+- **Topología en producción:** la APK ya no depende de la web ni de una IP LAN:
+  `RestaurantRepository` usa `FirestoreTransport` por defecto
+  (`DIRECT_FIRESTORE=true`) con el idToken de Firebase Auth y la API key pública
+  contra `https://firestore.googleapis.com/v1/projects/restaurante-mania-e47a0/.../tenants/mania`.
+  El adaptador HTTP (`WEB_API_URL`, vacío por defecto) queda para QA/tests.
+- **Datos que cruzan el límite:** pedidos, usuarios, ingredientes, caja,
+  clientes, configuración, **catálogo completo y categorías**. `pullServerMenuCatalog()`
+  reemplaza la semilla local por `menuItems` remotos y `pullServerCategories()`
+  hace lo propio con `categories`, conservando los cambios offline pendientes.
+  `updateMask.fieldPaths` se envía repetido en cada `PATCH` para no reemplazar
+  documentos; solo `401` fuerza re-login (`403` = sin permiso).
+- **Backend desplegado:** `firebase deploy --only "functions,storage,firestore:rules,firestore:indexes"`
+  sobre `restaurante-mania-e47a0`: reglas multi-tenant y de Storage por tenant
+  releaseadas, índices publicados y 6 Functions v2 activas que validan pedidos,
+  sincronizan disponibilidad, calculan ventas diarias y sirven health.
+- **Verificación en dispositivo (`a791bc16`):** login real con
+  `castellanoseloy@gmail.com` (admin), estado «En línea», 43 insumos, 7 platos,
+  7 cuentas y pedidos web reales. Los datos se leen de `tenants/mania`; la
+  apariencia se sube a `tenants/mania/appearance/...`. No queda el pedido QA
+  `RM-20261126-8816`.
+- **Calidad y entrega:** web `typecheck`, 125 tests y `build` OK; Flutter
+  `analyze` limpio y 108 tests OK. Commit convencional y push a
+  `origin/feature/app-reportes-cierre-caja`. Netlify queda pendiente de dominio
+  real (decisión del usuario: solo commit y Firebase).
 

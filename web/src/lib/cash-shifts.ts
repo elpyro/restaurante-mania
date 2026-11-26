@@ -1,11 +1,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { getDemoState } from "./demo-store";
 import {
   isFirestoreConfigured,
   listDocuments,
   setDocument,
+  tenantPath,
 } from "./firebase/rest";
+import { DEFAULT_TENANT_ID, isDemoTenant } from "./tenants";
 import type { CashShift, PaymentMethod } from "./types";
 
 const PAYMENT_METHODS: PaymentMethod[] = ["cash", "card", "nequi", "daviplata"];
@@ -14,7 +17,8 @@ const globalStore = globalThis as unknown as {
   __restauranteCashShifts?: Map<string, CashShift>;
 };
 
-function demoShifts(): Map<string, CashShift> {
+function demoShifts(tenantId = DEFAULT_TENANT_ID): Map<string, CashShift> {
+  if (isDemoTenant(tenantId)) return getDemoState(tenantId).shifts;
   if (!globalStore.__restauranteCashShifts) {
     globalStore.__restauranteCashShifts = new Map();
   }
@@ -22,24 +26,29 @@ function demoShifts(): Map<string, CashShift> {
 }
 
 const DATA_DIR = path.join(process.cwd(), ".data");
-const DATA_FILE = path.join(DATA_DIR, "cash-shifts.json");
 const disablePersistence =
   process.env.VITEST === "true" ||
   process.env.NODE_ENV === "test" ||
   process.env.DISABLE_ORDER_PERSISTENCE === "true";
 
-let diskLoaded = false;
+const diskLoaded = new Set<string>();
 
-async function loadFromDisk(): Promise<void> {
-  if (disablePersistence || diskLoaded) return;
-  diskLoaded = true;
+function shiftsFile(tenantId: string): string {
+  return isDemoTenant(tenantId)
+    ? path.join(DATA_DIR, tenantId, "cash-shifts.json")
+    : path.join(DATA_DIR, "cash-shifts.json");
+}
+
+async function loadFromDisk(tenantId = DEFAULT_TENANT_ID): Promise<void> {
+  if (disablePersistence || diskLoaded.has(tenantId)) return;
+  diskLoaded.add(tenantId);
   try {
-    const raw = await readFile(DATA_FILE, "utf8");
+    const raw = await readFile(shiftsFile(tenantId), "utf8");
     const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       for (const entry of parsed) {
         if (entry && typeof entry.id === "string") {
-          demoShifts().set(entry.id, normalizeShift(entry, entry.id));
+          demoShifts(tenantId).set(entry.id, normalizeShift(entry, entry.id));
         }
       }
     }
@@ -48,13 +57,14 @@ async function loadFromDisk(): Promise<void> {
   }
 }
 
-async function persistToDisk(): Promise<void> {
-  if (disablePersistence) return;
+async function persistToDisk(tenantId = DEFAULT_TENANT_ID): Promise<void> {
+  if (disablePersistence || isFirestoreConfigured()) return;
   try {
-    await mkdir(DATA_DIR, { recursive: true });
+    const file = shiftsFile(tenantId);
+    await mkdir(path.dirname(file), { recursive: true });
     await writeFile(
-      DATA_FILE,
-      JSON.stringify(sortedShifts([...demoShifts().values()]), null, 2),
+      file,
+      JSON.stringify(sortedShifts([...demoShifts(tenantId).values()]), null, 2),
       "utf8",
     );
   } catch {
@@ -178,48 +188,66 @@ function sortedShifts(shifts: CashShift[]): CashShift[] {
   );
 }
 
-async function readAllShifts(): Promise<CashShift[]> {
-  await loadFromDisk();
-  if (isFirestoreConfigured()) {
-    try {
-      const remote = await listDocuments("cashShifts", mapShiftDoc, 0);
-      if (remote.length > 0) return sortedShifts(remote);
-    } catch (error) {
-      console.warn("[cash-shifts] Firestore no disponible, usando caché local:", error);
-    }
+async function readAllShifts(
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<CashShift[]> {
+  if (!isFirestoreConfigured()) {
+    await loadFromDisk(tenantId);
+    return sortedShifts([...demoShifts(tenantId).values()]);
   }
-  return sortedShifts([...demoShifts().values()]);
+  try {
+    const remote = await listDocuments(
+      tenantPath(tenantId, "cashShifts"),
+      mapShiftDoc,
+      0,
+    );
+    if (remote.length > 0) return sortedShifts(remote);
+  } catch (error) {
+    console.warn("[cash-shifts] Firestore no disponible, usando caché local:", error);
+  }
+  return sortedShifts([...demoShifts(tenantId).values()]);
 }
 
-async function writeShift(shift: CashShift): Promise<void> {
+async function writeShift(
+  shift: CashShift,
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<void> {
   if (isFirestoreConfigured()) {
     // PATCH con updateMask crea el documento si aún no existe, así el id local
     // de la app se conserva y los reintentos son idempotentes.
     await setDocument(
-      "cashShifts",
+      tenantPath(tenantId, "cashShifts"),
       shift.id,
       shift as unknown as Record<string, unknown>,
     );
   }
-  demoShifts().set(shift.id, shift);
-  await persistToDisk();
+  demoShifts(tenantId).set(shift.id, shift);
+  await persistToDisk(tenantId);
 }
 
 /** Solo tests: reinicia el almacén en memoria entre casos. */
-export function resetCashShiftStoreForTests(): void {
+export function resetCashShiftStoreForTests(tenantId?: string): void {
+  if (tenantId && isDemoTenant(tenantId)) {
+    demoShifts(tenantId).clear();
+    return;
+  }
   globalStore.__restauranteCashShifts = new Map();
 }
 
-export async function listCashShifts(): Promise<CashShift[]> {
-  return readAllShifts();
+export async function listCashShifts(
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<CashShift[]> {
+  return readAllShifts(tenantId);
 }
 
-export async function getCurrentCashShift(): Promise<CashShift> {
-  const shifts = await readAllShifts();
+export async function getCurrentCashShift(
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<CashShift> {
+  const shifts = await readAllShifts(tenantId);
   const open = shifts.find((shift) => shift.status === "open");
   if (open) return open;
   const created = makeCashShift(new Date().toISOString());
-  await writeShift(created);
+  await writeShift(created, tenantId);
   return created;
 }
 
@@ -233,7 +261,10 @@ export interface CloseShiftResult {
  * Cierra un turno y deja exactamente uno abierto. Es idempotente por `id`:
  * reenviar el mismo cierre (cola offline) no crea turnos nuevos.
  */
-export async function closeCashShift(raw: unknown): Promise<CloseShiftResult> {
+export async function closeCashShift(
+  raw: unknown,
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<CloseShiftResult> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new CashShiftValidationError(["El turno enviado no es válido."]);
   }
@@ -246,8 +277,8 @@ export async function closeCashShift(raw: unknown): Promise<CloseShiftResult> {
     throw new CashShiftValidationError(["La fecha de apertura no es válida."]);
   }
 
-  await loadFromDisk();
-  const existing = await readAllShifts();
+  if (!isFirestoreConfigured()) await loadFromDisk(tenantId);
+  const existing = await readAllShifts(tenantId);
   const incoming = normalizeShift(source, id);
   const alreadyClosed = existing.find(
     (shift) => shift.id === id && shift.status === "closed",
@@ -260,7 +291,7 @@ export async function closeCashShift(raw: unknown): Promise<CloseShiftResult> {
   };
 
   if (!alreadyClosed) {
-    await writeShift(closed);
+    await writeShift(closed, tenantId);
     for (const open of existing) {
       if (open.id === id || open.status !== "open") continue;
       await writeShift({
@@ -274,15 +305,15 @@ export async function closeCashShift(raw: unknown): Promise<CloseShiftResult> {
         totalsByPaymentMethod: {},
         closingAmount: null,
         notes: "Cerrado automáticamente al cerrar caja.",
-      });
+      }, tenantId);
     }
   }
 
-  const afterClose = await readAllShifts();
+  const afterClose = await readAllShifts(tenantId);
   const open = afterClose.find((shift) => shift.status === "open");
   const currentShift =
     open ?? makeCashShift(new Date().toISOString(), closed.closedBy, closed.closedByName);
-  if (!open) await writeShift(currentShift);
+  if (!open) await writeShift(currentShift, tenantId);
 
   return {
     shift: closed,

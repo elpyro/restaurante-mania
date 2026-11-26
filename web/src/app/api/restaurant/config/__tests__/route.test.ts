@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => {
     setDocument: vi.fn(),
     getDocument: vi.fn(),
     isFirestoreConfigured: vi.fn(() => false),
+    tenantPath: vi.fn(
+      (tenantId: string, collection: string) => `tenants/${tenantId}/${collection}`,
+    ),
   };
 });
 
@@ -25,6 +28,7 @@ vi.mock("@/lib/firebase/rest", () => ({
   setDocument: mocks.setDocument,
   getDocument: mocks.getDocument,
   isFirestoreConfigured: mocks.isFirestoreConfigured,
+  tenantPath: mocks.tenantPath,
 }));
 
 import { GET, PATCH } from "../route";
@@ -42,9 +46,13 @@ function request(body: unknown, authorization?: string) {
 
 describe("GET /api/restaurant/config", () => {
   it("expone el contrato público sin secretos", async () => {
-    const response = await GET();
+    mocks.isFirestoreConfigured.mockReturnValue(false);
+    const response = await GET(
+      new Request("http://localhost/api/restaurant/config"),
+    );
     expect(response.status).toBe(200);
     const payload = await response.json();
+    expect(payload.tenantId).toBe("mania");
     expect(payload.configured).toBe(false);
     expect(payload.source).toBe("env");
     expect(payload.config).toMatchObject({
@@ -71,7 +79,7 @@ describe("PATCH /api/restaurant/config", () => {
     mocks.verifyAdminIdToken.mockReset();
     mocks.setDocument.mockReset();
     mocks.getDocument.mockReset();
-    mocks.isFirestoreConfigured.mockReturnValue(false);
+    mocks.isFirestoreConfigured.mockReturnValue(true);
     mocks.getDocument.mockResolvedValue(null);
     mocks.verifyAdminIdToken.mockResolvedValue({ uid: "admin-1", role: "admin" });
     mocks.setDocument.mockResolvedValue(undefined);
@@ -113,10 +121,10 @@ describe("PATCH /api/restaurant/config", () => {
       ),
     );
     expect(response.status).toBe(200);
-    expect(mocks.verifyAdminIdToken).toHaveBeenCalledWith("token");
+    expect(mocks.verifyAdminIdToken).toHaveBeenCalledWith("token", "mania");
     expect(mocks.setDocument).toHaveBeenCalledTimes(1);
     const [collection, id, data] = mocks.setDocument.mock.calls[0];
-    expect(collection).toBe("restaurant");
+    expect(collection).toBe("tenants/mania/restaurant");
     expect(id).toBe("config");
     expect(data).toMatchObject({
       name: "Nueva Manía",

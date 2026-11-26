@@ -16,6 +16,8 @@ import {
 import type { RestaurantConfig } from "@/lib/restaurant-config";
 import { whatsappUrl } from "@/lib/site";
 import { useCart } from "./CartProvider";
+import { getClientTenantId, tenantStorageKey } from "@/lib/client-tenant";
+import { DEFAULT_TENANT_ID, withTenant } from "@/lib/tenants";
 
 const links = [
   { href: "/", label: "Inicio", icon: House },
@@ -29,12 +31,19 @@ export function Header({ config }: { config: RestaurantConfig }) {
   const { count, ready } = useCart();
   const [hasProfile, setHasProfile] = useState(false);
   const [open, setOpen] = useState(false);
+  const [tenantId, setTenantId] = useState(DEFAULT_TENANT_ID);
   const logoUrl = config.appearance.logoUrl;
   const waUrl = whatsappUrl(undefined, config.whatsapp, config.name);
 
   useEffect(() => {
+    setTenantId(getClientTenantId());
+  }, []);
+
+  useEffect(() => {
     try {
-      const raw = window.localStorage.getItem("rm_customer_profile_v1");
+      const raw = window.localStorage.getItem(
+        tenantStorageKey(getClientTenantId(), "rm_customer_profile_v1"),
+      );
       if (!raw) return;
       const p = JSON.parse(raw) as { customerPhone?: string; customerName?: string };
       const phone = (p.customerPhone ?? "").replace(/\D/g, "");
@@ -53,7 +62,7 @@ export function Header({ config }: { config: RestaurantConfig }) {
     <>
       <header className="sticky top-0 z-40 border-b border-line/70 bg-surface/85 backdrop-blur-xl">
         <div className="mx-auto flex h-[4.5rem] max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
-          <Link href="/" className="group flex min-w-0 items-center gap-3">
+          <Link href={withTenant("/", tenantId)} className="group flex min-w-0 items-center gap-3">
             {logoUrl ? (
               <Image
                 src={logoUrl}
@@ -86,7 +95,7 @@ export function Header({ config }: { config: RestaurantConfig }) {
               return (
                 <Link
                   key={link.href}
-                  href={link.href}
+                  href={withTenant(link.href, tenantId)}
                   aria-current={active ? "page" : undefined}
                   className={`inline-flex items-center gap-2 rounded-full px-3.5 py-2 transition ${
                     active
@@ -123,7 +132,7 @@ export function Header({ config }: { config: RestaurantConfig }) {
               WhatsApp
             </a>
             <Link
-              href="/cart"
+              href={withTenant("/cart", tenantId)}
               className="relative grid h-10 w-10 place-items-center rounded-full border border-line bg-surface-raised text-ink transition hover:border-brand-300 md:hidden"
               aria-label={`Carrito, ${ready ? count : 0} productos`}
             >
@@ -160,7 +169,7 @@ export function Header({ config }: { config: RestaurantConfig }) {
                 return (
                   <Link
                     key={link.href}
-                    href={link.href}
+                    href={withTenant(link.href, tenantId)}
                     className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
                       active ? "bg-brand-50 text-brand-strong" : "text-ink-soft"
                     }`}

@@ -223,12 +223,14 @@ sin distorsionar el contenido.
   `Authorization: Bearer <idToken>` con rol `admin` (claim `role` o documento
   `users/{uid}`). Sin token: 401; con otro rol: 403.
 - `PATCH /api/menu/[id]` (`status` y `featured`) también exige admin.
-- Las reglas viven en `firebase/storage.rules`: lectura pública; `appearance/...`
-  solo admin; `inventory-losses/...` para admin o cocinero (según
-  `users/{uid}.role`); validación de tipo/tamaño. El puente Storage↔Firestore
-  requiere el rol
+- Las reglas viven en `firebase/storage.rules`: lectura pública; rol según
+  `tenants/{tenantId}/users/{uid}.role`. Nuevas subidas por tenant:
+  `tenants/{tenantId}/appearance/...` solo admin;
+  `tenants/{tenantId}/inventory-losses/...` para admin o cocinero; se conservan
+  las rutas antiguas `appearance/...` / `inventory-losses/...`. Validación de
+  tipo/tamaño (6 MB). El puente Storage↔Firestore requiere el rol
   IAM `roles/firebaserules.firestoreServiceAgent` para el service agent de
-  Storage, porque el service account de desarrollo no puede escribir claims.
+  Storage (verificado en el proyecto `restaurante-mania-e47a0`).
 - Offline: la APK encola cambios en `rm_pending_restaurant_config_v1`,
   `rm_pending_config_patch_v1` y `rm_pending_featured_items_v1`, y los envía al
   reconectar; «Sincronizar ahora» también vacía la cola de configuración y su
@@ -241,19 +243,59 @@ sin distorsionar el contenido.
 
 ### Login real en la APK
 
-Con `FIREBASE_WEB_API_KEY` compilada, el login usa Firebase Auth REST y guarda
-los tokens en `flutter_secure_storage`. Sin esa clave se mantiene el login demo
-(`1234`). El correo debe existir también en la lista local de usuarios para
-conservar el rol; el endpoint correcto es `accounts:signInWithPassword`.
+En builds **release** la clave pública de producción `restaurante-mania-e47a0`
+se compila por defecto, así que no hace falta `--dart-define` para apuntar a
+Firebase production; se puede sobreescribir con
+`--dart-define=FIREBASE_WEB_API_KEY=<clave-web-publica>`. En `flutter run`
+(debug) sin clave se mantiene el login demo (`1234`).
+
+Con clave Firebase compilada el login usa Firebase Auth REST
+(`accounts:signInWithPassword`) y guarda los tokens en `flutter_secure_storage`.
+**El rol no exige un usuario local con el mismo correo**: se lee de
+`tenants/{tenantId}/users/{uid}` en Firestore con el idToken del usuario. Si la
+cuenta no tiene un rol válido (`admin`, `cashier`, `waiter`, `cook`) en la
+instancia activa, el login falla con un mensaje claro. `pullServerUsers()`
+(lista de usuarios) solo se ejecuta para administradores; un **403 no marca
+sesión vencida**, solo la **401** dispara re-login.
+
 El enlace **Recuperar contraseña** usa `accounts:sendOobCode`
 (`PASSWORD_RESET`) para que Firebase envíe el correo que establece la clave del
 usuario; aparece solo cuando hay API key Firebase compilada.
 
 ```bash
+flutter build apk --release
+# o, apuntando a QA con transporte web:
 flutter build apk --release \
-  --dart-define=WEB_API_URL=http://localhost:3001 \
+  --dart-define=DIRECT_FIRESTORE=false \
+  --dart-define=WEB_API_URL=https://tu-dominio-web.netlify.app \
   --dart-define=FIREBASE_WEB_API_KEY=<clave-web-publica>
 ```
+
+### APK en producción: Firestore directo + Storage por tenant
+
+Por defecto (`DIRECT_FIRESTORE=true`) la APK habla **directamente con
+Firestore REST** con el idToken, proyecto `restaurante-mania-e47a0`, sin
+depender de la web. `firebase/firestore.rules` es la única barrera de
+autorización.
+
+- **`updateMask`:** todo `PATCH` a Firestore envía `updateMask.fieldPaths`
+  repetido por cada campo del body. Firestore REST **reemplaza** el documento
+  si no se envía la máscara; con ella los `PATCH` parciales conservan los
+  campos no enviados (mismo contrato que la web `setDocument`).
+- **Pedido offline avanzado:** `_runSync` crea la orden en `pending` (regla
+  `isValidOrder`) y luego hace `PATCH` con el estado real
+  (`paymentStatus`, `paidAt`, `payments`, `inventoryDeducted`).
+- **Límites:** `customerName` ≤ 80, `customerPhone` ≤ 20, `notes` ≤ 300,
+  `deliveryAddress` ≤ 160, `items` ≤ 50, nombre ≥ 2 / teléfono ≥ 7 salvo mesa,
+  dirección de entrega ≥ 5.
+- **Storage por tenant:** las subidas van a
+  `tenants/{tenantId}/appearance/...` y `tenants/{tenantId}/inventory-losses/...`.
+  `firebase/storage.rules` valida el rol en `tenants/{tenantId}/users/{uid}`
+  (admin / cocinero según la ruta), conserva lectura pública y mantiene las
+  rutas antiguas `appearance/...` / `inventory-losses/...`. Límite 6 MB,
+  `image/(jpeg|png|webp|gif)`.
+- **Diagnóstico:** Configuración → Conexión muestra proyecto, transporte,
+  instancia, sesión y clave pública (sin secretos).
 
 Para aprovisionar un usuario de QA con rol en Firestore (la contraseña nunca se
 guarda en el repositorio):
@@ -263,8 +305,11 @@ EMAIL=admin@restaurante.com PASSWORD=... ROLE=admin \
   node firebase/scripts/provision-auth-users.mjs
 ```
 
-El service account actual solo tiene permisos de Firestore, así que la web
-lee el rol desde `users/{uid}` cuando el token no trae el claim `role`.
+El service account de web (`firebase-web-admin@...`) solo tiene permisos de
+Firestore (no Firebase Auth Admin ni `firebaserules.releases.list`); la APK usa
+el idToken del usuario, no el service account. Los roles viven en
+`tenants/{tenantId}/users/{uid}` (colección `users` raíz vacía); no se usan
+custom claims.
 
 ### Pérdidas y caducados de ingredientes (2026-11-25)
 
@@ -278,7 +323,7 @@ lee el rol desde `users/{uid}` cuando el token no trae el claim `role`.
   **Inicio** (tarjeta y botón flotante).
 - El registro se guarda primero en `rm_inventory_losses_v1` y descuenta el stock
   local con la cola existente `rm_pending_ingredient_stocks_v1`. Al reconectar
-  se sube la foto a `inventory-losses/...` en Storage y se envía la auditoría a
+  se sube la foto a `tenants/{tenantId}/inventory-losses/...` en Storage y se envía la auditoría a
   `POST /api/inventory-losses` con `Bearer`; el stock **no** se descuenta dos
   veces porque el POST es solo auditoría. `GET /api/inventory-losses` reconcilia
   el historial y las pérdidas pendientes ganan sobre el servidor.

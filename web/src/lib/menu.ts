@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { getDemoState } from "./demo-store";
 import { demoIngredientStocks, demoRecipes, seedCategories, seedMenuItems } from "./seed";
 import { slugify } from "./format";
 import {
@@ -6,7 +7,9 @@ import {
   isFirestoreConfigured,
   listDocuments,
   setDocument,
+  tenantPath,
 } from "./firebase/rest";
+import { DEFAULT_TENANT_ID, isDemoTenant } from "./tenants";
 import type { Category, MenuItem, MenuItemStatus, RecipeIngredient } from "./types";
 
 const VALID_STATUS: MenuItemStatus[] = ["available", "unavailable", "limited"];
@@ -47,8 +50,9 @@ function computeMaxServings(
   if (!stocks || recipe.length === 0) return null;
   let max = Number.POSITIVE_INFINITY;
   for (const line of recipe) {
-    const stock = stocks.get(line.ingredientId);
-    if (stock === undefined) continue;
+    // Si el documento del insumo no existe, el plato está agotado: tratarlo
+    // como "sin límite" permitiría vender más de lo que se puede preparar.
+    const stock = stocks.get(line.ingredientId) ?? 0;
     const canMake = stock <= 0 ? 0 : Math.floor(stock / line.quantity);
     if (canMake < max) max = canMake;
   }
@@ -114,10 +118,18 @@ export interface MenuData {
   source: "firestore" | "demo";
 }
 
-function seedMenu(): MenuData {
-  const stocks = new Map(Object.entries(demoIngredientStocks));
-  const items = seedMenuItems.map((item) => {
-    const recipe = item.recipe ?? demoRecipes[item.id] ?? [];
+function seedMenu(tenantId = DEFAULT_TENANT_ID): MenuData {
+  const demo = isDemoTenant(tenantId)
+    ? getDemoState(tenantId)
+    : {
+        categories: seedCategories,
+        items: seedMenuItems,
+        stocks: demoIngredientStocks,
+        recipes: demoRecipes,
+      };
+  const stocks = new Map(Object.entries(demo.stocks));
+  const items = demo.items.map((item) => {
+    const recipe = item.recipe ?? demo.recipes[item.id] ?? [];
     const maxServings = computeMaxServings(recipe, stocks);
     return {
       ...item,
@@ -132,19 +144,21 @@ function seedMenu(): MenuData {
     };
   });
   return {
-    categories: [...seedCategories].sort((a, b) => a.order - b.order),
+    categories: [...demo.categories].sort((a, b) => a.order - b.order),
     items: items.sort((a, b) => a.name.localeCompare(b.name)),
     source: "demo",
   };
 }
 
-async function loadMenu(): Promise<MenuData> {
-  if (!isFirestoreConfigured()) return seedMenu();
+async function loadMenu(tenantId = DEFAULT_TENANT_ID): Promise<MenuData> {
+  if (!isFirestoreConfigured()) {
+    return seedMenu(tenantId);
+  }
   try {
     const [categories, ingredientDocs] = await Promise.all([
-      listDocuments("categories", mapCategory, 30),
+      listDocuments(tenantPath(tenantId, "categories"), mapCategory, 30),
       listDocuments(
-        "ingredients",
+        tenantPath(tenantId, "ingredients"),
         (doc) => ({
           id: doc.id,
           stock: asNumber(doc.data.stock, 0),
@@ -157,11 +171,11 @@ async function loadMenu(): Promise<MenuData> {
         ? new Map(ingredientDocs.map((i) => [i.id, i.stock]))
         : null;
     const items = await listDocuments(
-      "menuItems",
+      tenantPath(tenantId, "menuItems"),
       (doc) => mapMenuItem(doc, categories, stocks),
       0,
     );
-    if (categories.length === 0 || items.length === 0) return seedMenu();
+    if (categories.length === 0 || items.length === 0) return seedMenu(tenantId);
     categories.sort((a, b) => a.order - b.order);
     const categoryOrder = new Map(
       categories.map((category, index) => [category.id, index]),
@@ -175,7 +189,7 @@ async function loadMenu(): Promise<MenuData> {
     return { categories, items, source: "firestore" };
   } catch (error) {
     console.warn("[menu] Firestore no disponible, usando datos demo:", error);
-    return seedMenu();
+    return seedMenu(tenantId);
   }
 }
 
@@ -187,6 +201,11 @@ export type WritableMenuItemStatus = Extract<
 >;
 
 export type MenuStatusReason = "manual" | "ingredients";
+
+type DemoItemStatus = MenuItem & {
+  manualStatus?: "unavailable" | null;
+  statusReason?: MenuStatusReason | null;
+};
 
 /**
  * Actualiza el estado real del plato en Firestore (catálogo compartido).
@@ -201,16 +220,39 @@ export async function setMenuItemStatus(
   status: unknown,
   manual = status === "unavailable",
   reason: MenuStatusReason = "manual",
+  tenantId = DEFAULT_TENANT_ID,
 ): Promise<{ id: string; status: WritableMenuItemStatus } | null> {
   const documentId = id.trim();
   if (!documentId || !WRITABLE_STATUS.includes(status as WritableMenuItemStatus)) {
     return null;
   }
+
+  if (!isFirestoreConfigured()) {
+    const state = getDemoState(tenantId);
+    const item = state.items.find((entry) => entry.id === documentId);
+    if (!item) return null;
+    const recipe = item.recipe ?? state.recipes[item.id] ?? [];
+    const stocks = new Map(Object.entries(state.stocks));
+    const servings = computeMaxServings(recipe, stocks);
+    let next = status as WritableMenuItemStatus;
+    if (next === "available" && recipe.length > 0 && servings === 0) {
+      next = "unavailable";
+    }
+    item.status = next;
+    item.maxServings = servings;
+    const detail = item as DemoItemStatus;
+    detail.manualStatus = next === "unavailable" && manual ? "unavailable" : null;
+    detail.statusReason = next === "unavailable" && servings === 0
+      ? "ingredients"
+      : reason;
+    return { id: documentId, status: next };
+  }
+
   if (!isFirestoreConfigured()) return null;
 
   const requested = status as WritableMenuItemStatus;
   const existing = await getDocument<Record<string, unknown>>(
-    "menuItems",
+    tenantPath(tenantId, "menuItems"),
     documentId,
     0,
   );
@@ -231,7 +273,7 @@ export async function setMenuItemStatus(
     if (recipe.length > 0) {
       try {
         const ingredients = await listDocuments(
-          "ingredients",
+          tenantPath(tenantId, "ingredients"),
           (doc) => ({
             id: doc.id,
             stock: asNumber(doc.data.stock, 0),
@@ -269,7 +311,7 @@ export async function setMenuItemStatus(
     return { id: documentId, status: next };
   }
 
-  await setDocument("menuItems", documentId, patch);
+  await setDocument(tenantPath(tenantId, "menuItems"), documentId, patch);
   return { id: documentId, status: next };
 }
 
@@ -279,16 +321,36 @@ export async function setMenuItemStatus(
  * reconciliación funcione aunque el despliegue de Functions esté limitado.
  * Respeta los bloqueos manuales (`manualStatus: "unavailable"`).
  */
-export async function syncMenuStatusesFromStock(): Promise<string[]> {
+export async function syncMenuStatusesFromStock(
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<string[]> {
+  if (!isFirestoreConfigured()) {
+    const state = getDemoState(tenantId);
+    const stocks = new Map(Object.entries(state.stocks));
+    const updated: string[] = [];
+    for (const item of state.items) {
+      const detail = item as DemoItemStatus;
+      if (detail.manualStatus === "unavailable") continue;
+      const recipe = item.recipe ?? state.recipes[item.id] ?? [];
+      const next = computeMaxServings(recipe, stocks) === 0
+        ? "unavailable"
+        : "available";
+      if (item.status === next) continue;
+      item.status = next;
+      detail.statusReason = "ingredients";
+      updated.push(item.id);
+    }
+    return updated;
+  }
   if (!isFirestoreConfigured()) return [];
   const [ingredients, items] = await Promise.all([
     listDocuments(
-      "ingredients",
+      tenantPath(tenantId, "ingredients"),
       (doc) => ({ id: doc.id, stock: asNumber(doc.data.stock, 0) }),
       0,
     ),
     listDocuments(
-      "menuItems",
+      tenantPath(tenantId, "menuItems"),
       (doc) => ({
         id: doc.id,
         status: asString(doc.data.status, "available"),
@@ -311,7 +373,7 @@ export async function syncMenuStatusesFromStock(): Promise<string[]> {
         ? "unavailable"
         : "available";
     if (item.status === next) continue;
-    await setDocument("menuItems", item.id, {
+    await setDocument(tenantPath(tenantId, "menuItems"), item.id, {
       status: next,
       statusReason: "ingredients",
       statusUpdatedAt: updatedAt,
@@ -331,26 +393,37 @@ export function isAvailable(menuItem: MenuItem): boolean {
 }
 
 /** Catálogo público: los platos agotados nunca se muestran ni se indexan. */
-export const getPublicMenu = cache(async (): Promise<MenuData> => {
-  const menu = await getMenu();
-  return { ...menu, items: menu.items.filter(isAvailable) };
-});
+export const getPublicMenu = cache(
+  async (tenantId = DEFAULT_TENANT_ID): Promise<MenuData> => {
+    const menu = await getMenu(tenantId);
+    return { ...menu, items: menu.items.filter(isAvailable) };
+  },
+);
 
-export async function getMenuItemBySlug(slug: string): Promise<MenuItem | null> {
-  const { items } = await getPublicMenu();
+export async function getMenuItemBySlug(
+  slug: string,
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<MenuItem | null> {
+  const { items } = await getPublicMenu(tenantId);
   return items.find((item) => item.slug === slug) ?? null;
 }
 
-export async function getFeaturedItems(limit = 6): Promise<MenuItem[]> {
-  const { items } = await getPublicMenu();
+export async function getFeaturedItems(
+  limit = 6,
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<MenuItem[]> {
+  const { items } = await getPublicMenu(tenantId);
   const featured = items.filter((item) => item.featured);
   const pool = featured.length >= limit ? featured : items;
   return pool.slice(0, limit);
 }
 
 /** Favoritos marcados desde la APK; nunca rellena con otros platos. */
-export async function getFavoriteItems(limit = 12): Promise<MenuItem[]> {
-  const { items } = await getPublicMenu();
+export async function getFavoriteItems(
+  limit = 12,
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<MenuItem[]> {
+  const { items } = await getPublicMenu(tenantId);
   return items.filter((item) => item.featured).slice(0, limit);
 }
 
@@ -358,23 +431,33 @@ export async function getFavoriteItems(limit = 12): Promise<MenuItem[]> {
 export async function setMenuItemFeatured(
   id: string,
   featured: boolean,
+  tenantId = DEFAULT_TENANT_ID,
 ): Promise<{ id: string; featured: boolean } | null> {
   const documentId = id.trim();
   if (!documentId || typeof featured !== "boolean") return null;
+  if (!isFirestoreConfigured()) {
+    const item = getDemoState(tenantId).items.find((entry) => entry.id === documentId);
+    if (!item) return null;
+    item.featured = featured;
+    return { id: documentId, featured };
+  }
   if (!isFirestoreConfigured()) return null;
   const existing = await getDocument<Record<string, unknown>>(
-    "menuItems",
+    tenantPath(tenantId, "menuItems"),
     documentId,
     0,
   );
   if (!existing) return null;
   if (existing.featured === featured) return { id: documentId, featured };
-  await setDocument("menuItems", documentId, { featured });
+  await setDocument(tenantPath(tenantId, "menuItems"), documentId, { featured });
   return { id: documentId, featured };
 }
 
-export async function getItemsByCategory(slug: string): Promise<MenuItem[]> {
-  const { items } = await getPublicMenu();
+export async function getItemsByCategory(
+  slug: string,
+  tenantId = DEFAULT_TENANT_ID,
+): Promise<MenuItem[]> {
+  const { items } = await getPublicMenu(tenantId);
   return items.filter((item) => item.categorySlug === slug);
 }
 

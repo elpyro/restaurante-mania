@@ -5,11 +5,13 @@ import { MenuBrowser } from "@/components/MenuBrowser";
 import { getPublicMenu } from "@/lib/menu";
 import { getRestaurantConfig } from "@/lib/restaurant-config";
 import { breadcrumbJsonLd, menuJsonLd } from "@/lib/seo";
+import { getServerTenantId } from "@/lib/tenant-server";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
-  const { config } = await getRestaurantConfig();
+  const tenantId = await getServerTenantId();
+  const { config } = await getRestaurantConfig(tenantId);
   const description = `Explora el menú de ${config.name}: entrantes, platos fuertes, postres y bebidas. Precios, ingredientes y pedidos en línea.`;
   const image = `/api/og?${new URLSearchParams({
     title: "Nuestro menú",
@@ -40,10 +42,11 @@ export default async function MenuPage({
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
+  const tenantId = await getServerTenantId();
   const [{ categories, items }, params, { config }] = await Promise.all([
-    getPublicMenu(),
+    getPublicMenu(tenantId),
     searchParams,
-    getRestaurantConfig(),
+    getRestaurantConfig(tenantId),
   ]);
 
   return (

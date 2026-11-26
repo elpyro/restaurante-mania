@@ -1,15 +1,21 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ArrowRight, ShoppingBag } from "lucide-react";
 import { formatCOP } from "@/lib/format";
+import { getClientTenantId } from "@/lib/client-tenant";
+import { DEFAULT_TENANT_ID, withTenant } from "@/lib/tenants";
 import { useCart } from "./CartProvider";
 
 /// Barra flotante inferior con el monto actual del carrito. Se oculta en las
 /// páginas donde el carrito ya está a la vista para no duplicar controles.
 export function FloatingCartBar() {
   const pathname = usePathname();
+  const [tenantId, setTenantId] = useState(DEFAULT_TENANT_ID);
+  useEffect(() => { setTenantId(getClientTenantId()); }, []);
   const { count, totals, ready } = useCart();
   const onCartPage =
     pathname === "/cart" ||
@@ -20,7 +26,7 @@ export function FloatingCartBar() {
 
   return (
     <Link
-      href="/cart"
+      href={withTenant("/cart", tenantId)}
       aria-label={`Ver carrito: ${count} productos, total ${formatCOP(totals.total)}`}
       className="fixed bottom-4 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center justify-between gap-3 rounded-full bg-brand px-5 py-3 text-white shadow-glow transition duration-300 hover:-translate-y-0.5 hover:bg-brand-strong md:bottom-6"
     >

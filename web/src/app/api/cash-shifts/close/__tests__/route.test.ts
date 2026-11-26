@@ -38,10 +38,13 @@ describe("POST /api/cash-shifts/close", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.currentShift).toEqual(currentShift);
-    expect(mocks.closeCashShift).toHaveBeenCalledWith({
-      id: "shift-1",
-      openedAt: "2026-11-24T10:00:00Z",
-    });
+    expect(mocks.closeCashShift).toHaveBeenCalledWith(
+      {
+        id: "shift-1",
+        openedAt: "2026-11-24T10:00:00Z",
+      },
+      "mania",
+    );
   });
 
   it("rechaza JSON inválido", async () => {

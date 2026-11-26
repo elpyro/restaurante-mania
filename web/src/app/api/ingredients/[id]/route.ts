@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import {
-  createDocument,
   deleteDocument,
   getDocument,
   isFirestoreConfigured,
   setDocument,
+  tenantPath,
 } from "@/lib/firebase/rest";
 import { syncMenuStatusesFromStock } from "@/lib/menu";
+import { resolveTenantFromRequest } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,7 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const tenantId = resolveTenantFromRequest(request);
   const { id } = await params;
   const documentId = id.trim();
   if (!documentId) {
@@ -53,14 +55,15 @@ export async function PATCH(
 
   try {
     const existing = await getDocument<Record<string, unknown>>(
-      "ingredients",
+      tenantPath(tenantId, "ingredients"),
       documentId,
       0,
     );
     const now = new Date().toISOString();
     if (!existing) {
-      await createDocument("ingredients", {
-        id: documentId,
+      // El ID de la URL es el ID canónico del insumo. `createDocument`
+      // generaría un ID aleatorio y las recetas dejarían de encontrarlo.
+      await setDocument(tenantPath(tenantId, "ingredients"), documentId, {
         name: typeof input.name === "string" ? input.name : documentId,
         unit: typeof input.unit === "string" ? input.unit : "g",
         stock,
@@ -70,16 +73,21 @@ export async function PATCH(
     } else {
       const patch: Record<string, unknown> = { stock, updatedAt: now };
       if (minStock !== null) patch.minStock = minStock;
-      await setDocument("ingredients", documentId, patch);
+      await setDocument(
+        tenantPath(tenantId, "ingredients"),
+        documentId,
+        patch,
+      );
     }
     let updatedMenuItems: string[] = [];
     try {
-      updatedMenuItems = await syncMenuStatusesFromStock();
+      updatedMenuItems = await syncMenuStatusesFromStock(tenantId);
     } catch (error) {
       console.error("[api/ingredients] No se pudo reconciliar el menú:", error);
     }
     return NextResponse.json({
       ok: true,
+      tenantId,
       id: documentId,
       stock,
       updatedMenuItems,
@@ -94,9 +102,10 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const tenantId = resolveTenantFromRequest(request);
   const { id } = await params;
   const documentId = id.trim();
   if (!documentId) {
@@ -109,14 +118,19 @@ export async function DELETE(
     );
   }
   try {
-    await deleteDocument("ingredients", documentId);
+    await deleteDocument(tenantPath(tenantId, "ingredients"), documentId);
     let updatedMenuItems: string[] = [];
     try {
-      updatedMenuItems = await syncMenuStatusesFromStock();
+      updatedMenuItems = await syncMenuStatusesFromStock(tenantId);
     } catch (error) {
       console.error("[api/ingredients] No se pudo reconciliar el menú:", error);
     }
-    return NextResponse.json({ ok: true, id: documentId, updatedMenuItems });
+    return NextResponse.json({
+      ok: true,
+      tenantId,
+      id: documentId,
+      updatedMenuItems,
+    });
   } catch (error) {
     console.error("[api/ingredients] DELETE", error);
     return NextResponse.json(

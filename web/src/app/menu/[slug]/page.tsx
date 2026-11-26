@@ -21,6 +21,7 @@ import { getPublicMenu } from "@/lib/menu";
 import { getRestaurantConfig } from "@/lib/restaurant-config";
 import { breadcrumbJsonLd, menuItemJsonLd } from "@/lib/seo";
 import { whatsappUrl } from "@/lib/site";
+import { getServerTenantId } from "@/lib/tenant-server";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -28,11 +29,25 @@ interface Props {
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Next 16 entrega los segmentos dinámicos codificados en la página, pero
+ * decodificados en `generateMetadata`. Normalizamos ambos para que los slugs
+ * con caracteres no ASCII (p. ej. `ajiaco-santafereño`) resuelvan igual.
+ */
+function decodedSlug(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { slug } = await params;
+  const slug = decodedSlug((await params).slug);
+  const tenantId = await getServerTenantId();
   const [{ items }, { config }] = await Promise.all([
-    getPublicMenu(),
-    getRestaurantConfig(),
+    getPublicMenu(tenantId),
+    getRestaurantConfig(tenantId),
   ]);
   const item = items.find((entry) => entry.slug === slug);
   if (!item) {
@@ -65,10 +80,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function DishPage({ params }: Props) {
-  const { slug } = await params;
+  const slug = decodedSlug((await params).slug);
+  const tenantId = await getServerTenantId();
   const [{ categories, items }, { config }] = await Promise.all([
-    getPublicMenu(),
-    getRestaurantConfig(),
+    getPublicMenu(tenantId),
+    getRestaurantConfig(tenantId),
   ]);
   const item = items.find((entry) => entry.slug === slug);
   if (!item) notFound();

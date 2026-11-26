@@ -8,6 +8,7 @@ import {
   validateOrderItems,
   type OrderInputItem,
 } from "@/lib/orders";
+import { resolveTenantFromRequest } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +24,7 @@ export async function POST(request: Request) {
     );
   }
 
+  const tenantId = resolveTenantFromRequest(request);
   const payload = (body ?? {}) as Record<string, unknown>;
   const stockOnly = payload.stockOnly === true;
   let items: OrderInputItem[];
@@ -37,7 +39,7 @@ export async function POST(request: Request) {
     }
     items = validation.items;
   } else {
-    const { config } = await getRestaurantConfig();
+    const { config } = await getRestaurantConfig(tenantId);
     const validation = validateOrderInput(body, restaurantOrderPolicy(config));
     if (!validation.ok) {
       return NextResponse.json(
@@ -48,7 +50,7 @@ export async function POST(request: Request) {
     items = validation.value.items;
   }
 
-  const { items: menuItems } = await getMenu();
+  const { items: menuItems } = await getMenu(tenantId);
   const menuById = new Map(menuItems.map((item) => [item.id, item]));
   const unavailable = items
     .map((line) => {
@@ -67,7 +69,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const insufficientItems = await getInsufficientItems(items, menuById);
+    const insufficientItems = await getInsufficientItems(items, menuById, tenantId);
     if (insufficientItems.length > 0) {
       return NextResponse.json(
         {

@@ -16,6 +16,7 @@ import {
   FieldValue,
   Timestamp,
   getFirestore,
+  type Transaction,
 } from "firebase-admin/firestore";
 
 import {
@@ -41,6 +42,119 @@ initializeApp();
 const db = getFirestore();
 
 // =============================================================================
+// Multi-tenant
+// =============================================================================
+
+const DEFAULT_TENANT_ID = "mania";
+const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const ORDER_STATUSES: OrderStatus[] = [
+  "pending",
+  "confirmed",
+  "preparing",
+  "ready",
+  "sent",
+  "delivered",
+  "cancelled",
+];
+
+/** Acepta solo IDs de tenant que puedan usarse como ID de documento. */
+function normalizeTenantId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const tenantId = value.trim().toLowerCase();
+  return TENANT_ID_PATTERN.test(tenantId) ? tenantId : null;
+}
+
+function resolveTenantId(
+  payload: Record<string, unknown>,
+  request: CallableRequest,
+): string {
+  const fromPayload = normalizeTenantId(payload.tenantId);
+  if (fromPayload) return fromPayload;
+  const fromToken = normalizeTenantId(request.auth?.token.tenantId);
+  return fromToken ?? DEFAULT_TENANT_ID;
+}
+
+function tenantCollection(tenantId: string, collection: string) {
+  return db.collection("tenants").doc(tenantId).collection(collection);
+}
+
+function tenantDoc(tenantId: string, collection: string, id: string) {
+  return tenantCollection(tenantId, collection).doc(id);
+}
+
+/** El rol del tenant gana sobre el claim global para no mezclar instancias. */
+async function roleInTenant(
+  tenantId: string,
+  request: CallableRequest,
+): Promise<string | undefined> {
+  const uid = request.auth?.uid;
+  if (!uid) return undefined;
+  const stored = await tenantDoc(tenantId, "users", uid).get();
+  const role = stored.data()?.role;
+  if (typeof role === "string" && role.length > 0) return role;
+  const claimRole = request.auth?.token.role;
+  return typeof claimRole === "string" && claimRole.length > 0
+    ? claimRole
+    : undefined;
+}
+
+function readRecipe(value: unknown): RecipeLine[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const ingredientId =
+      typeof row.ingredientId === "string" ? row.ingredientId : "";
+    const quantity =
+      typeof row.quantity === "number" && Number.isFinite(row.quantity)
+        ? row.quantity
+        : 0;
+    return ingredientId.length > 0 && quantity > 0
+      ? [{ ingredientId, quantity }]
+      : [];
+  });
+}
+
+function consumptionForLines(
+  lines: Array<{ menuItemId?: string; quantity?: number }>,
+  menuById: Map<string, Record<string, unknown>>,
+): Map<string, number> {
+  const consumption = new Map<string, number>();
+  for (const line of lines) {
+    const menu = menuById.get(line.menuItemId ?? "") ?? {};
+    const quantity = typeof line.quantity === "number" ? line.quantity : 0;
+    for (const recipe of readRecipe(menu.recipe)) {
+      const amount = recipe.quantity * quantity;
+      consumption.set(
+        recipe.ingredientId,
+        (consumption.get(recipe.ingredientId) ?? 0) + amount,
+      );
+    }
+  }
+  return consumption;
+}
+
+async function loadMenuByIdForTransaction(
+  transaction: Transaction,
+  tenantId: string,
+  menuItemIds: string[],
+): Promise<Map<string, Record<string, unknown>>> {
+  const snapshots = await Promise.all(
+    menuItemIds.map((id) =>
+      transaction.get(tenantDoc(tenantId, "menuItems", id)),
+    ),
+  );
+  return new Map(
+    snapshots
+      .filter((snapshot) => snapshot.exists)
+      .map((snapshot) => [
+        snapshot.id,
+        (snapshot.data() ?? {}) as Record<string, unknown>,
+      ]),
+  );
+}
+
+// =============================================================================
 // Tipos de entrada
 // =============================================================================
 
@@ -50,6 +164,7 @@ interface PlaceOrderItem {
 }
 
 interface PlaceOrderPayload {
+  tenantId?: string;
   customerName: string;
   customerPhone: string;
   deliveryAddress?: string;
@@ -61,6 +176,7 @@ interface PlaceOrderPayload {
 }
 
 interface UpdateStatusPayload {
+  tenantId?: string;
   orderId: string;
   status: OrderStatus;
 }
@@ -88,6 +204,10 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
     throw new HttpsError("invalid-argument", "El pedido es inválido.");
   }
 
+  const tenantId = resolveTenantId(
+    payload as Record<string, unknown>,
+    request,
+  );
   const errors: string[] = [];
 
   const isTable = payload.type === "table";
@@ -172,9 +292,9 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
     throw new HttpsError("invalid-argument", errors.join(" "), { errors });
   }
 
-  // Precios siempre desde Firestore, nunca desde el cliente.
+  // Precios siempre desde Firestore del tenant, nunca desde el cliente.
   const ids = [...quantities.keys()];
-  const refs = ids.map((id) => db.collection("menuItems").doc(id));
+  const refs = ids.map((id) => tenantDoc(tenantId, "menuItems", id));
   const snapshots = await db.getAll(...refs);
 
   const lines: PricedLine[] = [];
@@ -214,6 +334,47 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
     );
   }
 
+  // Un insumo de la receta sin documento se considera agotado, no ilimitado.
+  const menuById = new Map(
+    snapshots
+      .filter((snapshot) => snapshot.exists)
+      .map((snapshot) => [
+        snapshot.id,
+        (snapshot.data() ?? {}) as Record<string, unknown>,
+      ]),
+  );
+  const consumption = consumptionForLines(lines, menuById);
+  if (consumption.size > 0) {
+    const ingredientSnapshots = await db.getAll(
+      ...[...consumption.keys()].map((id) =>
+        tenantDoc(tenantId, "ingredients", id),
+      ),
+    );
+    const insufficient: string[] = [];
+    for (const snapshot of ingredientSnapshots) {
+      const data = snapshot.exists ? snapshot.data() ?? {} : {};
+      const stock =
+        typeof data.stock === "number" && Number.isFinite(data.stock)
+          ? data.stock
+          : 0;
+      const required = consumption.get(snapshot.id) ?? 0;
+      if (required > stock + 0.0001) {
+        const name =
+          typeof data.name === "string" && data.name.length > 0
+            ? data.name
+            : snapshot.id;
+        insufficient.push(`${name}: se requieren ${required}, hay ${stock}`);
+      }
+    }
+    if (insufficient.length > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        `Ingredientes insuficientes. ${insufficient.join(". ")}.`,
+        { insufficientItems: insufficient },
+      );
+    }
+  }
+
   const totals = computeTotals(lines);
   const now = Timestamp.now();
   const code = buildOrderCode(
@@ -230,10 +391,11 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
       ? ""
       : String(payload.customerPhone).trim();
 
-  const orderRef = db.collection("orders").doc();
+  const orderRef = tenantCollection(tenantId, "orders").doc();
   await db.runTransaction(async (transaction) => {
     // Pendiente no consume insumos; el descuento ocurre en updateOrderStatus.
     transaction.set(orderRef, {
+      tenantId,
       code,
       customerName: resolvedCustomerName,
       customerPhone: resolvedCustomerPhone,
@@ -257,8 +419,7 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
   });
 
   if (isTable && isValidTableNumber(payload.tableNumber)) {
-    const tableQuery = await db
-      .collection("tables")
+    const tableQuery = await tenantCollection(tenantId, "tables")
       .where("number", "==", payload.tableNumber)
       .limit(1)
       .get();
@@ -273,12 +434,14 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
   }
 
   logger.info("Pedido creado", {
+    tenantId,
     orderId: orderRef.id,
     code,
     total: totals.total,
   });
 
   return {
+    tenantId,
     id: orderRef.id,
     code,
     subtotal: totals.subtotal,
@@ -295,28 +458,12 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
 // pedidos y cualquier consumer externo.
 // =============================================================================
 
-function readRecipe(value: unknown): RecipeLine[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    if (!entry || typeof entry !== "object") return [];
-    const row = entry as Record<string, unknown>;
-    const ingredientId =
-      typeof row.ingredientId === "string" ? row.ingredientId : "";
-    const quantity =
-      typeof row.quantity === "number" && Number.isFinite(row.quantity)
-        ? row.quantity
-        : 0;
-    return ingredientId.length > 0 && quantity > 0
-      ? [{ ingredientId, quantity }]
-      : [];
-  });
-}
-
 export const syncMenuStatusOnIngredientChange = onDocumentWritten(
-  "ingredients/{ingredientId}",
+  "tenants/{tenantId}/ingredients/{ingredientId}",
   async (event) => {
+    const tenantId = event.params.tenantId;
     const changedId = event.params.ingredientId;
-    const menuSnapshot = await db.collection("menuItems").get();
+    const menuSnapshot = await tenantCollection(tenantId, "menuItems").get();
     const affected = menuSnapshot.docs.filter((doc) =>
       readRecipe(doc.data()?.recipe).some(
         (line) => line.ingredientId === changedId,
@@ -332,12 +479,14 @@ export const syncMenuStatusOnIngredientChange = onDocumentWritten(
       ),
     ];
     const stockSnapshots = await Promise.all(
-      ingredientIds.map((id) => db.collection("ingredients").doc(id).get()),
+      ingredientIds.map((id) =>
+        tenantDoc(tenantId, "ingredients", id).get(),
+      ),
     );
     const stocks = new Map<string, number>();
     for (const snapshot of stockSnapshots) {
-      if (!snapshot.exists) continue;
-      const stock = snapshot.data()?.stock;
+      const stock = snapshot.exists ? snapshot.data()?.stock : 0;
+      // Insumo sin documento = agotado; nunca se trata como ilimitado.
       stocks.set(
         snapshot.id,
         typeof stock === "number" && Number.isFinite(stock) ? stock : 0,
@@ -364,6 +513,7 @@ export const syncMenuStatusOnIngredientChange = onDocumentWritten(
     );
 
     logger.info("Estado de menú recalculado por stock", {
+      tenantId,
       ingredientId: changedId,
       updates,
     });
@@ -379,23 +529,27 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión.");
   }
 
-  const role = request.auth.token.role;
-  if (typeof role !== "string") {
+  const payload = request.data as Partial<UpdateStatusPayload> | undefined;
+  const tenantId = resolveTenantId(
+    (payload ?? {}) as Record<string, unknown>,
+    request,
+  );
+  const role = await roleInTenant(tenantId, request);
+  if (!role) {
     throw new HttpsError("permission-denied", "Tu cuenta no tiene un rol asignado.");
   }
 
-  const payload = request.data as Partial<UpdateStatusPayload> | undefined;
   const orderId = payload?.orderId;
   const target = payload?.status;
 
   if (typeof orderId !== "string" || orderId.length === 0) {
     throw new HttpsError("invalid-argument", "Falta el identificador del pedido.");
   }
-  if (typeof target !== "string") {
+  if (typeof target !== "string" || !ORDER_STATUSES.includes(target as OrderStatus)) {
     throw new HttpsError("invalid-argument", "Falta el nuevo estado.");
   }
 
-  const orderRef = db.collection("orders").doc(orderId);
+  const orderRef = tenantDoc(tenantId, "orders", orderId);
 
   return db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(orderRef);
@@ -429,7 +583,7 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
     }
 
     // Inventario: `pending` no descuenta. Al avanzar a cualquier estado superior
-    // se descuenta una sola vez; al cancelar se repone.
+    // se descuenta una sola vez; al cancelar se repone. Todo dentro del tenant.
     const deducted = data.inventoryDeducted === true;
     const shouldDeduct =
       !deducted &&
@@ -438,7 +592,7 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
         target === "ready" ||
         target === "sent" ||
         target === "delivered");
-    if (shouldDeduct) {
+    if (shouldDeduct || (target === "cancelled" && deducted)) {
       const menuIds = [
         ...new Set(
           items
@@ -446,96 +600,36 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
             .filter((id): id is string => typeof id === "string"),
         ),
       ];
-      const menuSnaps = await Promise.all(
-        menuIds.map((id) => transaction.get(db.collection("menuItems").doc(id))),
+      const menuById = await loadMenuByIdForTransaction(
+        transaction,
+        tenantId,
+        menuIds,
       );
-      const menuById = new Map(
-        menuSnaps.map((snap) => [snap.id, snap.data() ?? {}]),
+      const consumption = consumptionForLines(
+        items as Array<{ menuItemId?: string; quantity?: number }>,
+        menuById,
       );
-      const consumption = new Map<string, number>();
-      for (const line of items as Array<{
-        menuItemId?: string;
-        quantity?: number;
-      }>) {
-        const menu = menuById.get(line.menuItemId ?? "") ?? {};
-        const recipe = Array.isArray(menu.recipe) ? menu.recipe : [];
-        const lineQty = typeof line.quantity === "number" ? line.quantity : 0;
-        for (const entry of recipe as Array<{
-          ingredientId?: string;
-          quantity?: number;
-        }>) {
-          const ingId = entry.ingredientId;
-          if (typeof ingId !== "string") continue;
-          const qty =
-            (typeof entry.quantity === "number" ? entry.quantity : 0) * lineQty;
-          consumption.set(ingId, (consumption.get(ingId) ?? 0) + qty);
-        }
-      }
-      const ingIds = [...consumption.keys()];
       const ingSnaps = await Promise.all(
-        ingIds.map((id) => transaction.get(db.collection("ingredients").doc(id))),
+        [...consumption.keys()].map((id) =>
+          transaction.get(tenantDoc(tenantId, "ingredients", id)),
+        ),
       );
       for (const snap of ingSnaps) {
         if (!snap.exists) continue;
-        const data = snap.data() ?? {};
-        const stock = typeof data.stock === "number" ? data.stock : 0;
+        const ingredientData = snap.data() ?? {};
+        const stock =
+          typeof ingredientData.stock === "number" &&
+          Number.isFinite(ingredientData.stock)
+            ? ingredientData.stock
+            : 0;
         const qty = consumption.get(snap.id) ?? 0;
-        const next = stock - qty;
+        const next = shouldDeduct ? stock - qty : stock + qty;
         transaction.update(snap.ref, {
           stock: next < 0 ? 0 : next,
           updatedAt: FieldValue.serverTimestamp(),
         });
       }
-      patch.inventoryDeducted = true;
-    }
-    if (target === "cancelled" && deducted) {
-      const menuIds = [
-        ...new Set(
-          items
-            .map((line: { menuItemId?: string }) => line.menuItemId)
-            .filter((id): id is string => typeof id === "string"),
-        ),
-      ];
-      const menuSnaps = await Promise.all(
-        menuIds.map((id) => transaction.get(db.collection("menuItems").doc(id))),
-      );
-      const menuById = new Map(
-        menuSnaps.map((snap) => [snap.id, snap.data() ?? {}]),
-      );
-      const consumption = new Map<string, number>();
-      for (const line of items as Array<{
-        menuItemId?: string;
-        quantity?: number;
-      }>) {
-        const menu = menuById.get(line.menuItemId ?? "") ?? {};
-        const recipe = Array.isArray(menu.recipe) ? menu.recipe : [];
-        const lineQty = typeof line.quantity === "number" ? line.quantity : 0;
-        for (const entry of recipe as Array<{
-          ingredientId?: string;
-          quantity?: number;
-        }>) {
-          const ingId = entry.ingredientId;
-          if (typeof ingId !== "string") continue;
-          const qty =
-            (typeof entry.quantity === "number" ? entry.quantity : 0) * lineQty;
-          consumption.set(ingId, (consumption.get(ingId) ?? 0) + qty);
-        }
-      }
-      const ingIds = [...consumption.keys()];
-      const ingSnaps = await Promise.all(
-        ingIds.map((id) => transaction.get(db.collection("ingredients").doc(id))),
-      );
-      for (const snap of ingSnaps) {
-        if (!snap.exists) continue;
-        const data = snap.data() ?? {};
-        const stock = typeof data.stock === "number" ? data.stock : 0;
-        const qty = consumption.get(snap.id) ?? 0;
-        transaction.update(snap.ref, {
-          stock: stock + qty,
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-      }
-      patch.inventoryDeducted = false;
+      patch.inventoryDeducted = shouldDeduct;
     }
 
     transaction.update(orderRef, patch);
@@ -546,8 +640,7 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
       typeof tableNumber === "number" &&
       (target === "delivered" || target === "sent" || target === "cancelled")
     ) {
-      const tableQuery = await db
-        .collection("tables")
+      const tableQuery = await tenantCollection(tenantId, "tables")
         .where("number", "==", tableNumber)
         .limit(1)
         .get();
@@ -561,7 +654,7 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
       }
     }
 
-    return { orderId, status: target };
+    return { tenantId, orderId, status: target };
   });
 });
 
@@ -570,18 +663,19 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
 // =============================================================================
 
 export const onOrderCreated = onDocumentCreated(
-  "orders/{orderId}",
+  "tenants/{tenantId}/orders/{orderId}",
   async (event) => {
     const snapshot = event.data;
     if (!snapshot) return;
 
+    const tenantId = event.params.tenantId;
     const data = snapshot.data();
     const createdAt = data.createdAt;
     const date =
       createdAt instanceof Timestamp ? createdAt.toDate() : new Date();
     const key = dayKey(date);
-    const statsRef = db.doc(`stats/daily-${key}`);
-    const markerRef = db.doc(`_processedEvents/${event.id}`);
+    const statsRef = tenantDoc(tenantId, "stats", `daily-${key}`);
+    const markerRef = tenantDoc(tenantId, "_processedEvents", event.id);
 
     const total = typeof data.total === "number" ? data.total : 0;
     const items = Array.isArray(data.items) ? data.items : [];
@@ -623,6 +717,7 @@ export const onOrderCreated = onDocumentCreated(
       );
 
       transaction.set(markerRef, {
+        tenantId,
         collection: "orders",
         documentId: event.params.orderId,
         processedAt: FieldValue.serverTimestamp(),
@@ -630,6 +725,7 @@ export const onOrderCreated = onDocumentCreated(
     });
 
     logger.info("Métricas diarias actualizadas", {
+      tenantId,
       day: key,
       orderId: event.params.orderId,
     });
@@ -647,68 +743,75 @@ export const dailySalesReport = onSchedule(
     end.setUTCHours(0, 0, 0, 0);
     const start = new Date(end);
     start.setUTCDate(start.getUTCDate() - 1);
-
-    const snapshot = await db
-      .collection("orders")
-      .where("paymentStatus", "==", "paid")
-      .where("createdAt", ">=", Timestamp.fromDate(start))
-      .where("createdAt", "<", Timestamp.fromDate(end))
-      .get();
-
-    let total = 0;
-    let itemCount = 0;
-    const byPaymentMethod: Record<string, number> = {};
-    const byProduct: Record<string, { quantity: number; total: number }> = {};
-
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      const orderTotal = typeof data.total === "number" ? data.total : 0;
-      total += orderTotal;
-
-      const method =
-        typeof data.paymentMethod === "string" ? data.paymentMethod : "cash";
-      byPaymentMethod[method] = (byPaymentMethod[method] ?? 0) + orderTotal;
-
-      const items = Array.isArray(data.items) ? data.items : [];
-      for (const item of items as Array<{
-        name?: string;
-        price?: number;
-        quantity?: number;
-      }>) {
-        const quantity =
-          typeof item.quantity === "number" ? item.quantity : 0;
-        const price = typeof item.price === "number" ? item.price : 0;
-        const name = String(item.name ?? "Producto");
-        itemCount += quantity;
-        const entry = byProduct[name] ?? { quantity: 0, total: 0 };
-        byProduct[name] = {
-          quantity: entry.quantity + quantity,
-          total: entry.total + price * quantity,
-        };
-      }
-    });
-
-    const topProducts = Object.entries(byProduct)
-      .sort((a, b) => b[1].quantity - a[1].quantity)
-      .slice(0, 10)
-      .map(([name, value]) => ({ name, ...value }));
-
     const key = dayKey(start);
 
-    await db.doc(`reports/daily-${key}`).set(
-      {
-        day: key,
-        orders: snapshot.size,
-        items: itemCount,
-        total,
-        averageTicket: snapshot.size === 0 ? 0 : total / snapshot.size,
-        byPaymentMethod,
-        topProducts,
-        generatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+    const tenants = await db.collection("tenants").get();
+    for (const tenant of tenants.docs) {
+      const tenantId = tenant.id;
+      const snapshot = await tenantCollection(tenantId, "orders")
+        .where("paymentStatus", "==", "paid")
+        .where("createdAt", ">=", Timestamp.fromDate(start))
+        .where("createdAt", "<", Timestamp.fromDate(end))
+        .get();
 
-    logger.info("Reporte diario generado", { day: key, total });
+      let total = 0;
+      let itemCount = 0;
+      const byPaymentMethod: Record<string, number> = {};
+      const byProduct: Record<string, { quantity: number; total: number }> = {};
+
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        const orderTotal = typeof data.total === "number" ? data.total : 0;
+        total += orderTotal;
+
+        const method =
+          typeof data.paymentMethod === "string" ? data.paymentMethod : "cash";
+        byPaymentMethod[method] = (byPaymentMethod[method] ?? 0) + orderTotal;
+
+        const items = Array.isArray(data.items) ? data.items : [];
+        for (const item of items as Array<{
+          name?: string;
+          price?: number;
+          quantity?: number;
+        }>) {
+          const quantity =
+            typeof item.quantity === "number" ? item.quantity : 0;
+          const price = typeof item.price === "number" ? item.price : 0;
+          const name = String(item.name ?? "Producto");
+          itemCount += quantity;
+          const entry = byProduct[name] ?? { quantity: 0, total: 0 };
+          byProduct[name] = {
+            quantity: entry.quantity + quantity,
+            total: entry.total + price * quantity,
+          };
+        }
+      });
+
+      const topProducts = Object.entries(byProduct)
+        .sort((a, b) => b[1].quantity - a[1].quantity)
+        .slice(0, 10)
+        .map(([name, value]) => ({ name, ...value }));
+
+      await tenantDoc(tenantId, "reports", `daily-${key}`).set(
+        {
+          tenantId,
+          day: key,
+          orders: snapshot.size,
+          items: itemCount,
+          total,
+          averageTicket: snapshot.size === 0 ? 0 : total / snapshot.size,
+          byPaymentMethod,
+          topProducts,
+          generatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      logger.info("Reporte diario generado", {
+        tenantId,
+        day: key,
+        total,
+      });
+    }
   },
 );

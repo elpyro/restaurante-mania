@@ -85,6 +85,8 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
   final _heroTitleController = TextEditingController();
   final _heroDescriptionController = TextEditingController();
   final _heroBadgeController = TextEditingController();
+  final _ctaTitleController = TextEditingController();
+  final _ctaDescriptionController = TextEditingController();
   final _instagramController = TextEditingController();
   final _tiktokController = TextEditingController();
   final _facebookController = TextEditingController();
@@ -108,6 +110,8 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
     _heroTitleController.dispose();
     _heroDescriptionController.dispose();
     _heroBadgeController.dispose();
+    _ctaTitleController.dispose();
+    _ctaDescriptionController.dispose();
     _instagramController.dispose();
     _tiktokController.dispose();
     _facebookController.dispose();
@@ -120,6 +124,8 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
     _heroTitleController.text = appearance.heroTitle;
     _heroDescriptionController.text = appearance.heroDescription;
     _heroBadgeController.text = appearance.heroBadge;
+    _ctaTitleController.text = appearance.ctaTitle;
+    _ctaDescriptionController.text = appearance.ctaDescription;
     _instagramController.text = appearance.instagramUrl ?? '';
     _tiktokController.text = appearance.tiktokUrl ?? '';
     _facebookController.text = appearance.facebookUrl ?? '';
@@ -136,6 +142,8 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
         heroTitle: _heroTitleController.text.trim(),
         heroDescription: _heroDescriptionController.text.trim(),
         heroBadge: _heroBadgeController.text.trim(),
+        ctaTitle: _ctaTitleController.text.trim(),
+        ctaDescription: _ctaDescriptionController.text.trim(),
         preset: _preset,
         bannerUrl: _bannerUrl,
         logoUrl: _logoUrl,
@@ -323,6 +331,28 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
             onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(labelText: 'Etiqueta hero'),
           ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _ctaTitleController,
+            maxLength: RestaurantAppearance.ctaTitleMaxLength,
+            maxLines: 2,
+            decoration: const InputDecoration(
+              labelText: 'Título del bloque final',
+              helperText: 'Texto grande del bloque «Pedir ahora».',
+              alignLabelWithHint: true,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _ctaDescriptionController,
+            maxLength: RestaurantAppearance.ctaDescriptionMaxLength,
+            maxLines: 4,
+            decoration: const InputDecoration(
+              labelText: 'Descripción del bloque final',
+              helperText: 'Ejemplo: Abrimos todos los días de Lun–Sáb 11:30–20:30…',
+              alignLabelWithHint: true,
+            ),
+          ),
           const SizedBox(height: 18),
           const Text(
             'Redes sociales y ubicación',
@@ -447,7 +477,7 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
       );
       final prefix = isBanner ? 'banner' : 'logo';
       final name =
-          'appearance/$prefix-${DateTime.now().millisecondsSinceEpoch}.${
+          'tenants/${repository.tenantId}/appearance/$prefix-${DateTime.now().millisecondsSinceEpoch}.${
               mime.split('/').last.replaceAll('jpeg', 'jpg')}';
       final url = await service.uploadFile(
         filePath: file.path,

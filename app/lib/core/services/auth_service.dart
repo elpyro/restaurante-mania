@@ -22,12 +22,24 @@ class AuthService {
   AuthService({FlutterSecureStorage? storage})
       : _storage = storage ?? const FlutterSecureStorage();
 
-  /// Clave pública de Firebase Web. Se inyecta en tiempo de compilación con
-  /// `--dart-define=FIREBASE_WEB_API_KEY=...`; no es un secreto.
-  static const firebaseApiKey = String.fromEnvironment(
+  /// Clave pública de Firebase Web (no es un secreto).
+  ///
+  /// Orden de resolución:
+  ///   1. `--dart-define=FIREBASE_WEB_API_KEY=...` (cualquier build);
+  ///   2. clave de producción `restaurante-mania-e47a0` en builds release;
+  ///   3. vacía en debug/tests → modo demo.
+  ///
+  /// La clave pública de la app web se reutiliza para Firestore REST; no
+  /// requiere ningún permiso IAM adicional.
+  static const _productionFirebaseApiKey =
+      'AIzaSyBycOm9eJ1KlhTXwxUcaGx2ZZwvfE5TJns';
+  static const _compiledApiKey = String.fromEnvironment(
     'FIREBASE_WEB_API_KEY',
     defaultValue: '',
   );
+  static String get firebaseApiKey => _compiledApiKey.isNotEmpty
+      ? _compiledApiKey
+      : (kReleaseMode ? _productionFirebaseApiKey : '');
 
   static const idTokenKey = 'rm_firebase_id_token_v1';
   static const refreshTokenKey = 'rm_firebase_refresh_token_v1';
@@ -175,6 +187,30 @@ class AuthService {
       return idToken;
     }
     return refresh();
+  }
+
+  /// UID (`sub`/`user_id`) del idToken vigente; `null` si no hay sesión.
+  Future<String?> currentUid() async {
+    final idToken = await _read(idTokenKey);
+    if (idToken == null || idToken.isEmpty) return null;
+    return decodeUidFromIdToken(idToken);
+  }
+
+  /// Extrae el UID de un JWT de Firebase sin verificar la firma (el token
+  /// viene del propio backend de Firebase Auth y Firestore lo re-valida).
+  @visibleForTesting
+  static String? decodeUidFromIdToken(String idToken) {
+    final parts = idToken.split('.');
+    if (parts.length < 2) return null;
+    try {
+      final normalized = base64Url.normalize(parts[1]);
+      final payload = jsonDecode(utf8.decode(base64Url.decode(normalized)));
+      if (payload is! Map) return null;
+      final userId = payload['user_id'] ?? payload['sub'];
+      return userId is String && userId.isNotEmpty ? userId : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> logout() async {

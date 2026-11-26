@@ -5,6 +5,7 @@ import '../../core/data/repository.dart';
 import '../../core/models/restaurant_settings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import 'schedule_dialog.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -15,7 +16,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _name;
-  late final TextEditingController _hours;
+  late ScheduleConfig _schedule;
   late final TextEditingController _countryCode;
   late final TextEditingController _phone;
   late final TextEditingController _address;
@@ -40,7 +41,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final repository = context.read<RestaurantRepository>();
     final settings = repository.settings;
     _name = TextEditingController(text: settings.name);
-    _hours = TextEditingController(text: settings.hours);
+    _schedule = ScheduleConfig(
+      timeZone: settings.timeZone,
+      openingDays: List<String>.from(settings.openingDays),
+      openTime: settings.openTime,
+      closeTime: settings.closeTime,
+    );
     _countryCode = TextEditingController(text: settings.countryCode);
     _phone = TextEditingController(text: settings.phone);
     _address = TextEditingController(text: settings.address);
@@ -66,7 +72,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _name.dispose();
-    _hours.dispose();
     _countryCode.dispose();
     _phone.dispose();
     _address.dispose();
@@ -81,6 +86,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       controller.dispose();
     }
     super.dispose();
+  }
+
+  Future<void> _editSchedule() async {
+    final updated = await showScheduleDialog(context, current: _schedule);
+    if (updated == null || !mounted) return;
+    setState(() => _schedule = updated);
   }
 
   Future<void> _save(RestaurantRepository repository) async {
@@ -122,7 +133,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final current = repository.settings;
     final next = current.copyWith(
       name: _name.text.trim(),
-      hours: _hours.text.trim(),
+      hours: _schedule.hoursLabel,
+      timeZone: _schedule.timeZone,
+      openingDays: List<String>.from(_schedule.openingDays),
+      openTime: _schedule.openTime,
+      closeTime: _schedule.closeTime,
       countryCode: _countryCode.text.trim(),
       phone: _phone.text.trim(),
       whatsapp: RestaurantSettings.compactNumber(
@@ -155,10 +170,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Reiniciar demo'),
+        title: const Text('Borrar datos locales'),
         content: const Text(
-          'Se borrarán los pedidos, cambios de menú y la sesión actual. '
-          'La aplicación volverá a los datos de ejemplo.',
+          'Se borrarán los datos locales, la sesión, la caché y las colas '
+          'pendientes de este dispositivo. Tendrás que iniciar sesión de nuevo.',
         ),
         actions: [
           TextButton(
@@ -168,7 +183,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Reiniciar'),
+            child: const Text('Borrar datos'),
           ),
         ],
       ),
@@ -195,11 +210,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
             decoration: const InputDecoration(labelText: 'Nombre'),
           ),
           const SizedBox(height: 10),
-          TextField(
-            controller: _hours,
-            decoration: const InputDecoration(
-              labelText: 'Horario',
-              hintText: '11:00 - 22:00',
+          OutlinedButton.icon(
+            onPressed: _editSchedule,
+            icon: const Icon(Icons.schedule, size: 18),
+            label: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Horario · establecer zona horaria y horario de trabajo',
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+                Text(
+                  '${_schedule.hoursLabel} · ${_schedule.timeZone}',
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF78716C)),
+                ),
+              ],
+            ),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(56),
+              alignment: Alignment.centerLeft,
             ),
           ),
           const SizedBox(height: 10),
@@ -400,14 +429,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: const Icon(Icons.save_outlined, size: 18),
             label: const Text('Guardar datos de IA'),
           ),
+          const _SectionLabel('Conexión · diagnóstico'),
+          _connectionDiagnostics(repository),
+          const SizedBox(height: 12),
           const _SectionLabel('Servidor web (pedidos en línea)'),
           TextField(
             controller: _serverUrl,
             decoration: const InputDecoration(
               labelText: 'URL del servidor web',
-              hintText: 'http://192.168.101.7:3000',
+              hintText: 'https://tu-dominio-web.netlify.app',
               helperText:
-                  'Pedidos creados en la web se importan automáticamente.',
+                  'Solo para el transporte web/QA. En producción la APK habla directo con Firestore.',
             ),
           ),
           const SizedBox(height: 8),
@@ -478,8 +510,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               side: const BorderSide(color: Color(0xFFFECDD3)),
             ),
             onPressed: () => _reset(repository),
-            icon: const Icon(Icons.restart_alt_rounded, size: 18),
-            label: const Text('Reiniciar datos demo'),
+            icon: const Icon(Icons.delete_outline, size: 18),
+            label: const Text('Borrar datos locales'),
           ),
           const _SectionLabel('Acerca de'),
           Container(
@@ -550,6 +582,60 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (pendingOrders > 0) parts.add('$pendingOrders pedido(s)');
     if (pendingConfig > 0) parts.add('configuración de la web');
     return '${parts.join(' y ')} pendientes';
+  }
+
+  Widget _connectionDiagnostics(RestaurantRepository repository) {
+    final project = repository.firebaseProjectId.isEmpty
+        ? 'no disponible'
+        : repository.firebaseProjectId;
+    final session = repository.hasFirebaseSession
+        ? 'iniciada (${repository.currentRole?.name ?? 'sin rol'})'
+        : 'sin sesión';
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFEDEAE6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _diagnosticRow('Proyecto Firebase', project),
+          _diagnosticRow('Transporte', repository.apiTransportName),
+          _diagnosticRow('Instancia', repository.tenantId),
+          _diagnosticRow('Sesión', session),
+          _diagnosticRow(
+            'Clave pública',
+            repository.hasFirebaseApiKey ? 'configurada' : 'no configurada',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _diagnosticRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF78716C)),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _syncCard(RestaurantRepository repository) {

@@ -1,6 +1,11 @@
 import { ImageResponse } from "next/og";
 import type { NextRequest } from "next/server";
-import { getRestaurantConfig, themeForPreset } from "@/lib/restaurant-config";
+import {
+  formatOpeningHours,
+  getRestaurantConfig,
+  themeForPreset,
+} from "@/lib/restaurant-config";
+import { resolveTenantFromRequest } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +19,8 @@ function ogText(value: string): string {
 }
 
 export async function GET(request: NextRequest) {
-  const { config } = await getRestaurantConfig();
+  const tenantId = resolveTenantFromRequest(request);
+  const { config } = await getRestaurantConfig(tenantId);
   const theme = themeForPreset(config.appearance.preset);
   const params = request.nextUrl.searchParams;
   const title = ogText(params.get("title") ?? config.heroTitle).slice(0, 120);
@@ -102,7 +108,9 @@ export async function GET(request: NextRequest) {
             color: theme["ink-muted"],
           }}
         >
-          <div style={{ display: "flex" }}>{config.city} · {config.hours}</div>
+          <div style={{ display: "flex" }}>
+            {config.city} · {formatOpeningHours(config)}
+          </div>
           <div style={{ display: "flex", color: theme.accent }}>PEDIDOS EN LÍNEA</div>
         </div>
       </div>

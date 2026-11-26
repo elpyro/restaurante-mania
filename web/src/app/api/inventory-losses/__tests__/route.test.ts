@@ -10,8 +10,12 @@ const mocks = vi.hoisted(() => {
   return {
     AdminUnavailableError,
     verifyAdminIdToken: vi.fn(),
+    isFirestoreConfigured: vi.fn(() => true),
     listDocuments: vi.fn(),
     setDocument: vi.fn(),
+    tenantPath: vi.fn(
+      (tenantId: string, collection: string) => `tenants/${tenantId}/${collection}`,
+    ),
   };
 });
 
@@ -21,8 +25,10 @@ vi.mock("@/lib/firebase/admin", () => ({
 }));
 
 vi.mock("@/lib/firebase/rest", () => ({
+  isFirestoreConfigured: mocks.isFirestoreConfigured,
   listDocuments: mocks.listDocuments,
   setDocument: mocks.setDocument,
+  tenantPath: mocks.tenantPath,
 }));
 
 import { GET, POST } from "../route";
@@ -100,14 +106,18 @@ describe("/api/inventory-losses", () => {
     mocks.verifyAdminIdToken.mockResolvedValue({ uid: "cook-1", role: "cook" });
     const response = await POST(request(validBody, "Bearer token"));
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, id: "loss-1" });
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      tenantId: "mania",
+      id: "loss-1",
+    });
 
     const [collection, id, document] = mocks.setDocument.mock.calls[0] as [
       string,
       string,
       Record<string, unknown>,
     ];
-    expect(collection).toBe("inventoryLosses");
+    expect(collection).toBe("tenants/mania/inventoryLosses");
     expect(id).toBe("loss-1");
     expect(document).toMatchObject({
       reason: "caducado",

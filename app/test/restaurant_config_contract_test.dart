@@ -101,6 +101,10 @@ void main() {
         deliveryOptions: {'pickup': false, 'delivery': true, 'table': false},
         paymentMethods: ['nequi'],
         paymentMethodLabels: {'nequi': 'Nequi'},
+        timeZone: 'Europe/Madrid',
+        openingDays: ['mon', 'wed', 'sun'],
+        openTime: '09:00',
+        closeTime: '17:00',
         aiDescription: 'Comida colombiana en Medellín',
         aiKeywords: 'bandeja paisa, ajiaco',
         aiServiceArea: 'Medellín y Ángel',
@@ -116,6 +120,12 @@ void main() {
       expect(patch['showOrderTypeOptions'], isFalse);
       expect(patch['deliveryOptions'], settings.deliveryOptions);
       expect(patch['paymentMethods'], ['nequi']);
+      expect(patch['isOpen'], isTrue);
+      expect(patch['timeZone'], 'Europe/Madrid');
+      expect(patch['openingDays'], ['mon', 'wed', 'sun']);
+      expect(patch['openTime'], '09:00');
+      expect(patch['closeTime'], '17:00');
+      expect(patch['hours'], 'Lun, Mié, Dom 09:00–17:00');
       expect(patch['aiSearch'], {
         'description': 'Comida colombiana en Medellín',
         'keywords': 'bandeja paisa, ajiaco',
@@ -169,6 +179,71 @@ void main() {
         RestaurantSettings.compactNumber('+57', '300 123 4567'),
         '+573001234567',
       );
+    });
+
+    test('publica y reconcilia zona horaria y horario de trabajo', () {
+      const settings = RestaurantSettings(
+        name: 'Casa Nueva',
+        isOpen: false,
+        hours: 'Lun–Sáb 11:30–20:30',
+        whatsapp: '+573001234567',
+        address: 'Calle 1',
+        currency: 'COP',
+        timeZone: 'America/Mexico_City',
+        openingDays: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat'],
+        openTime: '11:30',
+        closeTime: '20:30',
+      );
+
+      final patch = settings.toWebConfigPatch();
+      expect(patch['isOpen'], isFalse);
+      expect(patch['timeZone'], 'America/Mexico_City');
+      expect(patch['hours'], 'Lun–Sáb 11:30–20:30');
+
+      final restored = RestaurantSettings.fromJson(settings.toJson());
+      expect(restored.timeZone, settings.timeZone);
+      expect(restored.openingDays, settings.openingDays);
+      expect(restored.openTime, settings.openTime);
+      expect(restored.closeTime, settings.closeTime);
+
+      final remote = RestaurantSettings.fromWebConfig({
+        'timeZone': 'Europe/Madrid',
+        'openingDays': ['mon', 'tue', 'wed', 'thu', 'fri'],
+        'openTime': '10:00',
+        'closeTime': '19:00',
+        'isOpen': true,
+      }, settings);
+      expect(remote.timeZone, 'Europe/Madrid');
+      expect(remote.openingDays, ['mon', 'tue', 'wed', 'thu', 'fri']);
+      expect(remote.hours, 'Lun–Vie 10:00–19:00');
+      expect(remote.isOpen, isTrue);
+    });
+
+    test('valida zona horaria y horas antes de publicar', () {
+      expect(RestaurantSettings.isValidTimeZone('America/Bogota'), isTrue);
+      expect(RestaurantSettings.isValidTimeZone('UTC'), isTrue);
+      expect(RestaurantSettings.isValidTimeZone('Marte/Base'), isFalse);
+      expect(
+        RestaurantSettings.cleanOpeningDays(['sun', 'sat', 'sat']),
+        ['sat', 'sun'],
+      );
+      expect(
+        RestaurantSettings.cleanTimeOfDay('25:00', '11:30'),
+        '11:30',
+      );
+    });
+
+    test('apariencia publica los textos del bloque final', () {
+      final appearance = RestaurantAppearance.defaults.copyWith(
+        ctaTitle: 'Ven a comer',
+        ctaDescription: 'Abrimos todo el fin de semana.',
+      );
+      final json = appearance.toJson();
+      expect(json['ctaTitle'], 'Ven a comer');
+      expect(json['ctaDescription'], 'Abrimos todo el fin de semana.');
+      final restored = RestaurantAppearance.fromJson(json);
+      expect(restored.ctaTitle, 'Ven a comer');
+      expect(restored.ctaDescription, 'Abrimos todo el fin de semana.');
     });
   });
 }

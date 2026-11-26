@@ -2,11 +2,18 @@
 
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
+import { getClientTenantId, tenantFetchHeaders, tenantStorageKey } from "@/lib/client-tenant";
 import { dayKeyFor, visitDocumentId } from "@/lib/visit-identity";
 
-const PROFILE_KEY = "rm_customer_profile_v1";
-const VISITOR_KEY = "rm_web_visitor_id_v1";
-const STATE_KEY = "rm_web_visit_state_v1";
+function profileKey(): string {
+  return tenantStorageKey(getClientTenantId(), "rm_customer_profile_v1");
+}
+function visitorKey(): string {
+  return tenantStorageKey(getClientTenantId(), "rm_web_visitor_id_v1");
+}
+function stateKey(): string {
+  return tenantStorageKey(getClientTenantId(), "rm_web_visit_state_v1");
+}
 
 type Profile = {
   customerName?: string;
@@ -40,7 +47,7 @@ function writeJson(key: string, value: unknown): void {
 
 function loadProfile(): Profile | null {
   try {
-    const raw = window.localStorage.getItem(PROFILE_KEY);
+    const raw = window.localStorage.getItem(profileKey());
     if (!raw) return null;
     const profile = JSON.parse(raw) as Profile;
     const phone = (profile.customerPhone ?? "").replace(/\D/g, "");
@@ -57,11 +64,11 @@ function loadProfile(): Profile | null {
 
 function getVisitorId(): string {
   try {
-    const stored = window.localStorage.getItem(VISITOR_KEY) ?? "";
+    const stored = window.localStorage.getItem(visitorKey()) ?? "";
     if (/^visitor_[a-zA-Z0-9_-]{8,}$/.test(stored)) return stored;
     const random = globalThis.crypto?.randomUUID?.();
     const created = `visitor_${random ?? `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`}`;
-    window.localStorage.setItem(VISITOR_KEY, created);
+    window.localStorage.setItem(visitorKey(), created);
     return created;
   } catch {
     if (!fallbackVisitorId) {
@@ -72,7 +79,7 @@ function getVisitorId(): string {
 }
 
 function identityKeyFor(profile: Profile | null, dayKey: string): string {
-  const state = readJson<VisitState>(STATE_KEY);
+  const state = readJson<VisitState>(stateKey());
   if (
     state?.dayKey === dayKey &&
     typeof state.identityKey === "string" &&
@@ -82,12 +89,12 @@ function identityKeyFor(profile: Profile | null, dayKey: string): string {
   }
   const digits = (profile?.customerPhone ?? "").replace(/\D/g, "");
   const identityKey = digits.length >= 7 ? `phone:${digits}` : getVisitorId();
-  writeJson(STATE_KEY, { dayKey, identityKey } satisfies VisitState);
+  writeJson(stateKey(), { dayKey, identityKey } satisfies VisitState);
   return identityKey;
 }
 
 function markTracked(dayKey: string, identityKey: string): boolean {
-  const state = readJson<VisitState>(STATE_KEY);
+  const state = readJson<VisitState>(stateKey());
   if (
     state?.dayKey === dayKey &&
     state.identityKey === identityKey &&
@@ -95,7 +102,7 @@ function markTracked(dayKey: string, identityKey: string): boolean {
   ) {
     return false;
   }
-  writeJson(STATE_KEY, {
+  writeJson(stateKey(), {
     ...state,
     dayKey,
     identityKey,
@@ -105,9 +112,9 @@ function markTracked(dayKey: string, identityKey: string): boolean {
 }
 
 function unmarkTracked(dayKey: string, identityKey: string): void {
-  const state = readJson<VisitState>(STATE_KEY);
+  const state = readJson<VisitState>(stateKey());
   if (state?.dayKey !== dayKey || state.identityKey !== identityKey) return;
-  writeJson(STATE_KEY, { dayKey, identityKey } satisfies VisitState);
+  writeJson(stateKey(), { dayKey, identityKey } satisfies VisitState);
 }
 
 export function VisitTracker() {
@@ -137,7 +144,7 @@ export function VisitTracker() {
 
     void fetch("/api/visits", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...tenantFetchHeaders() },
       body,
       keepalive: true,
     })

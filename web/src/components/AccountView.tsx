@@ -11,11 +11,23 @@ import {
   ShoppingBag,
   UserRound,
 } from "lucide-react";
+import {
+  DEFAULT_TENANT_ID,
+  withTenant,
+} from "@/lib/tenants";
+import {
+  getClientTenantId,
+  tenantStorageKey,
+} from "@/lib/client-tenant";
 import { formatCOP, formatDateTime } from "@/lib/format";
 import { ORDER_STATUS_LABELS, type Order } from "@/lib/types";
 
-const PROFILE_KEY = "rm_customer_profile_v1";
-const ORDERS_KEY = "rm_orders_v1";
+function profileKey(): string {
+  return tenantStorageKey(getClientTenantId(), "rm_customer_profile_v1");
+}
+function ordersKey(): string {
+  return tenantStorageKey(getClientTenantId(), "rm_orders_v1");
+}
 
 type Profile = {
   customerName: string;
@@ -27,7 +39,7 @@ type Profile = {
 
 function loadProfile(): Profile | null {
   try {
-    const raw = window.localStorage.getItem(PROFILE_KEY);
+    const raw = window.localStorage.getItem(profileKey());
     if (!raw) return null;
     const p = JSON.parse(raw) as Partial<Profile>;
     const addresses = Array.isArray(p.addresses)
@@ -50,7 +62,7 @@ function loadProfile(): Profile | null {
 
 function loadOrders(): Order[] {
   try {
-    const raw = window.localStorage.getItem(ORDERS_KEY);
+    const raw = window.localStorage.getItem(ordersKey());
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
@@ -61,11 +73,13 @@ function loadOrders(): Order[] {
 }
 
 export function AccountView() {
+  const [tenantId, setTenantId] = useState(DEFAULT_TENANT_ID);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    setTenantId(getClientTenantId());
     setProfile(loadProfile());
     setOrders(loadOrders());
     setReady(true);
@@ -83,7 +97,7 @@ export function AccountView() {
         <p className="mt-2 text-sm text-ink-muted">
           Cuando hagas tu primer pedido, guardaremos tus datos en este dispositivo para reconocerte.
         </p>
-        <Link href="/menu" className="btn-primary mt-6">
+        <Link href={withTenant("/menu", tenantId)} className="btn-primary mt-6">
           Ver menú
         </Link>
       </div>
@@ -140,7 +154,7 @@ export function AccountView() {
             </p>
           </div>
         </dl>
-        <Link href="/menu" className="btn-primary mt-6 !px-4 !py-2">
+        <Link href={withTenant("/menu", tenantId)} className="btn-primary mt-6 !px-4 !py-2">
           Hacer nuevo pedido
         </Link>
       </section>

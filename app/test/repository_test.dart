@@ -84,6 +84,11 @@ void main() {
   );
 
   test('protege la propia cuenta y el último administrador', () async {
+    // Escenario aislado: un único administrador, sin los usuarios QA de la
+    // semilla. Así se comprueba la protección del último admin.
+    SharedPreferences.setMockInitialValues({
+      'rm_users_v1': jsonEncode([SeedData.users.first.toJson()]),
+    });
     final repository = await RestaurantRepository.load(
       watchConnectivity: false,
     );
@@ -141,7 +146,7 @@ void main() {
     expect(restored.items.length, 2);
   });
 
-  test('pending no descuenta el inventario', () async {
+  test('registrar en pending descuenta el inventario una sola vez', () async {
     final repository = await RestaurantRepository.load(
       watchConnectivity: false,
     );
@@ -157,11 +162,36 @@ void main() {
     );
 
     expect(order.status, OrderStatus.pending);
-    expect(order.inventoryDeducted, isFalse);
-    expect(repository.ingredientById('pollo')!.stock, stockBefore);
+    expect(order.inventoryDeducted, isTrue);
+    expect(repository.ingredientById('pollo')!.stock, stockBefore - 180);
+
+    await repository.updateOrderStatus(order.id, OrderStatus.pending);
+    expect(repository.ingredientById('pollo')!.stock, stockBefore - 180);
   });
 
-  test('avanzar a confirmed descuenta una sola vez', () async {
+  test('cancelar un pedido pendiente repone los ingredientes', () async {
+    final repository = await RestaurantRepository.load(
+      watchConnectivity: false,
+    );
+    addTearDown(repository.dispose);
+
+    final stockBefore = repository.ingredientById('pollo')!.stock;
+    final order = await repository.createOrder(
+      lines: cart(),
+      customerName: 'Ana Pérez',
+      customerPhone: '300 123 4567',
+      type: OrderType.pickup,
+      paymentMethod: PaymentMethod.cash,
+    );
+    expect(repository.ingredientById('pollo')!.stock, stockBefore - 180);
+
+    await repository.updateOrderStatus(order.id, OrderStatus.cancelled);
+
+    expect(repository.ingredientById('pollo')!.stock, stockBefore);
+    expect(repository.orderById(order.id)!.inventoryDeducted, isFalse);
+  });
+
+  test('avanzar a confirmed no descuenta dos veces', () async {
     final repository = await RestaurantRepository.load(
       watchConnectivity: false,
     );
@@ -365,6 +395,44 @@ void main() {
     expect(
       cafe.recipe.map((line) => line.ingredientId),
       isNot(contains('cafe-huila')),
+    );
+  });
+
+  test('un insumo de receta sin documento bloquea el plato y el pedido', () async {
+    final items = SeedData.menuItemsWithRecipes().toList();
+    final ingredients =
+        SeedData.ingredients.where((ingredient) => ingredient.id != 'cafe').toList();
+    SharedPreferences.setMockInitialValues({
+      'rm_menu_items_v1': jsonEncode(items.map((item) => item.toJson()).toList()),
+      'rm_ingredients_v1': jsonEncode(
+        ingredients.map((ingredient) => ingredient.toJson()).toList(),
+      ),
+    });
+
+    final repository = await RestaurantRepository.load(
+      watchConnectivity: false,
+    );
+    addTearDown(repository.dispose);
+
+    final cafe = repository.menuItemById('item-cafe')!;
+    expect(repository.ingredientById('cafe'), isNull);
+    expect(repository.isMenuItemOutOfStockByIngredients(cafe), isTrue);
+    expect(
+      repository.createOrder(
+        lines: const [
+          CartLine(
+            menuItemId: 'item-cafe',
+            name: 'Café',
+            price: 6900,
+            quantity: 1,
+            emoji: '☕',
+          ),
+        ],
+        customerName: 'Ana Pérez',
+        customerPhone: '300 123 4567',
+        type: OrderType.pickup,
+      ),
+      throwsArgumentError,
     );
   });
 

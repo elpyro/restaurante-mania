@@ -12,6 +12,8 @@ import {
   tokensToCssVars,
 } from "@/lib/restaurant-config";
 import { siteConfig } from "@/lib/site";
+import { getServerTenantId } from "@/lib/tenant-server";
+import { tenantClientScript } from "@/lib/tenants";
 
 const sans = Manrope({
   subsets: ["latin"],
@@ -63,7 +65,8 @@ function metadataKeywords(config: RestaurantConfigFromWeb) {
 }
 
 export async function generateMetadata(): Promise<Metadata> {
-  const { config } = await getRestaurantConfig();
+  const tenantId = await getServerTenantId();
+  const { config } = await getRestaurantConfig(tenantId);
   const title = `${config.name} | ${config.slogan}`;
   const image = socialImage(config);
   const description = metadataDescription(config);
@@ -120,7 +123,8 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export async function generateViewport(): Promise<Viewport> {
-  const { config } = await getRestaurantConfig();
+  const tenantId = await getServerTenantId();
+  const { config } = await getRestaurantConfig(tenantId);
   return {
     themeColor: presetThemeColor(config),
     width: "device-width",
@@ -131,11 +135,13 @@ export async function generateViewport(): Promise<Viewport> {
 export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const { config } = await getRestaurantConfig();
+  const tenantId = await getServerTenantId();
+  const { config } = await getRestaurantConfig(tenantId);
 
   return (
     <html lang="es-CO" className={`${sans.variable} ${display.variable}`}>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: tenantClientScript(tenantId) }} />
         <style dangerouslySetInnerHTML={{ __html: tokensToCssVars(config) }} />
       </head>
       <body>

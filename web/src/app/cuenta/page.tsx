@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import { Clock, UserRound } from "lucide-react";
 import { AccountView } from "@/components/AccountView";
 import { getRestaurantConfig } from "@/lib/restaurant-config";
+import { getServerTenantId } from "@/lib/tenant-server";
 
 export async function generateMetadata(): Promise<Metadata> {
-  const { config } = await getRestaurantConfig();
+  const tenantId = await getServerTenantId();
+  const { config } = await getRestaurantConfig(tenantId);
   return {
     title: "Mi cuenta",
     description: `Consulta tu perfil y el historial de pedidos en ${config.name}.`,

@@ -6,15 +6,19 @@ const rest = vi.hoisted(() => ({
   isFirestoreConfigured: vi.fn(() => false),
   listDocuments: vi.fn(),
   setDocument: vi.fn(),
+  tenantPath: vi.fn(
+    (tenantId: string, collection: string) => `tenants/${tenantId}/${collection}`,
+  ),
 }));
 
 vi.mock("../firebase/rest", () => rest);
 
 import { demoIngredientStocks } from "../seed";
-import { ORDER_STATUS_LABELS } from "../types";
+import { ORDER_STATUS_LABELS, type MenuItem } from "../types";
 import {
   createOrder,
   DEFAULT_ORDER_POLICY,
+  getInsufficientItems,
   updateOrder,
   validateOrderInput,
   validateOrderItems,
@@ -166,6 +170,22 @@ describe("estado final y descuento de inventario", () => {
     expect(demoIngredientStocks["maiz-blanco"]).toBe(before - 100);
   });
 
+  it("descuenta al confirmar aunque la APK envíe inventoryDeducted: false", async () => {
+    const before = demoIngredientStocks["maiz-blanco"];
+    const order = await createOrder({
+      ...base,
+      items: [{ menuItemId: "item-arepa-queso", quantity: 1 }],
+    });
+
+    const confirmed = await updateOrder(order.id, {
+      status: "confirmed",
+      inventoryDeducted: false,
+    });
+
+    expect(confirmed?.inventoryDeducted).toBe(true);
+    expect(demoIngredientStocks["maiz-blanco"]).toBe(before - 100);
+  });
+
   it("repone los ingredientes y limpia el flag al cancelar", async () => {
     const before = demoIngredientStocks["maiz-blanco"];
     const order = await createOrder({
@@ -218,6 +238,42 @@ describe("estado final y descuento de inventario", () => {
   });
 });
 
+describe("stock con insumos ausentes", () => {
+  afterEach(() => {
+    rest.isFirestoreConfigured.mockReturnValue(false);
+    rest.listDocuments.mockReset();
+  });
+
+  it("trata un insumo de receta sin documento como agotado", async () => {
+    rest.isFirestoreConfigured.mockReturnValue(true);
+    rest.listDocuments.mockImplementation(async (collection: string) =>
+      collection === "tenants/mania/ingredients"
+        ? [{ id: "agua", stock: 20000 }]
+        : [],
+    );
+    const cafe = {
+      id: "item-cafe",
+      name: "Café de origen",
+      recipe: [{ ingredientId: "cafe", quantity: 15 }],
+    } as MenuItem;
+
+    const insufficient = await getInsufficientItems(
+      [{ menuItemId: cafe.id, quantity: 1 }],
+      new Map([[cafe.id, cafe]]),
+      "mania",
+    );
+
+    expect(insufficient).toEqual([
+      {
+        menuItemId: "item-cafe",
+        name: "Café de origen",
+        requested: 1,
+        available: 0,
+      },
+    ]);
+  });
+});
+
 describe("reconciliación con Firestore al actualizar un pedido", () => {
   afterEach(() => {
     rest.isFirestoreConfigured.mockReturnValue(false);
@@ -242,7 +298,7 @@ describe("reconciliación con Firestore al actualizar un pedido", () => {
       rest.isFirestoreConfigured.mockReturnValue(true);
       rest.getDocument.mockImplementation(
         async (collection: string, id: string) =>
-          collection === "orders" && id === order.id
+          collection === "tenants/mania/orders" && id === order.id
             ? {
                 ...order,
                 id: order.id,
@@ -252,7 +308,7 @@ describe("reconciliación con Firestore al actualizar un pedido", () => {
             : null,
       );
       rest.listDocuments.mockImplementation(async (collection: string) => {
-        if (collection === "ingredients") {
+        if (collection === "tenants/mania/ingredients") {
           // Stock ya descontado en Firestore (before - 100).
           return [{ id: "maiz-blanco", stock: before - 100 }];
         }
@@ -268,19 +324,19 @@ describe("reconciliación con Firestore al actualizar un pedido", () => {
       // Reposición exacta sobre el stock remoto descontado, no sobre el
       // valor cacheado de 60 s ni sobre la copia local del pedido.
       expect(rest.setDocument).toHaveBeenCalledWith(
-        "ingredients",
+        "tenants/mania/ingredients",
         "maiz-blanco",
         expect.objectContaining({ stock: before }),
       );
       expect(rest.setDocument).toHaveBeenCalledWith(
-        "orders",
+        "tenants/mania/orders",
         order.id,
         expect.objectContaining({ status: "cancelled", inventoryDeducted: false }),
       );
 
       // Ninguna lectura de insumos debe usar el `revalidate = 60` por defecto.
       const ingredientCalls = rest.listDocuments.mock.calls.filter(
-        (call) => call[0] === "ingredients",
+        (call) => call[0] === "tenants/mania/ingredients",
       );
       expect(ingredientCalls.length).toBeGreaterThan(0);
       expect(ingredientCalls.every((call) => call[2] === 0)).toBe(true);

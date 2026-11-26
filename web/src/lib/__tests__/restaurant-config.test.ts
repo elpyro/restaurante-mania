@@ -6,6 +6,7 @@ import {
   resolveTheme,
   sanitizeConfigPatch,
   themeForPreset,
+  DEFAULT_TIME_ZONE,
   tokensToCssVars,
 } from "../restaurant-config";
 
@@ -97,6 +98,43 @@ describe("configuración del restaurante", () => {
       heroBadge: "Abiertos hoy",
       appearance: { preset: "verde" },
     });
+  });
+
+  it("publica zona horaria, días, rango y textos del bloque final", () => {
+    const patch = sanitizeConfigPatch({
+      isOpen: false,
+      timeZone: "Europe/Madrid",
+      openingDays: ["sun", "mon", "sat", "mon"],
+      openTime: "10:00",
+      closeTime: "18:30",
+      ctaTitle: "  Ven a comer  ",
+      ctaDescription: "  Abiertos todo el fin de semana.  ",
+    });
+    expect(patch).toEqual({
+      isOpen: false,
+      timeZone: "Europe/Madrid",
+      openingDays: ["mon", "sat", "sun"],
+      openTime: "10:00",
+      closeTime: "18:30",
+      ctaTitle: "Ven a comer",
+      ctaDescription: "Abiertos todo el fin de semana.",
+    });
+    expect(DEFAULT_TIME_ZONE).toBe("America/Bogota");
+  });
+
+  it("rechaza zonas, días y horarios inválidos", () => {
+    expect(() => sanitizeConfigPatch({ timeZone: "Marte/Base" })).toThrow(
+      ConfigValidationError,
+    );
+    expect(() => sanitizeConfigPatch({ openingDays: [] })).toThrow(
+      ConfigValidationError,
+    );
+    expect(() => sanitizeConfigPatch({ openTime: "25:00" })).toThrow(
+      ConfigValidationError,
+    );
+    expect(() =>
+      sanitizeConfigPatch({ openTime: "20:00", closeTime: "11:00" }),
+    ).toThrow(ConfigValidationError);
   });
 
   it("normaliza whatsapp y rechaza valores inválidos", () => {

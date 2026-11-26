@@ -4,6 +4,7 @@ import {
   CashShiftValidationError,
   closeCashShift,
 } from "@/lib/cash-shifts";
+import { resolveTenantFromRequest } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,8 +20,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Cuerpo inválido." }, { status: 400 });
   }
   const payload = (body as Record<string, unknown>).shift ?? body;
+  const tenantId = resolveTenantFromRequest(request);
   try {
-    const result = await closeCashShift(payload);
+    const result = await closeCashShift(payload, tenantId);
     return NextResponse.json(result, {
       headers: { "Cache-Control": "no-store" },
     });

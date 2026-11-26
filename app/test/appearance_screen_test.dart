@@ -95,11 +95,19 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final fields = find.byType(TextField);
-    await tester.enterText(fields.at(4), 'instagram.com/mania');
-    await tester.enterText(fields.at(5), 'https://tiktok.com/@mania');
-    await tester.enterText(fields.at(6), 'facebook.com/mania');
-    await tester.enterText(fields.at(7), 'maps.google.com/?q=medellin');
+    for (final entry in {
+      'Instagram': 'instagram.com/mania',
+      'TikTok': 'https://tiktok.com/@mania',
+      'Facebook': 'facebook.com/mania',
+      'Ubicación GPS / mapa': 'maps.google.com/?q=medellin',
+    }.entries) {
+      final field = find.widgetWithText(TextField, entry.key);
+      await tester.ensureVisible(field);
+      await tester.pumpAndSettle();
+      await tester.enterText(field, entry.value);
+    }
+    await tester.ensureVisible(find.text('Guardar en la web'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Guardar en la web'));
     await tester.pumpAndSettle();
 

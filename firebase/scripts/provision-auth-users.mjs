@@ -5,9 +5,10 @@
  * Firestore, así que no se necesitan custom claims ni permisos de Auth Admin.
  *
  * Uso (la contraseña NUNCA se guarda en el repositorio):
- *   EMAIL=admin@restaurante.com PASSWORD=... ROLE=admin \
+ *   EMAIL=admin.qa@restaurante.com PASSWORD=... ROLE=admin TENANT=all \
  *     node firebase/scripts/provision-auth-users.mjs
  *
+ * TENANT admite `all` (mania,fuego,verde) o una lista separada por comas.
  * Las variables NEXT_PUBLIC_FIREBASE_* y FIREBASE_SERVICE_ACCOUNT_JSON se
  * leen de web/.env.local si no están en process.env.
  */
@@ -52,6 +53,22 @@ if (!password) {
 }
 if (!["admin", "cashier", "waiter", "cook"].includes(role)) {
   console.error("ROLE debe ser admin, cashier, waiter o cook.");
+  process.exit(1);
+}
+
+const knownTenants = ["mania", "fuego", "verde"];
+const tenantInput = (process.env.TENANT ?? "mania").trim();
+const tenantIds =
+  tenantInput === "all"
+    ? knownTenants
+    : tenantInput.split(",").map((value) => value.trim()).filter(Boolean);
+if (tenantIds.length === 0) {
+  console.error("Define TENANT=all o una lista de tenants separada por comas.");
+  process.exit(1);
+}
+const unknownTenants = tenantIds.filter((id) => !knownTenants.includes(id));
+if (unknownTenants.length > 0) {
+  console.error(`Tenant desconocido: ${unknownTenants.join(", ")}`);
   process.exit(1);
 }
 
@@ -108,17 +125,25 @@ if (getApps().length === 0) {
   });
 }
 
-await getFirestore().collection("users").doc(uid).set(
-  {
-    uid,
-    name: email.split("@")[0],
-    email,
-    role,
-    status: "active",
-    createdAt: new Date().toISOString(),
-  },
-  { merge: true },
-);
+const userDocument = {
+  uid,
+  name: email.split("@")[0],
+  email,
+  role,
+  status: "active",
+  createdAt: new Date().toISOString(),
+};
 
-console.log(`OK: ${email} (uid=${uid}, role=${role}) en ${projectId}`);
+for (const tenantId of tenantIds) {
+  await getFirestore()
+    .collection("tenants")
+    .doc(tenantId)
+    .collection("users")
+    .doc(uid)
+    .set(userDocument, { merge: true });
+}
+
+console.log(
+  `OK: ${email} (uid=${uid}, role=${role}) en ${tenantIds.join(", ")} de ${projectId}`,
+);
 console.log("La web autoriza PATCH /api/restaurant/config con el token de este usuario y su rol en Firestore.");

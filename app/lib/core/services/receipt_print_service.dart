@@ -124,7 +124,10 @@ class ReceiptPrintService {
             pw.Text('Detalle del pago', style: _section),
             pw.SizedBox(height: 3),
             ...order.payments.map(
-              (payment) => _row(payment.method.label, formatCop(payment.amount)),
+              (payment) => _row(
+                settings.paymentLabel(payment.method.name),
+                formatCop(payment.amount),
+              ),
             ),
             if (order.paidByNameOrFallback.isNotEmpty)
               _row('Cobrado por', order.paidByNameOrFallback),

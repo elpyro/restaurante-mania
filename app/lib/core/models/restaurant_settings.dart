@@ -47,6 +47,10 @@ class RestaurantSettings {
     },
     this.paymentMethods = const ['cash', 'card', 'nequi', 'daviplata'],
     this.paymentMethodLabels = const {},
+    this.timeZone = defaultTimeZone,
+    this.openingDays = defaultOpeningDays,
+    this.openTime = defaultOpenTime,
+    this.closeTime = defaultCloseTime,
     this.aiDescription = '',
     this.aiKeywords = '',
     this.aiServiceArea = '',
@@ -66,6 +70,12 @@ class RestaurantSettings {
   final Map<String, bool> deliveryOptions;
   final List<String> paymentMethods;
   final Map<String, String> paymentMethodLabels;
+  /// Identificador IANA (por ejemplo `America/Bogota` o `Europe/Madrid`).
+  final String timeZone;
+  /// Días activos en orden de lunes a domingo.
+  final List<String> openingDays;
+  final String openTime;
+  final String closeTime;
   final String aiDescription;
   final String aiKeywords;
   final String aiServiceArea;
@@ -82,6 +92,43 @@ class RestaurantSettings {
     countryCode: '+57',
     phone: '300 123 4567',
   );
+
+  static const defaultTimeZone = 'America/Bogota';
+  static const defaultOpeningDays = [
+    'mon',
+    'tue',
+    'wed',
+    'thu',
+    'fri',
+    'sat',
+  ];
+  static const openingDayKeys = [
+    'mon',
+    'tue',
+    'wed',
+    'thu',
+    'fri',
+    'sat',
+    'sun',
+  ];
+  static const openingDayLabels = <String, String>{
+    'mon': 'Lun',
+    'tue': 'Mar',
+    'wed': 'Mié',
+    'thu': 'Jue',
+    'fri': 'Vie',
+    'sat': 'Sáb',
+    'sun': 'Dom',
+  };
+  static const defaultOpenTime = '11:30';
+  static const defaultCloseTime = '20:30';
+  static const suggestionsTimeZone = <String>[
+    'America/Bogota',
+    'America/Mexico_City',
+    'America/Argentina/Buenos_Aires',
+    'Europe/Madrid',
+    'UTC',
+  ];
 
   static const availablePaymentMethods = ['cash', 'card', 'nequi', 'daviplata'];
   static const aiDescriptionMaxLength = 500;
@@ -120,6 +167,75 @@ class RestaurantSettings {
     return {'countryCode': code, 'phone': phone};
   }
 
+  static bool isValidTimeOfDay(String value) =>
+      RegExp(r'^([01]\d|2[0-3]):[0-5]\d$').hasMatch(value.trim());
+
+  static String cleanTimeOfDay(Object? value, String fallback) =>
+      value is String && isValidTimeOfDay(value) ? value.trim() : fallback;
+
+  static const _timeZoneRoots = <String>{
+    'America',
+    'Europe',
+    'Asia',
+    'Africa',
+    'Australia',
+    'Pacific',
+    'Atlantic',
+    'Indian',
+    'Antarctica',
+    'Arctic',
+    'Etc',
+  };
+
+  static bool isValidTimeZone(String value) {
+    final zone = value.trim();
+    if (zone.isEmpty || zone.length > 64) return false;
+    if (zone == 'UTC') return true;
+    final root = zone.split('/').first;
+    return _timeZoneRoots.contains(root) &&
+        zone.contains('/') &&
+        RegExp(r'^[A-Za-z][A-Za-z0-9_+\-/]*$').hasMatch(zone);
+  }
+
+  static String cleanTimeZone(Object? value) =>
+      value is String && isValidTimeZone(value) ? value.trim() : defaultTimeZone;
+
+  static List<String> cleanOpeningDays(Object? value) {
+    if (value is! List) return List<String>.from(defaultOpeningDays);
+    final days = value
+        .whereType<String>()
+        .where(openingDayKeys.contains)
+        .toSet()
+        .toList();
+    if (days.isEmpty) return List<String>.from(defaultOpeningDays);
+    return openingDayKeys.where(days.contains).toList();
+  }
+
+  /// Versión legible del horario, igual a la que deriva la web.
+  static String scheduleHours({
+    required List<String> days,
+    required String openTime,
+    required String closeTime,
+  }) {
+    if (days.isEmpty) return 'Cerrado';
+    final ordered = cleanOpeningDays(days);
+    final label = ordered.length == openingDayKeys.length
+        ? 'Todos los días'
+        : ordered.length > 1 &&
+                openingDayKeys.indexOf(ordered.last) -
+                        openingDayKeys.indexOf(ordered.first) ==
+                    ordered.length - 1
+            ? '${openingDayLabels[ordered.first]}–${openingDayLabels[ordered.last]}'
+            : ordered.map((day) => openingDayLabels[day] ?? day).join(', ');
+    return '$label $openTime–$closeTime';
+  }
+
+  String get scheduleHoursText => scheduleHours(
+        days: openingDays,
+        openTime: openTime,
+        closeTime: closeTime,
+      );
+
   RestaurantSettings copyWith({
     String? name,
     bool? isOpen,
@@ -134,6 +250,10 @@ class RestaurantSettings {
     Map<String, bool>? deliveryOptions,
     List<String>? paymentMethods,
     Map<String, String>? paymentMethodLabels,
+    String? timeZone,
+    List<String>? openingDays,
+    String? openTime,
+    String? closeTime,
     String? aiDescription,
     String? aiKeywords,
     String? aiServiceArea,
@@ -154,6 +274,10 @@ class RestaurantSettings {
       deliveryOptions: deliveryOptions ?? this.deliveryOptions,
       paymentMethods: paymentMethods ?? this.paymentMethods,
       paymentMethodLabels: paymentMethodLabels ?? this.paymentMethodLabels,
+      timeZone: timeZone ?? this.timeZone,
+      openingDays: openingDays ?? this.openingDays,
+      openTime: openTime ?? this.openTime,
+      closeTime: closeTime ?? this.closeTime,
       aiDescription: aiDescription ?? this.aiDescription,
       aiKeywords: aiKeywords ?? this.aiKeywords,
       aiServiceArea: aiServiceArea ?? this.aiServiceArea,
@@ -182,13 +306,22 @@ class RestaurantSettings {
         'deliveryOptions': deliveryOptions,
         'paymentMethods': paymentMethods,
         'paymentMethodLabels': paymentMethodLabels,
+        'timeZone': timeZone,
+        'openingDays': openingDays,
+        'openTime': openTime,
+        'closeTime': closeTime,
         'aiSearch': aiSearch,
       };
 
   /// Cuerpo aceptado por `PATCH /api/restaurant/config`.
   Map<String, dynamic> toWebConfigPatch() => {
         'name': name,
-        'hours': hours,
+        'hours': scheduleHoursText,
+        'isOpen': isOpen,
+        'timeZone': timeZone,
+        'openingDays': openingDays,
+        'openTime': openTime,
+        'closeTime': closeTime,
         'whatsapp': compactNumber(countryCode, phone),
         'address': address,
         'city': city,
@@ -239,10 +372,19 @@ class RestaurantSettings {
       }
     }
     final search = aiSearchFromJson(json);
+    final timeZone = cleanTimeZone(json['timeZone']);
+    final openingDays = cleanOpeningDays(json['openingDays']);
+    final openTime = cleanTimeOfDay(json['openTime'], defaults.openTime);
+    final closeTime = cleanTimeOfDay(json['closeTime'], defaults.closeTime);
+    final derivedHours = scheduleHours(
+      days: openingDays,
+      openTime: openTime,
+      closeTime: closeTime,
+    );
     return RestaurantSettings(
       name: json['name'] as String? ?? defaults.name,
       isOpen: json['isOpen'] as bool? ?? defaults.isOpen,
-      hours: json['hours'] as String? ?? defaults.hours,
+      hours: json['hours'] as String? ?? derivedHours,
       whatsapp: whatsapp,
       address: json['address'] as String? ?? defaults.address,
       currency: json['currency'] as String? ?? defaults.currency,
@@ -255,6 +397,10 @@ class RestaurantSettings {
           ? List<String>.from(defaults.paymentMethods)
           : methods,
       paymentMethodLabels: labels,
+      timeZone: timeZone,
+      openingDays: openingDays,
+      openTime: openTime,
+      closeTime: closeTime,
       aiDescription: search['description'] ?? '',
       aiKeywords: search['keywords'] ?? '',
       aiServiceArea: search['serviceArea'] ?? '',
@@ -299,9 +445,34 @@ class RestaurantSettings {
       }
     }
     final search = aiSearchFromJson(json, fallback: current.aiSearch);
+    final hasSchedule = json.containsKey('timeZone') ||
+        json.containsKey('openingDays') ||
+        json.containsKey('openTime') ||
+        json.containsKey('closeTime');
+    final timeZone = hasSchedule
+        ? cleanTimeZone(json['timeZone'] ?? current.timeZone)
+        : current.timeZone;
+    final openingDays = hasSchedule
+        ? cleanOpeningDays(json['openingDays'] ?? current.openingDays)
+        : current.openingDays;
+    final openTime = hasSchedule
+        ? cleanTimeOfDay(json['openTime'], current.openTime)
+        : current.openTime;
+    final closeTime = hasSchedule
+        ? cleanTimeOfDay(json['closeTime'], current.closeTime)
+        : current.closeTime;
     return current.copyWith(
       name: json['name'] is String ? json['name'] as String : null,
-      hours: json['hours'] is String ? json['hours'] as String : null,
+      hours: json['hours'] is String
+          ? json['hours'] as String
+          : hasSchedule
+              ? scheduleHours(
+                  days: openingDays,
+                  openTime: openTime,
+                  closeTime: closeTime,
+                )
+              : null,
+      isOpen: json['isOpen'] is bool ? json['isOpen'] as bool : null,
       whatsapp: json['whatsapp'] is String ? json['whatsapp'] as String : null,
       address: json['address'] is String ? json['address'] as String : null,
       currency: json['currency'] is String ? json['currency'] as String : null,
@@ -314,6 +485,10 @@ class RestaurantSettings {
       deliveryOptions: delivery.isEmpty ? null : delivery,
       paymentMethods: methods.isEmpty ? null : methods,
       paymentMethodLabels: labels,
+      timeZone: timeZone,
+      openingDays: openingDays,
+      openTime: openTime,
+      closeTime: closeTime,
       aiDescription: search['description'] ?? '',
       aiKeywords: search['keywords'] ?? '',
       aiServiceArea: search['serviceArea'] ?? '',
@@ -343,6 +518,10 @@ class RestaurantSettings {
           jsonEncode(paymentMethods) == jsonEncode(other.paymentMethods) &&
           jsonEncode(paymentMethodLabels) ==
               jsonEncode(other.paymentMethodLabels) &&
+          timeZone == other.timeZone &&
+          jsonEncode(openingDays) == jsonEncode(other.openingDays) &&
+          openTime == other.openTime &&
+          closeTime == other.closeTime &&
           aiDescription == other.aiDescription &&
           aiKeywords == other.aiKeywords &&
           aiServiceArea == other.aiServiceArea &&
@@ -363,9 +542,10 @@ class RestaurantSettings {
         jsonEncode(deliveryOptions),
         jsonEncode(paymentMethods),
         jsonEncode(paymentMethodLabels),
-        aiDescription,
-        aiKeywords,
-        aiServiceArea,
-        aiHighlights,
+        timeZone,
+        jsonEncode(openingDays),
+        openTime,
+        closeTime,
+        Object.hash(aiDescription, aiKeywords, aiServiceArea, aiHighlights),
       );
 }

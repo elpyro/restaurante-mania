@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../../core/data/repository.dart';
 import '../../core/models/order.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
@@ -102,6 +104,7 @@ class SaleTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final settings = context.read<RestaurantRepository>().settings;
     final customer = order.customerName.trim().isEmpty
         ? 'Mesa ${order.tableNumber ?? '-'}'
         : order.customerName.trim();
@@ -156,7 +159,7 @@ class SaleTile extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       'Cobrado por: ${order.paidByNameOrFallback} · '
-                      '${order.paymentMethod.label}',
+                      '${settings.paymentLabel(order.paymentMethod.name)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(

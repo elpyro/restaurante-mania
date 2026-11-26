@@ -38,9 +38,11 @@ describe("PATCH /api/orders/[id]", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.updateOrder).toHaveBeenCalledWith("order-1", {
-      inventoryDeducted: true,
-    });
+    expect(mocks.updateOrder).toHaveBeenCalledWith(
+      "order-1",
+      { inventoryDeducted: true },
+      "mania",
+    );
   });
 
   it("rechaza una petición sin cambios", async () => {

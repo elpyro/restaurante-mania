@@ -1,28 +1,34 @@
 import {
   DEFAULT_RESTAURANT_CONFIG,
   SOCIAL_NETWORKS,
+  WEEKDAYS,
   type RestaurantConfig,
+  type Weekday,
 } from "./restaurant-config";
 import { absoluteUrl, siteConfig } from "./site";
 import type { Category, MenuItem } from "./types";
 
 type JsonLd = Record<string, unknown>;
 
+const FULL_WEEKDAYS: Record<Weekday, string> = {
+  mon: "Monday",
+  tue: "Tuesday",
+  wed: "Wednesday",
+  thu: "Thursday",
+  fri: "Friday",
+  sat: "Saturday",
+  sun: "Sunday",
+};
+
 function openingHours(config: RestaurantConfig) {
-  const [opens, closes] = config.hours.split("-").map((part) => part.trim());
+  const days = config.openingDays.length > 0 ? config.openingDays : WEEKDAYS;
   return {
     "@type": "OpeningHoursSpecification",
-    dayOfWeek: [
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
-      "Sunday",
-    ],
-    opens: opens || "11:00",
-    closes: closes || "22:00",
+    dayOfWeek: WEEKDAYS.filter((day) => days.includes(day)).map(
+      (day) => FULL_WEEKDAYS[day],
+    ),
+    opens: config.openTime,
+    closes: config.closeTime,
   };
 }
 

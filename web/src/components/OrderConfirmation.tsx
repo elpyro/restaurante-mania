@@ -21,6 +21,12 @@ import {
   type OrderStatus,
 } from "@/lib/types";
 import { whatsappUrl } from "@/lib/site";
+import { DEFAULT_TENANT_ID, withTenant } from "@/lib/tenants";
+import {
+  getClientTenantId,
+  tenantFetchHeaders,
+  tenantStorageKey,
+} from "@/lib/client-tenant";
 
 function timelineFor(type: Order["type"]): OrderStatus[] {
   return type === "delivery"
@@ -30,9 +36,13 @@ function timelineFor(type: Order["type"]): OrderStatus[] {
 
 function readStoredOrder(id: string): Order | null {
   try {
-    const direct = window.sessionStorage.getItem(`rm_order_${id}`);
+    const direct = window.sessionStorage.getItem(
+      tenantStorageKey(getClientTenantId(), `rm_order_${id}`),
+    );
     if (direct) return JSON.parse(direct) as Order;
-    const raw = window.localStorage.getItem("rm_orders_v1");
+    const raw = window.localStorage.getItem(
+      tenantStorageKey(getClientTenantId(), "rm_orders_v1"),
+    );
     if (!raw) return null;
     const orders = JSON.parse(raw) as Order[];
     return orders.find((order) => order.id === id) ?? null;
@@ -48,7 +58,9 @@ interface Props {
 }
 
 export function OrderConfirmation({ id, whatsapp, restaurantName }: Props) {
+  const [tenantId, setTenantId] = useState(DEFAULT_TENANT_ID);
   const [order, setOrder] = useState<Order | null>(null);
+  useEffect(() => { setTenantId(getClientTenantId()); }, []);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -58,6 +70,7 @@ export function OrderConfirmation({ id, whatsapp, restaurantName }: Props) {
       try {
         const response = await fetch(`/api/orders/${encodeURIComponent(id)}`, {
           cache: "no-store",
+          headers: tenantFetchHeaders(),
         });
         if (!response.ok) return;
         const payload = (await response.json()) as { order?: Order };
@@ -105,7 +118,7 @@ export function OrderConfirmation({ id, whatsapp, restaurantName }: Props) {
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
           <Link
-            href="/menu"
+            href={withTenant("/menu", tenantId)}
             className="btn-primary"
           >
             Volver al menú
@@ -291,13 +304,13 @@ export function OrderConfirmation({ id, whatsapp, restaurantName }: Props) {
           </dl>
           <div className="mt-4 flex flex-wrap gap-2">
             <Link
-              href="/menu"
+              href={withTenant("/menu", tenantId)}
               className="btn-primary !px-4 !py-2 text-xs"
             >
               Pedir algo más
             </Link>
             <Link
-              href="/"
+              href={withTenant("/", tenantId)}
               className="rounded-full border border-line px-4 py-2 text-xs font-semibold text-ink-soft hover:bg-surface-muted"
             >
               <House size={14} aria-hidden /> Inicio

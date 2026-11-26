@@ -1,5 +1,13 @@
 import { webcrypto } from "node:crypto";
 
+import { DEFAULT_TENANT_ID, normalizeTenantId } from "../tenants";
+
+/** Ruta de una colección dentro del espacio aislado de un tenant. */
+export function tenantPath(tenantId: string, collection: string): string {
+  const id = normalizeTenantId(tenantId) ?? DEFAULT_TENANT_ID;
+  return `tenants/${id}/${collection}`;
+}
+
 type FsValue =
   | { stringValue: string }
   | { integerValue: string }

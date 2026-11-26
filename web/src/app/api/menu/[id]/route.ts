@@ -4,6 +4,7 @@ import {
   verifyAdminIdToken,
 } from "@/lib/firebase/admin";
 import { setMenuItemFeatured, setMenuItemStatus } from "@/lib/menu";
+import { resolveTenantFromRequest } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +14,7 @@ const NO_STORE = { "Cache-Control": "no-store" } as const;
 /** La disponibilidad y los favoritos los publica solo la app administrativa. */
 async function requireAdmin(
   request: Request,
+  tenantId: string,
 ): Promise<NextResponse | null> {
   const authorization = request.headers.get("authorization") ?? "";
   const match = /^Bearer\s+(\S+)$/i.exec(authorization);
@@ -23,7 +25,7 @@ async function requireAdmin(
     );
   }
   try {
-    const identity = await verifyAdminIdToken(match[1]!);
+    const identity = await verifyAdminIdToken(match[1]!, tenantId);
     if (identity.role !== "admin") {
       return NextResponse.json(
         { error: "Se requiere rol de administrador." },
@@ -49,7 +51,8 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const unauthorized = await requireAdmin(request);
+  const tenantId = resolveTenantFromRequest(request);
+  const unauthorized = await requireAdmin(request, tenantId);
   if (unauthorized) return unauthorized;
   const { id } = await params;
   let body: unknown;
@@ -98,10 +101,11 @@ export async function PATCH(
         status as "available" | "unavailable",
         typeof payload.manual === "boolean" ? payload.manual : undefined,
         reason,
+        tenantId,
       );
     }
     if (hasFeatured && typeof payload.featured === "boolean") {
-      const featured = await setMenuItemFeatured(id, payload.featured);
+      const featured = await setMenuItemFeatured(id, payload.featured, tenantId);
       if (!featured) return NextResponse.json({ error: "Plato no encontrado." }, { status: 404 });
       item = { ...(item ?? { id }), ...featured };
     }

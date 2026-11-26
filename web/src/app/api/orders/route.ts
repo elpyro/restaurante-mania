@@ -1,18 +1,21 @@
 import { NextResponse } from "next/server";
 import { createOrder, listOrders, OrderValidationError } from "@/lib/orders";
+import { resolveTenantFromRequest } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const orders = await listOrders();
+export async function GET(request: Request) {
+  const tenantId = resolveTenantFromRequest(request);
+  const orders = await listOrders(tenantId);
   return NextResponse.json(
-    { orders },
+    { tenantId, orders },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
 
 export async function POST(request: Request) {
+  const tenantId = resolveTenantFromRequest(request);
   let body: unknown;
   try {
     body = await request.json();
@@ -24,7 +27,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const order = await createOrder(body);
+    const order = await createOrder(body, tenantId);
     return NextResponse.json({ order }, { status: 201 });
   } catch (error) {
     if (error instanceof OrderValidationError) {
@@ -35,7 +38,7 @@ export async function POST(request: Request) {
     }
     console.error("[api/orders] Error creando pedido:", error);
     return NextResponse.json(
-      { errors: ["No pudimos crear el pedido. Intenta de nuevo."] },
+      { error: "No se pudo crear el pedido." },
       { status: 500 },
     );
   }

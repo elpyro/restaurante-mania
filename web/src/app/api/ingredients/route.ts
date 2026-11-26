@@ -1,17 +1,38 @@
 import { NextResponse } from "next/server";
-import { isFirestoreConfigured, listDocuments } from "@/lib/firebase/rest";
+import { getDemoState } from "@/lib/demo-store";
+import {
+  isFirestoreConfigured,
+  listDocuments,
+  tenantPath,
+} from "@/lib/firebase/rest";
+import { resolveTenantFromRequest } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function demoIngredients(tenantId: string) {
+  return Object.entries(getDemoState(tenantId).stocks).map(([id, stock]) => ({
+    id,
+    name: id.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase()),
+    unit: "und",
+    stock,
+    minStock: 0,
+    updatedAt: null,
+  }));
+}
+
 /** Inventario compartido: la app offline-first lo sincroniza con este feed. */
-export async function GET() {
+export async function GET(request: Request) {
+  const tenantId = resolveTenantFromRequest(request);
   if (!isFirestoreConfigured()) {
-    return NextResponse.json({ ingredients: [], configured: false });
+    return NextResponse.json(
+      { tenantId, ingredients: demoIngredients(tenantId), configured: false },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   }
   try {
     const ingredients = await listDocuments(
-      "ingredients",
+      tenantPath(tenantId, "ingredients"),
       (doc) => {
         const data = doc.data as Record<string, unknown>;
         return {
@@ -32,7 +53,7 @@ export async function GET() {
       0,
     );
     return NextResponse.json(
-      { ingredients, configured: true },
+      { tenantId, ingredients, configured: true },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

@@ -1,4 +1,4 @@
-﻿import Image from "next/image";
+import Image from "next/image";
 import Link from "next/link";
 import { ViewTransition } from "react";
 import clsx from "clsx";
@@ -19,20 +19,25 @@ import { FavoritesCarousel } from "@/components/FavoritesCarousel";
 import { JsonLd } from "@/components/JsonLd";
 import { formatMoney } from "@/lib/format";
 import { getFavoriteItems, getPublicMenu } from "@/lib/menu";
+import { openingStatus } from "@/lib/opening-hours";
 import { getRestaurantConfig } from "@/lib/restaurant-config";
 import { restaurantJsonLd, websiteJsonLd } from "@/lib/seo";
 import { whatsappUrl } from "@/lib/site";
+import { getServerTenantId } from "@/lib/tenant-server";
+import { withTenant } from "@/lib/tenants";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
+  const tenantId = await getServerTenantId();
   const [{ categories, items, source }, favorites, { config }] =
     await Promise.all([
-      getPublicMenu(),
-      getFavoriteItems(12),
-      getRestaurantConfig(),
+      getPublicMenu(tenantId),
+      getFavoriteItems(12, tenantId),
+      getRestaurantConfig(tenantId),
     ]);
   const availableCount = items.length;
+  const status = openingStatus(config);
   const whatsapp = whatsappUrl(undefined, config.whatsapp, config.name);
   const bannerUrl = config.appearance.bannerUrl;
   const logoUrl = config.appearance.logoUrl;
@@ -130,7 +135,7 @@ export default async function HomePage() {
               {config.heroDescription}
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link href="/menu" className="btn-primary">
+              <Link href={withTenant("/menu", tenantId)} className="btn-primary">
                 Ver el menú y pedir <ArrowRight size={16} aria-hidden />
               </Link>
               <a
@@ -156,13 +161,18 @@ export default async function HomePage() {
             >
               {[
                 { icon: Clock, label: "Preparación", value: "~20 min" },
-                { icon: Star, label: "Calificación", value: "4.8 ★" },
+                {
+                  icon: CircleCheck,
+                  label: "Estado",
+                  value: status.label,
+                  detail: status.detail,
+                },
                 {
                   icon: UtensilsCrossed,
                   label: "Platos activos",
                   value: String(availableCount),
                 },
-              ].map(({ icon: Icon, label, value }) => (
+              ].map(({ icon: Icon, label, value, detail }) => (
                 <div
                   key={label}
                   className={clsx(
@@ -189,6 +199,16 @@ export default async function HomePage() {
                     {label}
                   </dt>
                   <dd className="mt-1 font-display text-xl font-bold">{value}</dd>
+                  {detail ? (
+                    <dd
+                      className={clsx(
+                        "mt-0.5 text-[10px] leading-tight",
+                        bannerUrl ? "text-white/80" : "text-ink-muted",
+                      )}
+                    >
+                      {detail}
+                    </dd>
+                  ) : null}
                 </div>
               ))}
             </dl>
@@ -222,7 +242,7 @@ export default async function HomePage() {
             </p>
           </div>
           <Link
-            href="/menu"
+            href={withTenant("/menu", tenantId)}
             className="inline-flex items-center gap-1 text-sm font-semibold text-brand-strong transition hover:gap-2 hover:underline"
           >
             Ver menú completo <ArrowRight size={15} aria-hidden />
@@ -295,7 +315,7 @@ export default async function HomePage() {
               aparecerá aquí automáticamente. Mientras tanto, explora todo el
               menú.
             </p>
-            <Link href="/menu" className="btn-primary mt-2">
+            <Link href={withTenant("/menu", tenantId)} className="btn-primary mt-2">
               Explorar el menú <ArrowRight size={15} aria-hidden />
             </Link>
           </div>
@@ -390,14 +410,13 @@ export default async function HomePage() {
           <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-brand-400/20 blur-2xl" />
           <div className="absolute -bottom-16 -left-10 h-48 w-48 rounded-full bg-accent/20 blur-2xl" />
           <h2 className="relative font-display text-3xl font-bold sm:text-4xl">
-            ¿Hambre? Tu mesa o domicilio te espera.
+            {config.ctaTitle}
           </h2>
           <p className="relative mx-auto mt-3 max-w-xl text-sm text-footer-ink/70">
-            Abrimos todos los días de {config.hours}. Haz tu pedido en línea o
-            escríbenos por WhatsApp.
+            {config.ctaDescription}
           </p>
           <div className="relative mt-6 flex flex-wrap justify-center gap-3">
-            <Link href="/menu" className="btn-primary">
+            <Link href={withTenant("/menu", tenantId)} className="btn-primary">
               Pedir ahora <ArrowRight size={16} aria-hidden />
             </Link>
             <a href={whatsapp} target="_blank" rel="noopener noreferrer" className="btn-ghost">

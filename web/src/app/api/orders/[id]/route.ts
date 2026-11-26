@@ -1,17 +1,19 @@
 import { NextResponse } from "next/server";
 import { syncMenuStatusesFromStock } from "@/lib/menu";
 import { getOrderById, OrderValidationError, updateOrder } from "@/lib/orders";
+import { resolveTenantFromRequest } from "@/lib/tenants";
 import type { OrderStatus, PaymentStatus } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const tenantId = resolveTenantFromRequest(request);
   const { id } = await params;
-  const order = await getOrderById(id);
+  const order = await getOrderById(id, tenantId);
   if (!order) {
     return NextResponse.json(
       { error: "Pedido no encontrado o no accesible." },
@@ -25,6 +27,7 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const tenantId = resolveTenantFromRequest(request);
   const { id } = await params;
   let body: unknown;
   try {
@@ -69,7 +72,7 @@ export async function PATCH(
   }
 
   try {
-    const order = await updateOrder(id, patch);
+    const order = await updateOrder(id, patch, tenantId);
     if (!order) {
       return NextResponse.json(
         { error: "Pedido no encontrado." },
@@ -78,7 +81,7 @@ export async function PATCH(
     }
     let updatedMenuItems: string[] = [];
     try {
-      updatedMenuItems = await syncMenuStatusesFromStock();
+      updatedMenuItems = await syncMenuStatusesFromStock(tenantId);
     } catch (error) {
       console.error("[api/orders] No se pudo reconciliar el menú:", error);
     }

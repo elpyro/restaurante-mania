@@ -80,8 +80,8 @@ describe("PATCH /api/menu/[id]", () => {
   it("publica favoritos cuando el token es de admin", async () => {
     const response = await PATCH(request({ featured: true }, "Bearer token"), context);
     expect(response.status).toBe(200);
-    expect(mocks.verifyAdminIdToken).toHaveBeenCalledWith("token");
-    expect(mocks.setMenuItemFeatured).toHaveBeenCalledWith("item-1", true);
+    expect(mocks.verifyAdminIdToken).toHaveBeenCalledWith("token", "mania");
+    expect(mocks.setMenuItemFeatured).toHaveBeenCalledWith("item-1", true, "mania");
     const payload = await response.json();
     expect(payload.item).toMatchObject({ id: "item-1", featured: true });
   });
@@ -97,6 +97,7 @@ describe("PATCH /api/menu/[id]", () => {
       "unavailable",
       true,
       "manual",
+      "mania",
     );
   });
 

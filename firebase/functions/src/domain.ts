@@ -65,8 +65,10 @@ export function computeMaxServings(
         ? line.quantity
         : 0;
     if (quantity <= 0) continue;
-    const stock = stocks.get(line.ingredientId);
-    if (stock === undefined) continue;
+    // Un insumo de la receta sin documento de stock se considera agotado.
+    // Ignorarlo dejaría el plato ilimitado y permitiría pedir más de lo que
+    // realmente se puede preparar.
+    const stock = stocks.get(line.ingredientId) ?? 0;
     const canMake = stock <= 0 ? 0 : Math.floor(stock / quantity);
     if (canMake < max) max = canMake;
   }

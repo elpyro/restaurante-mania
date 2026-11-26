@@ -1,18 +1,21 @@
 import { formatCOP } from "@/lib/format";
 import { getPublicMenu } from "@/lib/menu";
 import {
+  formatOpeningHours,
   getRestaurantConfig,
   SOCIAL_NETWORKS,
   type SocialNetwork,
 } from "@/lib/restaurant-config";
 import { siteConfig, whatsappUrl } from "@/lib/site";
+import { resolveTenantFromRequest } from "@/lib/tenants";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const tenantId = resolveTenantFromRequest(request);
   const [{ categories, items, source }, { config }] = await Promise.all([
-    getPublicMenu(),
-    getRestaurantConfig(),
+    getPublicMenu(tenantId),
+    getRestaurantConfig(tenantId),
   ]);
   const socialLabels: Record<SocialNetwork, string> = {
     instagram: "Instagram",
@@ -38,7 +41,7 @@ export async function GET() {
     `- Dirección: ${config.address}, ${config.city}, Colombia`,
     `- Teléfono / WhatsApp: ${config.phone}`,
     `- WhatsApp directo: ${whatsappUrl(undefined, config.whatsapp, config.name)}`,
-    `- Horario: todos los días ${config.hours}`,
+    `- Horario: ${formatOpeningHours(config)} (${config.timeZone})`,
     `- Moneda: ${siteConfig.currency}`,
     `- Redes sociales: ${socialLinks.length > 0 ? socialLinks.join(" | ") : "no publicadas"}`,
     `- Mapa / GPS: ${config.appearance.gpsUrl ?? "no publicado"}`,

@@ -3,7 +3,14 @@ import {
   AdminUnavailableError,
   verifyAdminIdToken,
 } from "@/lib/firebase/admin";
-import { listDocuments, setDocument } from "@/lib/firebase/rest";
+import { getDemoState } from "@/lib/demo-store";
+import {
+  isFirestoreConfigured,
+  listDocuments,
+  setDocument,
+  tenantPath,
+} from "@/lib/firebase/rest";
+import { resolveTenantFromRequest } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +30,7 @@ function errorResponse(message: string, status: number) {
   return NextResponse.json({ error: message }, { status, headers: NO_STORE });
 }
 
-async function authorize(request: Request) {
+async function authorize(request: Request, tenantId: string) {
   const authorization = request.headers.get("authorization") ?? "";
   const match = /^Bearer\s+(\S+)$/i.exec(authorization);
   if (!match) {
@@ -32,7 +39,7 @@ async function authorize(request: Request) {
 
   let identity;
   try {
-    identity = await verifyAdminIdToken(match[1]!);
+    identity = await verifyAdminIdToken(match[1]!, tenantId);
   } catch (error) {
     if (error instanceof AdminUnavailableError) {
       return {
@@ -50,19 +57,26 @@ async function authorize(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const auth = await authorize(request);
+  const tenantId = resolveTenantFromRequest(request);
+  const auth = await authorize(request, tenantId);
   if (auth.error) return auth.error;
+  if (!isFirestoreConfigured()) {
+    const losses = [...getDemoState(tenantId).losses].sort((a, b) =>
+      String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
+    );
+    return NextResponse.json({ tenantId, losses }, { headers: NO_STORE });
+  }
 
   try {
     const losses = await listDocuments<Record<string, unknown>>(
-      "inventoryLosses",
+      tenantPath(tenantId, "inventoryLosses"),
       (doc) => ({ id: doc.id, ...doc.data }),
       0,
     );
     losses.sort((a, b) =>
       String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
     );
-    return NextResponse.json({ losses }, { headers: NO_STORE });
+    return NextResponse.json({ tenantId, losses }, { headers: NO_STORE });
   } catch (error) {
     console.warn("[api/inventory-losses] No se pudieron listar las pérdidas:", error);
     return errorResponse("No se pudieron cargar las pérdidas.", 503);
@@ -70,7 +84,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = await authorize(request);
+  const tenantId = resolveTenantFromRequest(request);
+  const auth = await authorize(request, tenantId);
   if (auth.error) return auth.error;
 
   const body = await request.json().catch(() => null);
@@ -156,8 +171,16 @@ export async function POST(request: Request) {
   };
 
   try {
-    await setDocument("inventoryLosses", id, document);
-    return NextResponse.json({ ok: true, id }, { headers: NO_STORE });
+    if (!isFirestoreConfigured()) {
+      const state = getDemoState(tenantId);
+      state.losses = [
+        document as unknown as Record<string, unknown>,
+        ...state.losses.filter((loss) => loss.id !== id),
+      ].slice(0, 2000);
+    } else {
+      await setDocument(tenantPath(tenantId, "inventoryLosses"), id, document);
+    }
+    return NextResponse.json({ ok: true, tenantId, id }, { headers: NO_STORE });
   } catch (error) {
     console.warn("[api/inventory-losses] No se pudo guardar la pérdida:", error);
     return errorResponse("No se pudo guardar la pérdida.", 503);

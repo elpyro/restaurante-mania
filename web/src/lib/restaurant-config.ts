@@ -1,6 +1,12 @@
 import { cache } from "react";
-import { getDocument, isFirestoreConfigured } from "@/lib/firebase/rest";
+import { getDemoState } from "@/lib/demo-store";
+import {
+  getDocument,
+  isFirestoreConfigured,
+  tenantPath,
+} from "@/lib/firebase/rest";
 import { siteConfig } from "@/lib/site";
+import { DEFAULT_TENANT_ID, isDemoTenant } from "@/lib/tenants";
 import type { PaymentMethod } from "@/lib/types";
 
 export type AppearancePreset = "mania" | "fuego" | "verde" | "noche" | "custom";
@@ -17,6 +23,40 @@ export type CustomColors = Record<CustomColorKey, string>;
 export type PaymentMethodLabels = Partial<Record<PaymentMethod, string>>;
 export type SocialNetwork = "instagram" | "tiktok" | "facebook";
 export type SocialLinks = Partial<Record<SocialNetwork, string | null>>;
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+/** Días en que el restaurante recibe pedidos, en orden de la semana. */
+export const WEEKDAYS: Weekday[] = [
+  "mon",
+  "tue",
+  "wed",
+  "thu",
+  "fri",
+  "sat",
+  "sun",
+];
+
+export const WEEKDAY_LABELS: Record<Weekday, string> = {
+  mon: "Lun",
+  tue: "Mar",
+  wed: "Mié",
+  thu: "Jue",
+  fri: "Vie",
+  sat: "Sáb",
+  sun: "Dom",
+};
+
+export const DEFAULT_TIME_ZONE = "America/Bogota";
+export const DEFAULT_OPENING_DAYS: Weekday[] = [
+  "mon",
+  "tue",
+  "wed",
+  "thu",
+  "fri",
+  "sat",
+];
+export const DEFAULT_OPEN_TIME = "11:30";
+export const DEFAULT_CLOSE_TIME = "20:30";
 
 /** Textos que los agentes de IA leen desde `/llms.txt` y los metadatos. */
 export interface AiSearchConfig {
@@ -64,6 +104,16 @@ export interface RestaurantConfig {
   address: string;
   city: string;
   hours: string;
+  /** `false` fuerza el estado «Cerrado» en la portada, sin bloquear pedidos. */
+  isOpen: boolean;
+  /** Zona IANA usada para calcular el estado de la portada. */
+  timeZone: string;
+  openingDays: Weekday[];
+  /** Horarios en 24 h (`HH:mm`) dentro de [timeZone]. */
+  openTime: string;
+  closeTime: string;
+  ctaTitle: string;
+  ctaDescription: string;
   currency: string;
   showOrderTypeOptions: boolean;
   deliveryOptions: Record<DeliveryOption, boolean>;
@@ -76,7 +126,7 @@ export interface RestaurantConfig {
 export interface RestaurantConfigSnapshot {
   config: RestaurantConfig;
   configured: boolean;
-  source: "firestore" | "env";
+  source: "firestore" | "env" | "demo";
 }
 
 export type PublicRestaurantConfig = Omit<RestaurantConfig, "updatedAt">;
@@ -157,6 +207,14 @@ export const DEFAULT_RESTAURANT_CONFIG: RestaurantConfig = {
   address: siteConfig.address,
   city: siteConfig.city,
   hours: siteConfig.hours,
+  isOpen: true,
+  timeZone: DEFAULT_TIME_ZONE,
+  openingDays: [...DEFAULT_OPENING_DAYS],
+  openTime: DEFAULT_OPEN_TIME,
+  closeTime: DEFAULT_CLOSE_TIME,
+  ctaTitle: "¿Hambre? Tu mesa o domicilio te espera.",
+  ctaDescription:
+    "Abrimos todos los días de Lun–Sáb 11:30–20:30. Haz tu pedido en línea o escríbenos por WhatsApp.",
   currency: siteConfig.currency,
   showOrderTypeOptions: true,
   deliveryOptions: { pickup: true, delivery: true, table: true },
@@ -608,12 +666,86 @@ function normalizePaymentMethodLabels(value: unknown): PaymentMethodLabels {
   return labels;
 }
 
+/** Acepta solo zonas IANA conocidas por la base de datos de `Intl`. */
+export function isValidTimeZone(value: string): boolean {
+  const zone = value.trim();
+  if (!zone || zone.length > 64) return false;
+  try {
+    const supported = (
+      Intl as typeof Intl & {
+        supportedValuesOf?: (key: string) => string[];
+      }
+    ).supportedValuesOf?.("timeZone");
+    if (!supported) {
+      new Intl.DateTimeFormat("en-US", { timeZone: zone });
+      return true;
+    }
+    return supported.includes(zone) || zone.toUpperCase() === "UTC";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeTimeZone(value: unknown): string {
+  return typeof value === "string" && isValidTimeZone(value)
+    ? value.trim()
+    : DEFAULT_RESTAURANT_CONFIG.timeZone;
+}
+
+export function isValidTimeOfDay(value: unknown): value is string {
+  return (
+    typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value.trim())
+  );
+}
+
+function normalizeTimeOfDay(value: unknown, fallback: string): string {
+  return isValidTimeOfDay(value) ? value.trim() : fallback;
+}
+
+function normalizeOpeningDays(value: unknown): Weekday[] {
+  if (!Array.isArray(value)) return [...DEFAULT_OPENING_DAYS];
+  const days = value.filter((day): day is Weekday => WEEKDAYS.includes(day as Weekday));
+  return days.length > 0
+    ? WEEKDAYS.filter((day) => days.includes(day))
+    : [...DEFAULT_OPENING_DAYS];
+}
+
+/** Texto corto y legable derivado del horario estructurado. */
+export function formatOpeningHours(config: Pick<
+  RestaurantConfig,
+  "openingDays" | "openTime" | "closeTime"
+>): string {
+  const days = config.openingDays;
+  let dayText: string;
+  if (days.length === 7) {
+    dayText = "Todos los días";
+  } else if (days.length === 0) {
+    return "Cerrado";
+  } else {
+    const indices = days.map((day) => WEEKDAYS.indexOf(day)).sort((a, b) => a - b);
+    const consecutive =
+      indices.every((index, i) => i === 0 || index === indices[i - 1] + 1) &&
+      indices.length > 1;
+    dayText = consecutive
+      ? `${WEEKDAY_LABELS[WEEKDAYS[indices[0]]]}–${WEEKDAY_LABELS[WEEKDAYS[indices[indices.length - 1]]]}`
+      : indices.map((index) => WEEKDAY_LABELS[WEEKDAYS[index]]).join(", ");
+  }
+  return `${dayText} ${config.openTime}–${config.closeTime}`;
+}
+
 function normalizeConfig(raw: Record<string, unknown>): RestaurantConfig {
   const { phone, countryCode } = normalizePhone(raw.phone, raw.countryCode);
   const currency =
     typeof raw.currency === "string" && /^[A-Z]{3}$/.test(raw.currency.trim())
       ? raw.currency.trim()
       : DEFAULT_RESTAURANT_CONFIG.currency;
+  const timeZone = normalizeTimeZone(raw.timeZone);
+  const openingDays = normalizeOpeningDays(raw.openingDays);
+  const openTime = normalizeTimeOfDay(raw.openTime, DEFAULT_OPEN_TIME);
+  const closeTime = normalizeTimeOfDay(raw.closeTime, DEFAULT_CLOSE_TIME);
+  const hours =
+    nonEmptyString(raw.hours, "") ||
+    formatOpeningHours({ openingDays, openTime, closeTime });
   return {
     ...DEFAULT_RESTAURANT_CONFIG,
     name: nonEmptyString(raw.name, DEFAULT_RESTAURANT_CONFIG.name),
@@ -630,7 +762,20 @@ function normalizeConfig(raw: Record<string, unknown>): RestaurantConfig {
     whatsapp: nonEmptyString(raw.whatsapp, DEFAULT_RESTAURANT_CONFIG.whatsapp),
     address: nonEmptyString(raw.address, DEFAULT_RESTAURANT_CONFIG.address),
     city: nonEmptyString(raw.city, DEFAULT_RESTAURANT_CONFIG.city),
-    hours: nonEmptyString(raw.hours, DEFAULT_RESTAURANT_CONFIG.hours),
+    hours,
+    isOpen:
+      typeof raw.isOpen === "boolean"
+        ? raw.isOpen
+        : DEFAULT_RESTAURANT_CONFIG.isOpen,
+    timeZone,
+    openingDays,
+    openTime,
+    closeTime,
+    ctaTitle: nonEmptyString(raw.ctaTitle, DEFAULT_RESTAURANT_CONFIG.ctaTitle),
+    ctaDescription: nonEmptyString(
+      raw.ctaDescription,
+      DEFAULT_RESTAURANT_CONFIG.ctaDescription,
+    ),
     currency,
     showOrderTypeOptions:
       typeof raw.showOrderTypeOptions === "boolean"
@@ -661,13 +806,20 @@ export function whatsappNumber(config: RestaurantConfig): string {
  * `getDocument` ya respeta revalidate=0; `cache` deduplica dentro de cada request.
  */
 export const getRestaurantConfig = cache(
-  async (): Promise<RestaurantConfigSnapshot> => {
+  async (tenantId = DEFAULT_TENANT_ID): Promise<RestaurantConfigSnapshot> => {
     if (!isFirestoreConfigured()) {
+      if (isDemoTenant(tenantId)) {
+        return {
+          config: getDemoState(tenantId).config,
+          configured: false,
+          source: "demo",
+        };
+      }
       return { config: DEFAULT_RESTAURANT_CONFIG, configured: false, source: "env" };
     }
     try {
       const doc = await getDocument<Record<string, unknown>>(
-        "restaurant",
+        tenantPath(tenantId, "restaurant"),
         "config",
         0,
       );
@@ -683,6 +835,15 @@ export const getRestaurantConfig = cache(
     }
   },
 );
+
+/** Persiste la configuración de una instancia demo dentro de su propio estado. */
+export function saveDemoRestaurantConfig(
+  tenantId: string,
+  config: RestaurantConfig,
+): void {
+  if (!isDemoTenant(tenantId)) return;
+  getDemoState(tenantId).config = config;
+}
 
 export function toPublicRestaurantConfig(
   config: RestaurantConfig,
@@ -708,6 +869,11 @@ const TEXT_LIMITS: Record<
     | "paymentMethodLabels"
     | "showOrderTypeOptions"
     | "aiSearch"
+    | "isOpen"
+    | "timeZone"
+    | "openingDays"
+    | "openTime"
+    | "closeTime"
   >,
   { min: number; max: number }
 > = {
@@ -722,6 +888,8 @@ const TEXT_LIMITS: Record<
   address: { min: 5, max: 160 },
   city: { min: 2, max: 80 },
   hours: { min: 2, max: 80 },
+  ctaTitle: { min: 2, max: 120 },
+  ctaDescription: { min: 2, max: 300 },
   currency: { min: 3, max: 3 },
 };
 
@@ -791,6 +959,56 @@ export function sanitizeConfigPatch(body: unknown): RestaurantConfigPatch {
     } else {
       (patch as Record<string, unknown>)[field] = text;
     }
+  }
+
+  if ("isOpen" in raw) {
+    if (typeof raw.isOpen !== "boolean") {
+      errors.push("isOpen debe ser verdadero o falso.");
+    } else {
+      patch.isOpen = raw.isOpen;
+    }
+  }
+
+  if ("timeZone" in raw) {
+    if (typeof raw.timeZone !== "string" || !isValidTimeZone(raw.timeZone)) {
+      errors.push("timeZone debe ser una zona horaria IANA válida.");
+    } else {
+      patch.timeZone = raw.timeZone.trim();
+    }
+  }
+
+  if ("openingDays" in raw) {
+    const days = raw.openingDays;
+    if (
+      !Array.isArray(days) ||
+      days.length === 0 ||
+      days.length > WEEKDAYS.length ||
+      days.some((day) => !WEEKDAYS.includes(day as Weekday))
+    ) {
+      errors.push(
+        "openingDays debe incluir al menos uno de: mon, tue, wed, thu, fri, sat, sun.",
+      );
+    } else {
+      patch.openingDays = WEEKDAYS.filter((day) => days.includes(day));
+    }
+  }
+
+  const nextOpenTime = isValidTimeOfDay(raw.openTime)
+    ? raw.openTime.trim()
+    : patch.openTime ?? DEFAULT_OPEN_TIME;
+  const nextCloseTime = isValidTimeOfDay(raw.closeTime)
+    ? raw.closeTime.trim()
+    : patch.closeTime ?? DEFAULT_CLOSE_TIME;
+  for (const field of ["openTime", "closeTime"] as const) {
+    if (!(field in raw)) continue;
+    if (!isValidTimeOfDay(raw[field])) {
+      errors.push(`${field} debe tener el formato HH:mm (24 horas).`);
+      continue;
+    }
+    (patch as Record<string, unknown>)[field] = raw[field].trim();
+  }
+  if (nextOpenTime >= nextCloseTime) {
+    errors.push("closeTime debe ser posterior a openTime.");
   }
 
   if ("showOrderTypeOptions" in raw) {

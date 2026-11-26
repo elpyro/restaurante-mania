@@ -3,13 +3,19 @@ import {
   AdminUnavailableError,
   verifyAdminIdToken,
 } from "@/lib/firebase/admin";
-import { setDocument } from "@/lib/firebase/rest";
+import {
+  isFirestoreConfigured,
+  setDocument,
+  tenantPath,
+} from "@/lib/firebase/rest";
 import {
   ConfigValidationError,
   getRestaurantConfig,
   sanitizeConfigPatch,
+  saveDemoRestaurantConfig,
   toPublicRestaurantConfig,
 } from "@/lib/restaurant-config";
+import { isDemoTenant, resolveTenantFromRequest } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,10 +26,12 @@ function errorResponse(message: string, status: number) {
   return NextResponse.json({ error: message }, { status, headers: NO_STORE });
 }
 
-export async function GET() {
-  const snapshot = await getRestaurantConfig();
+export async function GET(request: Request) {
+  const tenantId = resolveTenantFromRequest(request);
+  const snapshot = await getRestaurantConfig(tenantId);
   return NextResponse.json(
     {
+      tenantId,
       configured: snapshot.configured,
       config: toPublicRestaurantConfig(snapshot.config),
       source: snapshot.source,
@@ -33,6 +41,7 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
+  const tenantId = resolveTenantFromRequest(request);
   const authorization = request.headers.get("authorization") ?? "";
   const match = /^Bearer\s+(\S+)$/i.exec(authorization);
   if (!match) {
@@ -41,7 +50,7 @@ export async function PATCH(request: Request) {
 
   let role: unknown;
   try {
-    const identity = await verifyAdminIdToken(match[1]!);
+    const identity = await verifyAdminIdToken(match[1]!, tenantId);
     role = identity.role;
   } catch (error) {
     if (error instanceof AdminUnavailableError) {
@@ -56,7 +65,7 @@ export async function PATCH(request: Request) {
   try {
     const body = await request.json().catch(() => null);
     const patch = sanitizeConfigPatch(body);
-    const { config: current } = await getRestaurantConfig();
+    const { config: current } = await getRestaurantConfig(tenantId);
     // Los mapas anidados se fusionan: enviar solo el preset no debe borrar el
     // banner/logo, y enviar un pago no debe borrar las etiquetas respectivas.
     const nextConfig = {
@@ -85,13 +94,22 @@ export async function PATCH(request: Request) {
       updatedAt: new Date().toISOString(),
     };
 
-    await setDocument("restaurant", "config", nextConfig);
+    if (isFirestoreConfigured()) {
+      await setDocument(
+        tenantPath(tenantId, "restaurant"),
+        "config",
+        nextConfig,
+      );
+    } else {
+      saveDemoRestaurantConfig(tenantId, nextConfig);
+    }
 
     return NextResponse.json(
       {
+        tenantId,
         configured: true,
         config: toPublicRestaurantConfig(nextConfig),
-        source: "firestore",
+        source: isFirestoreConfigured() ? "firestore" : "demo",
       },
       { headers: NO_STORE },
     );

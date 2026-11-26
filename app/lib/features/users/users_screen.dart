@@ -131,7 +131,7 @@ class _UsersScreenState extends State<UsersScreen> {
                   ),
                   const SizedBox(height: 4),
                   const Text(
-                    'Las cuentas se guardan en este dispositivo. Clave demo compartida.',
+                    'Las cuentas se guardan aquí y se sincronizan con Firebase cuando hay conexión.',
                     style: TextStyle(fontSize: 10.5, color: Color(0xFF78716C)),
                   ),
                   const SizedBox(height: 12),
