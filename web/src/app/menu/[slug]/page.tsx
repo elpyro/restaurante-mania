@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import { ImageLightbox } from "@/components/ImageLightbox";
+import { LazyVideo } from "@/components/LazyVideo";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ViewTransition } from "react";
@@ -124,10 +126,9 @@ export default async function DishPage({ params }: Props) {
         <ViewTransition name={`dish-${item.slug}`} share="morph" default="none">
           <div className="relative grid min-h-[22rem] place-items-center overflow-hidden rounded-4xl border border-line bg-gradient-to-br from-brand-100 via-surface to-accent-soft shadow-card">
             {item.imageUrl ? (
-              <Image
+              <ImageLightbox
                 src={item.imageUrl}
                 alt={item.name}
-                fill
                 priority
                 sizes="(max-width: 1024px) 100vw, 560px"
                 className="object-cover"
@@ -136,7 +137,7 @@ export default async function DishPage({ params }: Props) {
               <span className="text-[10rem]">{item.emoji}</span>
             )}
             {item.featured ? (
-              <span className="absolute left-5 top-5 inline-flex items-center gap-1.5 rounded-full bg-surface-raised/90 px-3 py-1 text-xs font-bold uppercase tracking-wide text-brand-strong shadow-sm">
+              <span className="pointer-events-none absolute left-5 top-5 inline-flex items-center gap-1.5 rounded-full bg-surface-raised/90 px-3 py-1 text-xs font-bold uppercase tracking-wide text-brand-strong shadow-sm">
                 <Sparkles size={13} aria-hidden /> Favorito de la casa
               </span>
             ) : null}
@@ -157,12 +158,16 @@ export default async function DishPage({ params }: Props) {
             <p className="font-display text-3xl font-bold text-brand-strong">
               {formatCOP(item.price)}
             </p>
-            <span className="chip">
-              <Clock size={14} aria-hidden /> {item.prepMinutes} min
-            </span>
-            <span className="chip">
-              <Flame size={14} aria-hidden /> {item.calories} kcal
-            </span>
+            {item.prepMinutes > 0 ? (
+              <span className="chip">
+                <Clock size={14} aria-hidden /> {item.prepMinutes} min
+              </span>
+            ) : null}
+            {item.calories > 0 ? (
+              <span className="chip">
+                <Flame size={14} aria-hidden /> {item.calories} kcal
+              </span>
+            ) : null}
             <span
               className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
                 item.status === "available"
@@ -208,11 +213,11 @@ export default async function DishPage({ params }: Props) {
                 ))}
               </ul>
             </div>
-            <div className="surface-card p-4">
-              <h2 className="inline-flex items-center gap-2 text-sm font-bold text-ink">
-                <Leaf size={16} className="text-accent" aria-hidden /> Alérgenos
-              </h2>
-              {item.allergens.length > 0 ? (
+            {item.allergens.length > 0 ? (
+              <div className="surface-card p-4">
+                <h2 className="inline-flex items-center gap-2 text-sm font-bold text-ink">
+                  <Leaf size={16} className="text-accent" aria-hidden /> Alérgenos
+                </h2>
                 <ul className="mt-3 flex flex-wrap gap-1.5">
                   {item.allergens.map((allergen) => (
                     <li
@@ -223,13 +228,25 @@ export default async function DishPage({ params }: Props) {
                     </li>
                   ))}
                 </ul>
+              </div>
+            ) : null}
+          </div>
+          {item.videoUrl && /^https?:\/\//i.test(item.videoUrl) ? (
+            <div className="mt-6 surface-card overflow-hidden p-4">
+              <h2 className="mb-3 text-sm font-bold text-ink">Video del plato</h2>
+              {/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([A-Za-z0-9_-]+)/.test(item.videoUrl) ? (
+                <iframe
+                  src={'https://www.youtube.com/embed/' + ((item.videoUrl.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([A-Za-z0-9_-]+)/) || [])[1] ?? '')}
+                  className="aspect-video w-full rounded-xl"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  title={'Video de ' + item.name}
+                />
               ) : (
-                <p className="mt-3 text-xs text-ink-muted">
-                  Sin alérgenos declarados. Consulta por preparaciones especiales.
-                </p>
+                <LazyVideo src={item.videoUrl} title={item.name} poster={item.imageUrl || undefined} />
               )}
             </div>
-          </div>
+          ) : null}
         </div>
       </div>
 

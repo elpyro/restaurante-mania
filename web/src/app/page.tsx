@@ -160,19 +160,20 @@ export default async function HomePage() {
               )}
             >
               {[
-                { icon: Clock, label: "Preparación", value: "~20 min" },
+                { icon: Clock, label: "Preparación", value: "~20 min", pulse: false as boolean },
                 {
                   icon: CircleCheck,
                   label: "Estado",
-                  value: status.label,
+                  value: status.isOpen ? "Abierto" : status.label,
                   detail: status.detail,
+                  pulse: status.isOpen,
                 },
                 {
                   icon: UtensilsCrossed,
                   label: "Platos activos",
                   value: String(availableCount),
                 },
-              ].map(({ icon: Icon, label, value, detail }) => (
+              ].map(({ icon: Icon, label, value, detail, pulse }) => (
                 <div
                   key={label}
                   className={clsx(
@@ -202,10 +203,16 @@ export default async function HomePage() {
                   {detail ? (
                     <dd
                       className={clsx(
-                        "mt-0.5 text-[10px] leading-tight",
-                        bannerUrl ? "text-white/80" : "text-ink-muted",
+                        "mt-1 inline-flex items-center justify-center gap-1.5 text-[11px] font-semibold leading-tight",
+                        bannerUrl ? "text-white/95" : "text-ink-muted",
                       )}
                     >
+                      {pulse ? (
+                        <span className="relative flex h-2.5 w-2.5 shrink-0">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-75" />
+                          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent" />
+                        </span>
+                      ) : null}
                       {detail}
                     </dd>
                   ) : null}

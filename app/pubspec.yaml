@@ -74,6 +74,7 @@ flutter:
 
   assets:
     - assets/fonts/Geist-Regular.ttf
+    - assets/images/login-logo.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

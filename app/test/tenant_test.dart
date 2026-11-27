@@ -31,6 +31,23 @@ void main() {
       expect(tenants.keys, containsAll(['mania', 'fuego', 'verde']));
     });
 
+    test('registra restaurantes creados en caliente y deriva su slug', () {
+      expect(tenantIdFromName('Casa Nueva Áñeja!'), 'casa-nueva-aneja');
+      expect(isValidTenantId('casa-nueva'), isTrue);
+      expect(isValidTenantId('Mi Tienda'), isFalse);
+
+      const definition = TenantDefinition(
+        id: 'casa-prueba-qa',
+        label: 'Casa Prueba',
+        description: '',
+        emoji: '🍽️',
+      );
+      registerTenant(definition);
+      expect(normalizeTenantId('CASA-PRUEBA-QA'), 'casa-prueba-qa');
+      expect(tenants['casa-prueba-qa']?.label, 'Casa Prueba');
+      tenants.remove('casa-prueba-qa');
+    });
+
     test('mania conserva las claves legacy y los demo usan prefijo', () {
       expect(tenantStorageKey('mania', 'rm_orders_v1'), 'rm_orders_v1');
       expect(tenantStorageKey('fuego', 'rm_orders_v1'), 'rm_fuego_orders_v1');

@@ -13,7 +13,10 @@ import 'order_detail_screen.dart';
 import 'payment_sheet.dart';
 
 class OrdersScreen extends StatefulWidget {
-  const OrdersScreen({super.key});
+  const OrdersScreen({super.key, this.initialFilter = 'toCollect'});
+
+  /// Filtro con el que se abre la pantalla (por ejemplo desde el Inicio).
+  final String initialFilter;
 
   @override
   State<OrdersScreen> createState() => _OrdersScreenState();
@@ -21,7 +24,36 @@ class OrdersScreen extends StatefulWidget {
 
 class _OrdersScreenState extends State<OrdersScreen> {
   final _searchController = TextEditingController();
-  String _filter = 'toCollect';
+  late String _filter;
+  String _sort = 'oldest';
+
+  static const _sortOptions = <String, String>{
+    'oldest': 'Más viejo a más nuevo',
+    'newest': 'Más nuevo a más viejo',
+    'totalDesc': 'Mayor total primero',
+    'totalAsc': 'Menor total primero',
+  };
+
+  int _compareOrders(Order a, Order b) => switch (_sort) {
+        'newest' => b.createdAt.compareTo(a.createdAt),
+        'totalDesc' => b.total.compareTo(a.total),
+        'totalAsc' => a.total.compareTo(b.total),
+        _ => a.createdAt.compareTo(b.createdAt),
+      };
+
+  @override
+  void initState() {
+    super.initState();
+    _filter = widget.initialFilter;
+  }
+
+  @override
+  void didUpdateWidget(covariant OrdersScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialFilter != widget.initialFilter) {
+      setState(() => _filter = widget.initialFilter);
+    }
+  }
 
   @override
   void dispose() {
@@ -57,21 +89,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
     for (final order in orders) {
       groups.putIfAbsent(order.tableNumber, () => <Order>[]).add(order);
     }
-    final keys = groups.keys.toList()
-      ..sort((a, b) {
-        final aOldest = groups[a]!
-            .map((o) => o.createdAt)
-            .reduce((x, y) => x.isBefore(y) ? x : y);
-        final bOldest = groups[b]!
-            .map((o) => o.createdAt)
-            .reduce((x, y) => x.isBefore(y) ? x : y);
-        return aOldest.compareTo(bOldest);
-      });
+    // El orden de los grupos y de los pedidos dentro de cada mesa sigue la
+    // selección del usuario (por defecto: más viejo → más nuevo).
+    final keys = groups.keys.toList();
 
     final widgets = <Widget>[];
     for (final key in keys) {
-      final group = groups[key]!
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final group = groups[key]!;
       final label = key == null ? 'Sin mesa' : 'Mesa $key';
       final hasMultiple = key != null && group.length > 1;
       final hasNewOrder = hasMultiple &&
@@ -405,7 +429,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final role = repository.role ?? UserRole.admin;
     final orders = repository.orders
         .where((order) => _matchesFilter(order) && _matchesSearch(order))
-        .toList();
+        .toList()
+        ..sort(_compareOrders);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -501,7 +526,32 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     color: Color(0xFF78716C),
                   ),
                 ),
+                const SizedBox(width: 10),
+                // A la izquierda para que el FloatingActionButton no lo tape.
+                DropdownButton<String>(
+                  value: _sort,
+                  isDense: true,
+                  underline: const SizedBox.shrink(),
+                  icon: const Icon(Icons.swap_vert_rounded, size: 15),
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF78716C),
+                  ),
+                  onChanged: (value) {
+                    if (value != null) setState(() => _sort = value);
+                  },
+                  items: [
+                    for (final entry in _sortOptions.entries)
+                      DropdownMenuItem<String>(
+                        value: entry.key,
+                        child: Text(entry.value),
+                      ),
+                  ],
+                ),
                 const Spacer(),
+                if (repository.pendingSyncCount > 0)
+                  const SizedBox(width: 8),
                 if (repository.pendingSyncCount > 0)
                   Text(
                     '${repository.pendingSyncCount} sin sincronizar',
@@ -511,6 +561,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       color: AppTheme.warning,
                     ),
                   ),
+                // Hueco para el «Nuevo pedido» flotante en pantallas bajas.
+                const SizedBox(width: 170),
               ],
             ),
           ),

@@ -6,10 +6,17 @@ import {
   tenantPath,
 } from "@/lib/firebase/rest";
 import { siteConfig } from "@/lib/site";
-import { DEFAULT_TENANT_ID, isDemoTenant } from "@/lib/tenants";
+import {
+  DEFAULT_TENANT_ID,
+  isDemoTenant,
+  isKnownTenant,
+  isTemplateTenant,
+  registerTenantDefinition,
+  tenantDefinition,
+} from "@/lib/tenants";
 import type { PaymentMethod } from "@/lib/types";
 
-export type AppearancePreset = "mania" | "fuego" | "verde" | "noche" | "custom";
+export type AppearancePreset = "mania" | "fuego" | "verde" | "noche" | "tierra" | "oceano" | "uva" | "custom";
 export type DeliveryOption = "pickup" | "delivery" | "table";
 export type CustomColorKey =
   | "brand"
@@ -76,6 +83,8 @@ export interface AppearanceConfig {
   socialLinks?: SocialLinks;
   /** Enlace al mapa (Google Maps, Waze, etc.) del pie de página. */
   gpsUrl?: string | null;
+  /** Enlace a la ficha/reseñas de Google del restaurante. */
+  googlePlaceUrl?: string | null;
 }
 
 /** Parche parcial: los mapas anidados se fusionan con la configuración actual. */
@@ -136,6 +145,9 @@ export const APPEARANCE_PRESETS: AppearancePreset[] = [
   "fuego",
   "verde",
   "noche",
+  "tierra",
+  "oceano",
+  "uva",
   "custom",
 ];
 
@@ -222,6 +234,58 @@ export const DEFAULT_RESTAURANT_CONFIG: RestaurantConfig = {
   paymentMethodLabels: {},
   aiSearch: {},
 };
+
+/**
+ * Plantilla inicial de cualquier restaurante creado desde la APK o abierto por
+ * un `?tenant=` nuevo. No incluye ciudad, país ni platos típicos: el dueño la
+ * reemplaza con sus propios datos desde el POS o el panel web.
+ */
+export const GENERIC_RESTAURANT_CONFIG: RestaurantConfig = {
+  name: "Restaurante de ejemplo",
+  slogan: "Comida lista para compartir, todos los días.",
+  heroTitle: "Tu próxima comida empieza aquí.",
+  heroDescription:
+    "Explora el menú, elige tu platillo favorito y recíbelo en la mesa o en la puerta. Cada pedido se prepara al momento.",
+  heroBadge: "🍽️ Menú para todos",
+  appearance: { preset: "tierra", socialLinks: {} },
+  phone: "000 000 0000",
+  countryCode: "+00",
+  whatsapp: "+000000000000",
+  address: "Dirección por definir",
+  city: "Ciudad por definir",
+  hours: "Lun–Sáb 11:30–20:30",
+  isOpen: true,
+  timeZone: DEFAULT_TIME_ZONE,
+  openingDays: [...DEFAULT_OPENING_DAYS],
+  openTime: DEFAULT_OPEN_TIME,
+  closeTime: DEFAULT_CLOSE_TIME,
+  ctaTitle: "¿Listo para pedir?",
+  ctaDescription:
+    "Elige tus platillos, confirma tu pedido y nosotros nos encargamos del resto.",
+  currency: "USD",
+  showOrderTypeOptions: true,
+  deliveryOptions: { pickup: true, delivery: true, table: true },
+  paymentMethods: ["cash", "card"],
+  paymentMethodLabels: { cash: "Efectivo", card: "Tarjeta" },
+  aiSearch: {
+    description:
+      "Restaurante con pedidos en línea, menú actualizado y atención cercana.",
+    keywords: "restaurante, menú, pedidos en línea, comida",
+    serviceArea: "Zona de atención por definir",
+    highlights:
+      "Platillos preparados al momento, pedidos sencillos, servicio amable",
+  },
+};
+
+/** Usa el nombre real del tenant cuando ya fue registrado desde Firestore. */
+export function genericRestaurantConfig(tenantId: string): RestaurantConfig {
+  const config = structuredClone(GENERIC_RESTAURANT_CONFIG);
+  if (isKnownTenant(tenantId)) {
+    const label = tenantDefinition(tenantId).label.trim();
+    if (label) config.name = label;
+  }
+  return config;
+}
 
 const THEME_TOKENS = [
   "surface",
@@ -381,6 +445,96 @@ export const PRESETS: Record<
     footer: "#070b14",
     "footer-ink": "#e2e8f0",
   },
+  tierra: {
+    surface: "#fbf7f2",
+    "surface-raised": "#ffffff",
+    "surface-muted": "#f3ede4",
+    ink: "#2b2118",
+    "ink-soft": "#5c4a3a",
+    "ink-muted": "#8a7663",
+    "ink-400": "#b39f8d",
+    "ink-500": "#8a7663",
+    "ink-700": "#5c4a3a",
+    "ink-900": "#2b2118",
+    "brand-50": "#fdf8f3",
+    "brand-100": "#f7ead9",
+    "brand-200": "#edd0b0",
+    "brand-300": "#dfae7d",
+    "brand-400": "#cd8752",
+    "brand-500": "#b86a35",
+    "brand-600": "#9a5429",
+    "brand-700": "#7d4224",
+    "brand-800": "#673724",
+    "brand-900": "#552f20",
+    accent: "#78716c",
+    "accent-strong": "#57534e",
+    "accent-soft": "#f5f5f4",
+    line: "#e7ddd1",
+    "hero-from": "#fdf8f3",
+    "hero-to": "#f5f5f4",
+    footer: "#2b2118",
+    "footer-ink": "#fdf8f3",
+  },
+  oceano: {
+    surface: "#f4fbfb",
+    "surface-raised": "#ffffff",
+    "surface-muted": "#e8f4f4",
+    ink: "#132a2e",
+    "ink-soft": "#355c63",
+    "ink-muted": "#5f858c",
+    "ink-400": "#93b2b8",
+    "ink-500": "#5f858c",
+    "ink-700": "#355c63",
+    "ink-900": "#132a2e",
+    "brand-50": "#effefd",
+    "brand-100": "#c7fffb",
+    "brand-200": "#90fff8",
+    "brand-300": "#51f7f0",
+    "brand-400": "#1de4e0",
+    "brand-500": "#05c7c7",
+    "brand-600": "#009ea1",
+    "brand-700": "#057d80",
+    "brand-800": "#0a6265",
+    "brand-900": "#0d5154",
+    accent: "#0284c7",
+    "accent-strong": "#0369a1",
+    "accent-soft": "#e0f2fe",
+    line: "#d5e8ea",
+    "hero-from": "#effefd",
+    "hero-to": "#e0f2fe",
+    footer: "#132a2e",
+    "footer-ink": "#effefd",
+  },
+  uva: {
+    surface: "#fbf7ff",
+    "surface-raised": "#ffffff",
+    "surface-muted": "#f3ebfa",
+    ink: "#24162f",
+    "ink-soft": "#533a66",
+    "ink-muted": "#7e6491",
+    "ink-400": "#a891b8",
+    "ink-500": "#7e6491",
+    "ink-700": "#533a66",
+    "ink-900": "#24162f",
+    "brand-50": "#faf5ff",
+    "brand-100": "#f3e8ff",
+    "brand-200": "#e9d5ff",
+    "brand-300": "#d8b4fe",
+    "brand-400": "#c084fc",
+    "brand-500": "#a855f7",
+    "brand-600": "#9333ea",
+    "brand-700": "#7e22ce",
+    "brand-800": "#6b21a8",
+    "brand-900": "#581c87",
+    accent: "#db2777",
+    "accent-strong": "#be185d",
+    "accent-soft": "#fce7f3",
+    line: "#e8dcf0",
+    "hero-from": "#faf5ff",
+    "hero-to": "#fce7f3",
+    footer: "#24162f",
+    "footer-ink": "#faf5ff",
+  },
 };
 
 function clampChannel(value: number): number {
@@ -516,9 +670,12 @@ function nonEmptyString(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 
-function normalizeCountryCode(value: unknown): string {
+function normalizeCountryCode(
+  value: unknown,
+  fallback: RestaurantConfig,
+): string {
   const text = typeof value === "string" ? value.trim() : "";
-  return /^\+\d{1,4}$/.test(text) ? text : DEFAULT_RESTAURANT_CONFIG.countryCode;
+  return /^\+\d{1,4}$/.test(text) ? text : fallback.countryCode;
 }
 
 /**
@@ -528,9 +685,10 @@ function normalizeCountryCode(value: unknown): string {
 function normalizePhone(
   rawPhone: unknown,
   rawCountryCode: unknown,
+  fallback: RestaurantConfig,
 ): { phone: string; countryCode: string } {
-  const countryCode = normalizeCountryCode(rawCountryCode);
-  let phone = nonEmptyString(rawPhone, DEFAULT_RESTAURANT_CONFIG.phone);
+  const countryCode = normalizeCountryCode(rawCountryCode, fallback);
+  let phone = nonEmptyString(rawPhone, fallback.phone);
   if (phone.startsWith(countryCode)) {
     phone = phone.slice(countryCode.length).trim();
   } else if (phone.startsWith("+")) {
@@ -539,7 +697,7 @@ function normalizePhone(
       phone = phone.slice(match[0].length).trim();
     }
   }
-  if (!phone) phone = DEFAULT_RESTAURANT_CONFIG.phone;
+  if (!phone) phone = fallback.phone;
   return { phone, countryCode };
 }
 
@@ -597,7 +755,10 @@ function normalizeAiSearch(value: unknown): AiSearchConfig {
   return result;
 }
 
-function normalizeAppearance(value: unknown): AppearanceConfig {
+function normalizeAppearance(
+  value: unknown,
+  fallback: RestaurantConfig,
+): AppearanceConfig {
   const raw =
     value && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, unknown>)
@@ -605,7 +766,7 @@ function normalizeAppearance(value: unknown): AppearanceConfig {
   const customColors = normalizeCustomColors(raw.customColors);
   const preset = isAppearancePreset(raw.preset)
     ? raw.preset
-    : DEFAULT_RESTAURANT_CONFIG.appearance.preset;
+    : fallback.appearance.preset;
   const bannerUrl =
     typeof raw.bannerUrl === "string" && isAllowedAssetUrl(raw.bannerUrl)
       ? raw.bannerUrl
@@ -615,6 +776,7 @@ function normalizeAppearance(value: unknown): AppearanceConfig {
       ? raw.logoUrl
       : undefined;
   const gpsUrl = normalizeExternalUrl(raw.gpsUrl, 500);
+  const googlePlaceUrl = normalizeExternalUrl(raw.googlePlaceUrl, 500);
   return {
     preset,
     ...(bannerUrl ? { bannerUrl } : {}),
@@ -622,10 +784,14 @@ function normalizeAppearance(value: unknown): AppearanceConfig {
     ...(preset === "custom" && customColors ? { customColors } : {}),
     socialLinks: normalizeSocialLinks(raw.socialLinks),
     ...(gpsUrl ? { gpsUrl } : {}),
+    ...(googlePlaceUrl ? { googlePlaceUrl } : {}),
   };
 }
 
-function normalizeDeliveryOptions(value: unknown): Record<DeliveryOption, boolean> {
+function normalizeDeliveryOptions(
+  value: unknown,
+  fallback: RestaurantConfig,
+): Record<DeliveryOption, boolean> {
   const raw =
     value && typeof value === "object" && !Array.isArray(value)
       ? (value as Record<string, unknown>)
@@ -634,25 +800,28 @@ function normalizeDeliveryOptions(value: unknown): Record<DeliveryOption, boolea
     pickup:
       typeof raw.pickup === "boolean"
         ? raw.pickup
-        : DEFAULT_RESTAURANT_CONFIG.deliveryOptions.pickup,
+        : fallback.deliveryOptions.pickup,
     delivery:
       typeof raw.delivery === "boolean"
         ? raw.delivery
-        : DEFAULT_RESTAURANT_CONFIG.deliveryOptions.delivery,
+        : fallback.deliveryOptions.delivery,
     table:
       typeof raw.table === "boolean"
         ? raw.table
-        : DEFAULT_RESTAURANT_CONFIG.deliveryOptions.table,
+        : fallback.deliveryOptions.table,
   };
 }
 
-function normalizePaymentMethods(value: unknown): PaymentMethod[] {
-  if (!Array.isArray(value)) return [...DEFAULT_RESTAURANT_CONFIG.paymentMethods];
+function normalizePaymentMethods(
+  value: unknown,
+  fallback: RestaurantConfig,
+): PaymentMethod[] {
+  if (!Array.isArray(value)) return [...fallback.paymentMethods];
   const methods = value.filter(
     (method): method is PaymentMethod =>
       typeof method === "string" && PAYMENT_METHODS.includes(method as PaymentMethod),
   );
-  return methods.length > 0 ? [...new Set(methods)] : [...DEFAULT_RESTAURANT_CONFIG.paymentMethods];
+  return methods.length > 0 ? [...new Set(methods)] : [...fallback.paymentMethods];
 }
 
 function normalizePaymentMethodLabels(value: unknown): PaymentMethodLabels {
@@ -733,12 +902,15 @@ export function formatOpeningHours(config: Pick<
   return `${dayText} ${config.openTime}–${config.closeTime}`;
 }
 
-function normalizeConfig(raw: Record<string, unknown>): RestaurantConfig {
-  const { phone, countryCode } = normalizePhone(raw.phone, raw.countryCode);
+function normalizeConfig(
+  raw: Record<string, unknown>,
+  fallback: RestaurantConfig = DEFAULT_RESTAURANT_CONFIG,
+): RestaurantConfig {
+  const { phone, countryCode } = normalizePhone(raw.phone, raw.countryCode, fallback);
   const currency =
     typeof raw.currency === "string" && /^[A-Z]{3}$/.test(raw.currency.trim())
       ? raw.currency.trim()
-      : DEFAULT_RESTAURANT_CONFIG.currency;
+      : fallback.currency;
   const timeZone = normalizeTimeZone(raw.timeZone);
   const openingDays = normalizeOpeningDays(raw.openingDays);
   const openTime = normalizeTimeOfDay(raw.openTime, DEFAULT_OPEN_TIME);
@@ -746,45 +918,45 @@ function normalizeConfig(raw: Record<string, unknown>): RestaurantConfig {
   const hours =
     nonEmptyString(raw.hours, "") ||
     formatOpeningHours({ openingDays, openTime, closeTime });
+  const aiSearch = normalizeAiSearch(raw.aiSearch);
   return {
-    ...DEFAULT_RESTAURANT_CONFIG,
-    name: nonEmptyString(raw.name, DEFAULT_RESTAURANT_CONFIG.name),
-    slogan: nonEmptyString(raw.slogan, DEFAULT_RESTAURANT_CONFIG.slogan),
-    heroTitle: nonEmptyString(raw.heroTitle, DEFAULT_RESTAURANT_CONFIG.heroTitle),
+    ...fallback,
+    name: nonEmptyString(raw.name, fallback.name),
+    slogan: nonEmptyString(raw.slogan, fallback.slogan),
+    heroTitle: nonEmptyString(raw.heroTitle, fallback.heroTitle),
     heroDescription: nonEmptyString(
       raw.heroDescription,
-      DEFAULT_RESTAURANT_CONFIG.heroDescription,
+      fallback.heroDescription,
     ),
-    heroBadge: nonEmptyString(raw.heroBadge, DEFAULT_RESTAURANT_CONFIG.heroBadge),
-    appearance: normalizeAppearance(raw.appearance),
+    heroBadge: nonEmptyString(raw.heroBadge, fallback.heroBadge),
+    appearance: normalizeAppearance(raw.appearance, fallback),
     phone,
     countryCode,
-    whatsapp: nonEmptyString(raw.whatsapp, DEFAULT_RESTAURANT_CONFIG.whatsapp),
-    address: nonEmptyString(raw.address, DEFAULT_RESTAURANT_CONFIG.address),
-    city: nonEmptyString(raw.city, DEFAULT_RESTAURANT_CONFIG.city),
+    whatsapp: nonEmptyString(raw.whatsapp, fallback.whatsapp),
+    address: nonEmptyString(raw.address, fallback.address),
+    city: nonEmptyString(raw.city, fallback.city),
     hours,
     isOpen:
-      typeof raw.isOpen === "boolean"
-        ? raw.isOpen
-        : DEFAULT_RESTAURANT_CONFIG.isOpen,
+      typeof raw.isOpen === "boolean" ? raw.isOpen : fallback.isOpen,
     timeZone,
     openingDays,
     openTime,
     closeTime,
-    ctaTitle: nonEmptyString(raw.ctaTitle, DEFAULT_RESTAURANT_CONFIG.ctaTitle),
+    ctaTitle: nonEmptyString(raw.ctaTitle, fallback.ctaTitle),
     ctaDescription: nonEmptyString(
       raw.ctaDescription,
-      DEFAULT_RESTAURANT_CONFIG.ctaDescription,
+      fallback.ctaDescription,
     ),
     currency,
     showOrderTypeOptions:
       typeof raw.showOrderTypeOptions === "boolean"
         ? raw.showOrderTypeOptions
-        : DEFAULT_RESTAURANT_CONFIG.showOrderTypeOptions,
-    deliveryOptions: normalizeDeliveryOptions(raw.deliveryOptions),
-    paymentMethods: normalizePaymentMethods(raw.paymentMethods),
+        : fallback.showOrderTypeOptions,
+    deliveryOptions: normalizeDeliveryOptions(raw.deliveryOptions, fallback),
+    paymentMethods: normalizePaymentMethods(raw.paymentMethods, fallback),
     paymentMethodLabels: normalizePaymentMethodLabels(raw.paymentMethodLabels),
-    aiSearch: normalizeAiSearch(raw.aiSearch),
+    aiSearch:
+      Object.keys(aiSearch).length > 0 ? aiSearch : { ...fallback.aiSearch },
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : undefined,
   };
 }
@@ -807,7 +979,13 @@ export function whatsappNumber(config: RestaurantConfig): string {
  */
 export const getRestaurantConfig = cache(
   async (tenantId = DEFAULT_TENANT_ID): Promise<RestaurantConfigSnapshot> => {
+    const templateFallback = () => ({
+      config: genericRestaurantConfig(tenantId),
+      configured: false,
+      source: "env" as const,
+    });
     if (!isFirestoreConfigured()) {
+      if (isTemplateTenant(tenantId)) return templateFallback();
       if (isDemoTenant(tenantId)) {
         return {
           config: getDemoState(tenantId).config,
@@ -824,14 +1002,38 @@ export const getRestaurantConfig = cache(
         0,
       );
       if (!doc) {
-        return { config: DEFAULT_RESTAURANT_CONFIG, configured: false, source: "env" };
+        return isTemplateTenant(tenantId)
+          ? templateFallback()
+          : { config: DEFAULT_RESTAURANT_CONFIG, configured: false, source: "env" };
       }
-      return { config: normalizeConfig(doc), configured: true, source: "firestore" };
+      const config = normalizeConfig(
+        doc,
+        isTemplateTenant(tenantId)
+          ? GENERIC_RESTAURANT_CONFIG
+          : DEFAULT_RESTAURANT_CONFIG,
+      );
+      // Los restaurantes creados desde la APK no están en la lista fija:
+      // registramos su nombre para que etiquetas y códigos de pedido usen
+      // datos reales en lugar de los valores de manía.
+      registerTenantDefinition({
+        id: tenantId,
+        label: config.name,
+        description: "",
+        city: config.city,
+        address: config.address,
+        phone: config.phone,
+        whatsapp: config.whatsapp,
+        hours: config.hours,
+        currency: config.currency,
+      });
+      return { config, configured: true, source: "firestore" };
     } catch (error) {
       if (!isDynamicUsageError(error)) {
         console.warn("[restaurant-config] Firestore no disponible, usando valores por defecto:", error);
       }
-      return { config: DEFAULT_RESTAURANT_CONFIG, configured: false, source: "env" };
+      return isTemplateTenant(tenantId)
+        ? templateFallback()
+        : { config: DEFAULT_RESTAURANT_CONFIG, configured: false, source: "env" };
     }
   },
 );
@@ -1117,7 +1319,7 @@ export function sanitizeConfigPatch(body: unknown): RestaurantConfigPatch {
       const next: Partial<AppearanceConfig> = {};
       if ("preset" in appearance) {
         if (!isAppearancePreset(appearance.preset)) {
-          errors.push("appearance.preset debe ser mania, fuego, verde, noche o custom.");
+          errors.push("appearance.preset debe ser mania, fuego, verde, noche, tierra, oceano, uva o custom.");
         } else {
           next.preset = appearance.preset;
         }
@@ -1180,6 +1382,16 @@ export function sanitizeConfigPatch(body: unknown): RestaurantConfigPatch {
           const url = normalizeExternalUrl(rawUrl, 500);
           if (!url) errors.push("appearance.gpsUrl debe ser una URL http(s).");
           else next.gpsUrl = url;
+        }
+      }
+      if ("googlePlaceUrl" in appearance) {
+        const rawUrl = appearance.googlePlaceUrl;
+        if (rawUrl === null || (typeof rawUrl === "string" && !rawUrl.trim())) {
+          next.googlePlaceUrl = null;
+        } else {
+          const url = normalizeExternalUrl(rawUrl, 500);
+          if (!url) errors.push("appearance.googlePlaceUrl debe ser una URL http(s).");
+          else next.googlePlaceUrl = url;
         }
       }
       if (Object.keys(next).length > 0) patch.appearance = next;

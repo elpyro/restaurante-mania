@@ -79,6 +79,79 @@ async function authorize(request: Request, tenantId: string) {
   }
 }
 
+
+type AllUserMembership = { tenantId: string; role: string; uid: string; name: string; email: string };
+type StoredAllUser = { email?: unknown; name?: unknown; memberships?: unknown };
+
+async function syncAllUserMembership(params: {
+  tenantId: string;
+  uid: string;
+  name: string;
+  email: string;
+  role: string;
+  oldEmail?: string | null;
+  remove?: boolean;
+}) {
+  if (!isFirestoreConfigured()) return;
+  const email = params.email.trim().toLowerCase();
+  if (!email) return;
+  const old = params.oldEmail?.trim().toLowerCase();
+  if (old && old !== email) {
+    await removeTenantFromAllUser(old, params.tenantId);
+  }
+  if (params.remove) {
+    await removeTenantFromAllUser(email, params.tenantId);
+    return;
+  }
+  const existing = await getDocument<StoredAllUser>("all_user", email, 0);
+  const memberships: AllUserMembership[] = [];
+  const raw = Array.isArray(existing?.memberships) ? existing!.memberships : [];
+  for (const m of raw) {
+    if (!m || typeof m !== "object") continue;
+    const rec = m as Record<string, unknown>;
+    if (String(rec.tenantId ?? "") === params.tenantId) continue;
+    memberships.push({
+      tenantId: String(rec.tenantId ?? ""),
+      role: String(rec.role ?? ""),
+      uid: String(rec.uid ?? ""),
+      name: String(rec.name ?? ""),
+      email: String(rec.email ?? ""),
+    });
+  }
+  memberships.push({
+    tenantId: params.tenantId,
+    role: params.role,
+    uid: params.uid,
+    name: params.name,
+    email,
+  });
+  await setDocument("all_user", email, {
+    email,
+    name: params.name,
+    memberships,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+async function removeTenantFromAllUser(email: string, tenantId: string) {
+  const existing = await getDocument<StoredAllUser>("all_user", email, 0);
+  if (!existing) return;
+  const raw = Array.isArray(existing.memberships) ? existing.memberships : [];
+  const memberships = raw.filter((m) => {
+    if (!m || typeof m !== "object") return false;
+    return String((m as Record<string, unknown>).tenantId ?? "") !== tenantId;
+  });
+  if (memberships.length === 0) {
+    await deleteDocument("all_user", email);
+  } else {
+    await setDocument("all_user", email, {
+      email,
+      name: asString(existing.name) ?? "",
+      memberships,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+}
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -148,6 +221,7 @@ export async function POST(request: Request) {
     const collection = tenantPath(tenantId, "users");
     const existing = await getDocument<StoredUser>(collection, id, 0);
     const createdAt = asString(existing?.createdAt) ?? new Date().toISOString();
+    const oldEmail = asString(existing?.email) ?? null;
     await setDocument(collection, id, {
       uid: id,
       name,
@@ -157,6 +231,7 @@ export async function POST(request: Request) {
       createdAt,
       updatedAt: new Date().toISOString(),
     });
+    await syncAllUserMembership({ tenantId, uid: id, name, email, role, oldEmail });
     return NextResponse.json(
       { tenantId, user: { id, uid: id, name, email, role, status: "active", createdAt } },
       { headers: NO_STORE },
@@ -179,7 +254,13 @@ export async function DELETE(request: Request) {
   if (!id) return errorResponse("Identificador inválido.", 400);
 
   try {
-    await deleteDocument(tenantPath(tenantId, "users"), id);
+    const collection = tenantPath(tenantId, "users");
+    const existing = await getDocument<StoredUser>(collection, id, 0);
+    await deleteDocument(collection, id);
+    const email = asString(existing?.email);
+    if (email) {
+      await syncAllUserMembership({ tenantId, uid: id, name: asString(existing?.name) ?? "", email, role: asString(existing?.role) ?? "", remove: true });
+    }
     return NextResponse.json({ tenantId, deleted: id }, { headers: NO_STORE });
   } catch (error) {
     console.warn("[api/users] No se pudo eliminar el usuario:", error);

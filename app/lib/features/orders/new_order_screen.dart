@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -121,11 +121,9 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
       ),
       builder: (_) => _MenuItemDetailSheet(
         item: item,
-        quantity: _cart[item.id]?.quantity ?? 0,
-        onAdd: () {
-          final added = _add(item);
-          if (added) Navigator.of(context).pop();
-        },
+        initialQuantity: _cart[item.id]?.quantity ?? 0,
+        onAdd: () => _add(item),
+        onRemove: () => _remove(item),
       ),
     );
   }
@@ -917,36 +915,62 @@ class _MenuItemGridCard extends StatelessWidget {
   }
 }
 
-class _MenuItemDetailSheet extends StatelessWidget {
+class _MenuItemDetailSheet extends StatefulWidget {
   const _MenuItemDetailSheet({
     required this.item,
-    required this.quantity,
+    required this.initialQuantity,
     required this.onAdd,
+    required this.onRemove,
   });
 
   final MenuItem item;
-  final int quantity;
-  final VoidCallback onAdd;
+  final int initialQuantity;
+  final bool Function() onAdd;
+  final void Function() onRemove;
 
-  Future<void> _openVideo(BuildContext context) async {
-    final url = Uri.tryParse(item.videoUrl.trim());
+  @override
+  State<_MenuItemDetailSheet> createState() => _MenuItemDetailSheetState();
+}
+
+class _MenuItemDetailSheetState extends State<_MenuItemDetailSheet> {
+  late int _qty;
+
+  @override
+  void initState() {
+    super.initState();
+    _qty = widget.initialQuantity;
+  }
+
+  Future<void> _openVideo() async {
+    final url = Uri.tryParse(widget.item.videoUrl.trim());
     if (url == null) return;
     final ok = await launchUrl(url, mode: LaunchMode.externalApplication);
-    if (!ok && context.mounted) {
+    if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No se pudo abrir el video.')),
       );
     }
   }
 
+  void _add() {
+    if (widget.onAdd()) setState(() => _qty += 1);
+  }
+
+  void _remove() {
+    if (_qty <= 0) return;
+    widget.onRemove();
+    setState(() => _qty -= 1);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final item = widget.item;
     final hasVideo = item.videoUrl.trim().isNotEmpty;
     return DraggableScrollableSheet(
       expand: false,
-      initialChildSize: 0.88,
+      initialChildSize: 0.9,
       minChildSize: 0.5,
-      maxChildSize: 0.95,
+      maxChildSize: 0.96,
       builder: (context, scrollController) => Column(
         children: [
           const SizedBox(height: 10),
@@ -963,114 +987,121 @@ class _MenuItemDetailSheet extends StatelessWidget {
               controller: scrollController,
               padding: const EdgeInsets.fromLTRB(18, 14, 18, 24),
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(20),
-                  child: AspectRatio(
-                    aspectRatio: 4 / 3,
-                    child: _DetailImage(item: item, emojiFontSize: 72),
-                  ),
+                Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: AspectRatio(
+                        aspectRatio: 4 / 3,
+                        child: _DetailImage(item: item, emojiFontSize: 72),
+                      ),
+                    ),
+                    Positioned(
+                      left: 12,
+                      top: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(item.emoji, style: const TextStyle(fontSize: 18)),
+                      ),
+                    ),
+                    if (_qty > 0)
+                      Positioned(
+                        right: 12,
+                        top: 12,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(color: AppTheme.brand, borderRadius: BorderRadius.circular(999)),
+                          child: Text('$_qty en carrito', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12)),
+                        ),
+                      ),
+                  ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 18),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      child: Text(
-                        item.name,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w800,
-                          color: AppTheme.ink,
-                          height: 1.15,
-                        ),
-                      ),
+                      child: Text(item.name, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: AppTheme.ink, height: 1.15)),
                     ),
                     const SizedBox(width: 12),
-                    Text(
-                      formatCop(item.price),
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
-                        color: AppTheme.brandDark,
-                      ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(color: AppTheme.brand.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(14)),
+                      child: Text(formatCop(item.price), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: AppTheme.brandDark)),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  item.description,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF57534E),
-                    height: 1.5,
-                  ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (item.prepMinutes > 0) _InfoChip(icon: Icons.schedule_rounded, label: '${item.prepMinutes} min'),
+                    if (item.calories > 0) _InfoChip(icon: Icons.local_fire_department_rounded, label: '${item.calories} kcal'),
+                    _InfoChip(icon: Icons.restaurant_menu_rounded, label: item.categorySlug.isEmpty ? 'Menú' : item.categorySlug),
+                  ],
                 ),
+                const SizedBox(height: 12),
+                Text(item.description, style: const TextStyle(fontSize: 14, color: Color(0xFF57534E), height: 1.55)),
                 if (item.ingredients.isNotEmpty) ...[
-                  const SizedBox(height: 14),
-                  const Text(
-                    'Ingredientes',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: AppTheme.ink,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 16),
+                  const _SectionTitle(icon: Icons.eco_rounded, title: 'Ingredientes'),
+                  const SizedBox(height: 8),
                   Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: item.ingredients
-                        .map(
-                          (i) => Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF5F5F4),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              i,
-                              style: const TextStyle(
-                                fontSize: 11.5,
-                                color: Color(0xFF57534E),
-                              ),
-                            ),
-                          ),
-                        )
-                        .toList(),
+                    spacing: 8, runSpacing: 8,
+                    children: item.ingredients.map((i) => Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(color: const Color(0xFFF5F5F4), borderRadius: BorderRadius.circular(999), border: Border.all(color: const Color(0xFFE7E5E4))),
+                      child: Text(i, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF57534E))),
+                    )).toList(),
                   ),
                 ],
                 if (item.allergens.isNotEmpty) ...[
-                  const SizedBox(height: 14),
-                  Text(
-                    'Alérgenos: ${item.allergens.join(', ')}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppTheme.warning,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  const SizedBox(height: 16),
+                  const _SectionTitle(icon: Icons.warning_amber_rounded, title: 'Alérgenos', color: AppTheme.warning),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: item.allergens.map((a) => Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                      decoration: BoxDecoration(color: AppTheme.warning.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(999)),
+                      child: Text(a, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF92400E))),
+                    )).toList(),
                   ),
                 ],
                 if (hasVideo) ...[
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 18),
                   OutlinedButton.icon(
-                    onPressed: () => _openVideo(context),
+                    onPressed: _openVideo,
                     icon: const Icon(Icons.play_circle_outline_rounded),
                     label: const Text('Ver video del plato'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(48),
-                    ),
+                    style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(50), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
                   ),
                 ],
-                const SizedBox(height: 18),
-                FilledButton.icon(
-                  onPressed: onAdd,
-                  icon: const Icon(Icons.add_shopping_cart_rounded),
-                  label: Text(
-                    quantity > 0 ? 'Agregar otro ($quantity en carrito)' : 'Agregar al pedido',
-                  ),
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(50),
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(color: const Color(0xFFFAFAF9), borderRadius: BorderRadius.circular(20), border: Border.all(color: const Color(0xFFEDEAE6))),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Cantidad en pedido', style: TextStyle(fontSize: 12, color: Color(0xFF78716C))),
+                            const SizedBox(height: 2),
+                            Text(_qty > 0 ? formatCop(item.price * _qty) : formatCop(item.price), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppTheme.ink)),
+                          ],
+                        ),
+                      ),
+                      _QtyButton(icon: Icons.remove_rounded, onTap: _qty > 0 ? _remove : null),
+                      Padding(padding: const EdgeInsets.symmetric(horizontal: 14), child: Text('$_qty', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900))),
+                      _QtyButton(icon: Icons.add_rounded, onTap: _add, filled: true),
+                    ],
                   ),
                 ),
               ],
@@ -1081,6 +1112,59 @@ class _MenuItemDetailSheet extends StatelessWidget {
     );
   }
 }
+
+class _InfoChip extends StatelessWidget {
+  const _InfoChip({required this.icon, required this.label});
+  final IconData icon;
+  final String label;
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(color: AppTheme.brand.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(999)),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 14, color: AppTheme.brandDark),
+        const SizedBox(width: 5),
+        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppTheme.brandDark)),
+      ]),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle({required this.icon, required this.title, this.color = AppTheme.ink});
+  final IconData icon;
+  final String title;
+  final Color color;
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Icon(icon, size: 18, color: color),
+      const SizedBox(width: 6),
+      Text(title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: color)),
+    ]);
+  }
+}
+
+class _QtyButton extends StatelessWidget {
+  const _QtyButton({required this.icon, required this.onTap, this.filled = false});
+  final IconData icon;
+  final VoidCallback? onTap;
+  final bool filled;
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: filled ? AppTheme.brand : Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: filled ? AppTheme.brand : const Color(0xFFD6D3D1))),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(width: 42, height: 42, child: Icon(icon, color: onTap == null ? const Color(0xFFA8A29E) : (filled ? Colors.white : AppTheme.ink))),
+      ),
+    );
+  }
+}
+
 
 class _DetailImage extends StatelessWidget {
   const _DetailImage({required this.item, required this.emojiFontSize});

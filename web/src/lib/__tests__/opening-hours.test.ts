@@ -33,8 +33,8 @@ describe("estado de apertura de la portada", () => {
     expect(status).toEqual({
       isOpen: true,
       label: "Abierto",
-      detail: "recibiendo pedidos",
-      full: "Abierto: recibiendo pedidos",
+      detail: "Recibiendo pedidos",
+      full: "Abierto: Recibiendo pedidos",
     });
   });
 

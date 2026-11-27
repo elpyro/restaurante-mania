@@ -18,7 +18,7 @@ export function MenuItemCard({ item }: { item: MenuItem }) {
     <article className="surface-card group flex flex-col overflow-hidden transition duration-300 hover:-translate-y-1 hover:shadow-glow">
       <Link
         href={`/menu/${item.slug}`}
-        className="relative block h-40 overflow-hidden bg-gradient-to-br from-brand-100 via-surface to-accent-soft"
+        className="relative block h-44 overflow-hidden bg-gradient-to-br from-brand-100 via-surface to-accent-soft sm:h-56"
         aria-label={`Ver ${item.name}`}
       >
         <ViewTransition name={`dish-${item.slug}`} share="morph" default="none">
@@ -28,14 +28,15 @@ export function MenuItemCard({ item }: { item: MenuItem }) {
               alt={item.name}
               fill
               sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-              className="object-cover transition duration-500 group-hover:scale-105"
+              className="object-cover object-center transition duration-500 group-hover:scale-105 group-hover:shadow-lg"
             />
           ) : (
-            <span className="grid h-full w-full place-items-center text-6xl transition duration-500 group-hover:scale-110">
+            <span className="grid h-full w-full place-items-center text-7xl transition duration-500 group-hover:scale-110">
               {item.emoji}
             </span>
           )}
         </ViewTransition>
+        <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/35 to-transparent" />
         <CartQuantityBadge menuItemId={item.id} />
 
         {item.featured ? (
@@ -50,9 +51,9 @@ export function MenuItemCard({ item }: { item: MenuItem }) {
         ) : null}
       </Link>
 
-      <div className="flex flex-1 flex-col p-5">
+      <div className="flex flex-1 flex-col p-3 sm:p-5">
         <div className="flex items-start justify-between gap-3">
-          <h3 className="font-display text-lg font-bold leading-tight text-ink">
+          <h3 className="font-display text-base font-bold leading-tight text-ink sm:text-lg">
             <Link
               href={`/menu/${item.slug}`}
               className="transition hover:text-brand-strong"
@@ -60,26 +61,17 @@ export function MenuItemCard({ item }: { item: MenuItem }) {
               {item.name}
             </Link>
           </h3>
-          <p className="whitespace-nowrap text-sm font-bold text-brand-strong">
+          <p className="whitespace-nowrap text-xs font-bold text-brand-strong sm:text-sm">
             {formatCOP(item.price)}
           </p>
         </div>
-        <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-ink-muted">
+        <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-ink-muted sm:mt-2 sm:text-sm">
           {item.description}
         </p>
-        <div className="mt-3 flex items-center gap-3 text-[11px] font-medium text-ink-muted">
-          <span className="inline-flex items-center gap-1">
-            <Clock size={13} aria-hidden /> {item.prepMinutes} min
-          </span>
-          <span aria-hidden>·</span>
-          <span className="inline-flex items-center gap-1">
-            <Flame size={13} aria-hidden /> {item.calories} kcal
-          </span>
-        </div>
-        <div className="mt-auto flex items-center justify-between gap-2 pt-5">
+        <div className="mt-auto flex items-center justify-between gap-1.5 pt-3 sm:gap-2 sm:pt-5">
           <Link
             href={`/menu/${item.slug}`}
-            className="inline-flex items-center gap-1 text-xs font-semibold text-ink-soft underline-offset-4 transition hover:text-brand-strong hover:underline"
+            className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-ink-soft underline-offset-4 transition hover:text-brand-strong hover:underline sm:gap-1 sm:text-xs"
           >
             Ver detalle <ArrowUpRight size={13} aria-hidden />
           </Link>

@@ -6,9 +6,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class AuthException implements Exception {
-  const AuthException(this.message);
+  const AuthException(this.message, {this.code});
 
   final String message;
+
+  /// Código devuelto por Firebase (por ejemplo `EMAIL_NOT_FOUND`).
+  /// Permite distinguir «correo nuevo» de «contraseña incorrecta» al registrar.
+  final String? code;
 
   @override
   String toString() => message;
@@ -47,6 +51,7 @@ class AuthService {
 
   static const _tokenMargin = Duration(seconds: 60);
   static const _signInPath = '/v1/accounts:signInWithPassword';
+  static const _signUpPath = '/v1/accounts:signUp';
   static const _refreshPath = '/v1/token';
   static const _passwordResetPath = '/v1/accounts:sendOobCode';
 
@@ -104,6 +109,35 @@ class AuthService {
       Uri.https(
         'identitytoolkit.googleapis.com',
         _signInPath,
+        {'key': AuthService.firebaseApiKey},
+      ),
+      {
+        'email': normalizedEmail,
+        'password': password,
+        'returnSecureToken': true,
+      },
+    );
+    return _saveTokenResponse(body, isRefresh: false);
+  }
+
+  /// Crea una cuenta nueva con correo y contraseña, guardando los tokens.
+  /// Si el correo ya existe, Firebase devuelve `EMAIL_EXISTS`.
+  Future<String> signUp(String email, String password) async {
+    if (AuthService.firebaseApiKey.isEmpty) {
+      throw const AuthException(
+        'Falta FIREBASE_WEB_API_KEY. Configura la clave pública de Firebase.',
+      );
+    }
+    final normalizedEmail = email.trim();
+    if (normalizedEmail.isEmpty || password.length < 6) {
+      throw const AuthException(
+        'Escribe un correo válido y una contraseña de al menos 6 caracteres.',
+      );
+    }
+    final body = await _post(
+      Uri.https(
+        'identitytoolkit.googleapis.com',
+        _signUpPath,
         {'key': AuthService.firebaseApiKey},
       ),
       {
@@ -244,7 +278,10 @@ class AuthService {
         final code = error is Map
             ? error['message'] as String?
             : decoded['message'] as String?;
-        throw AuthException(_friendlyMessage(code ?? 'ERROR_DE_AUTENTICACION'));
+        throw AuthException(
+          _friendlyMessage(code ?? 'ERROR_DE_AUTENTICACION'),
+          code: code,
+        );
       }
       return decoded;
     } on SocketException {
@@ -295,6 +332,9 @@ class AuthService {
   static String _friendlyMessage(String code) => switch (code) {
         'EMAIL_NOT_FOUND' || 'INVALID_EMAIL' =>
           'No existe una cuenta con ese correo.',
+        'EMAIL_EXISTS' =>
+          'Ya existe una cuenta con ese correo. Usa tu contraseña actual.',
+        'WEAK_PASSWORD' => 'La contraseña debe tener al menos 6 caracteres.',
         'INVALID_PASSWORD' || 'INVALID_LOGIN_CREDENTIALS' =>
           'Correo o contraseña incorrectos.',
         'USER_DISABLED' => 'Esta cuenta está desactivada.',

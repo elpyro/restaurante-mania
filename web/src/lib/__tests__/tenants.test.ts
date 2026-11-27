@@ -4,8 +4,10 @@ import {
   DEFAULT_TENANT_ID,
   isDemoTenant,
   normalizeTenantId,
+  registerTenantDefinition,
   resolveTenantFromRequest,
   resolveTenantId,
+  tenantDefinition,
   tenantFromHost,
   tenantStorageKey,
 } from "../tenants";
@@ -46,10 +48,15 @@ describe("resolución de tenant", () => {
     expect(resolveTenantId({ host: "fuego.localhost:3000" })).toBe("fuego");
   });
 
-  it("ignora tenants desconocidos y hosts sin subdominio", () => {
+  it("acepta IDs dinámicos con el formato seguro y rechaza los inválidos", () => {
     expect(normalizeTenantId("FUEGO")).toBe("fuego");
-    expect(normalizeTenantId("inexistente")).toBeNull();
-    expect(resolveTenantId({ query: "inexistente", header: "fuego" })).toBe("fuego");
+    expect(normalizeTenantId("casa-nueva")).toBe("casa-nueva");
+    expect(normalizeTenantId("Mi Tienda!")).toBeNull();
+    expect(normalizeTenantId("-fuego")).toBeNull();
+    expect(normalizeTenantId("")).toBeNull();
+    expect(resolveTenantId({ query: "casa-nueva", header: "fuego" })).toBe(
+      "casa-nueva",
+    );
     expect(tenantFromHost("localhost:3000")).toBeNull();
     expect(tenantFromHost("127.0.0.1")).toBeNull();
     expect(tenantFromHost("proyecto-restaurante.com")).toBeNull();
@@ -79,6 +86,25 @@ describe("resolución de tenant", () => {
         }),
       ),
     ).toBe("verde");
+  });
+});
+
+describe("definiciones dinámicas", () => {
+  it("deriva una definición estable de un ID nuevo", () => {
+    const definition = tenantDefinition("casa-nueva");
+    expect(definition.id).toBe("casa-nueva");
+    expect(definition.preset).toBe("custom");
+    expect(definition.orderPrefix).toBe("CAS");
+  });
+
+  it("usa el nombre registrado cuando está disponible", () => {
+    registerTenantDefinition({
+      id: "otra-casa",
+      label: "Otra Casa",
+      orderPrefix: "OC",
+    });
+    expect(tenantDefinition("otra-casa").label).toBe("Otra Casa");
+    expect(tenantDefinition("otra-casa").orderPrefix).toBe("OC");
   });
 });
 

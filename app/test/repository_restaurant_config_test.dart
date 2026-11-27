@@ -149,6 +149,7 @@ void main() {
         'facebook': 'https://facebook.com/mania',
       },
       'gpsUrl': 'https://maps.google.com/?q=medellin',
+      'googlePlaceUrl': isNull,
     });
     expect(patches.single.body['slogan'], custom.slogan);
     expect(repository.restaurantAppearance, custom);
@@ -224,6 +225,7 @@ void main() {
         'facebook': isNull,
       },
       'gpsUrl': isNull,
+      'googlePlaceUrl': isNull,
     });
     expect(repository.restaurantAppearance, offlineChange);
     expect(repository.hasPendingRestaurantConfig, isFalse);

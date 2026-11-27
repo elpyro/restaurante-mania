@@ -2,10 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/data/repository.dart';
 import '../../core/data/seed_data.dart';
-import '../../core/data/tenant.dart';
+import 'create_restaurant_screen.dart';
 import '../../core/models/role.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/theme/app_theme.dart';
@@ -18,16 +19,48 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  static const _lastEmailKey = 'rm_last_email_v1';
+
   final _emailController = TextEditingController(text: 'admin@restaurante.com');
   final _passwordController = TextEditingController(
     text: AuthService.firebaseApiKey.isEmpty ? SeedData.demoPassword : '',
   );
   bool _obscure = true;
   bool _loading = false;
-  bool _switchingTenant = false;
   String? _error;
 
   bool get _usesFirebase => AuthService.firebaseApiKey.isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    // El correo es una preferencia global (no por tenant): al volver al login
+    // se muestra el último valor que el usuario escribió.
+    unawaited(_restoreLastEmail());
+  }
+
+  Future<void> _restoreLastEmail() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final last = prefs.getString(_lastEmailKey)?.trim() ?? '';
+      if (last.isNotEmpty && mounted) {
+        _emailController.text = last;
+      }
+    } catch (_) {
+      // Preferencias no disponibles: se conserva el valor inicial.
+    }
+  }
+
+  Future<void> _rememberEmail() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_lastEmailKey, email);
+    } catch (_) {
+      // Best-effort: no bloquear el login si no se puede persistir.
+    }
+  }
 
   @override
   void dispose() {
@@ -38,16 +71,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _submit(RestaurantRepository repository) async {
     if (_loading) return;
+    unawaited(_rememberEmail());
     setState(() {
       _error = null;
       _loading = true;
     });
     try {
       if (_usesFirebase) {
-        await repository.loginWithFirebase(
-          _emailController.text,
-          _passwordController.text,
-        );
+        await _loginFirebase(repository);
         return;
       }
       final ok = repository.login(
@@ -71,93 +102,84 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _switchTenant(
-    RestaurantRepository repository,
-    String tenantId,
-  ) async {
-    if (_switchingTenant || tenantId == repository.tenantId) return;
-    setState(() {
-      _switchingTenant = true;
-      _error = null;
-    });
+  Future<void> _loginFirebase(RestaurantRepository repository) async {
+    final email = _emailController.text;
+    final password = _passwordController.text;
     try {
-      await repository.switchTenant(tenantId);
-    } catch (error) {
-      setState(() => _error = 'No se pudo cambiar de instancia: $error');
-    } finally {
-      if (mounted) {
-        setState(() => _switchingTenant = false);
-      }
+      await repository.loginWithFirebase(email, password);
+    } on TenantSelectionRequiredException catch (e) {
+      final tenantId = await _pickTenant(e.memberships);
+      if (tenantId == null || !mounted) return;
+      await repository.loginWithFirebase(email, password, tenantId: tenantId);
     }
   }
 
-  Widget _tenantSelector(RestaurantRepository repository) {
-    final current = tenants[repository.tenantId] ?? tenants[defaultTenantId]!;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFEDEAE6)),
+  Future<void> _openCreateRestaurant() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => CreateRestaurantScreen(
+          initialEmail: _emailController.text.trim(),
+        ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
+    );
+    if (!mounted) return;
+    // Si el registro terminó con sesión iniciada, AuthGate ya muestra el POS;
+    // recargar el correo por si el usuario lo cambió allí.
+    await _restoreLastEmail();
+  }
+
+  Future<String?> _pickTenant(List<TenantMembership> memberships) async {
+    var selected = memberships.first.tenantId;
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Selecciona la instancia'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(current.emoji, style: const TextStyle(fontSize: 18)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  AuthService.firebaseApiKey.isNotEmpty
-                      ? 'INSTANCIA CON FIREBASE'
-                      : 'INSTANCIA DE LA DEMO',
-                  style: TextStyle(
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.7,
-                    color: Color(0xFFA8A29E),
-                  ),
-                ),
+              const Text(
+                'Tu cuenta pertenece a más de una instancia. Elige cuál quieres abrir.',
+                style: TextStyle(fontSize: 12, color: Color(0xFF78716C)),
               ),
-              if (_switchingTenant)
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                // ignore: deprecated_member_use
+                value: selected,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Instancia',
+                  border: OutlineInputBorder(),
                 ),
+                items: memberships
+                    .map(
+                      (m) => DropdownMenuItem<String>(
+                        value: m.tenantId,
+                        child: Text(
+                          '${m.tenantId} (${m.role})',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => selected = value);
+                },
+              ),
             ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            current.description,
-            style: const TextStyle(fontSize: 11, color: Color(0xFF78716C)),
-          ),
-          const SizedBox(height: 2),
-          DropdownButton<String>(
-            value: repository.tenantId,
-            isExpanded: true,
-            isDense: true,
-            underline: const SizedBox.shrink(),
-            items: [
-              for (final tenant in tenants.values)
-                DropdownMenuItem<String>(
-                  value: tenant.id,
-                  child: Text(
-                    '${tenant.emoji} ${tenant.label}',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-            ],
-            onChanged: _switchingTenant
-                ? null
-                : (value) {
-                    if (value != null) {
-                      unawaited(_switchTenant(repository, value));
-                    }
-                  },
-          ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(selected),
+              child: const Text('Abrir'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -190,12 +212,25 @@ class _LoginScreenState extends State<LoginScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Container(
+                          width: double.infinity,
                           padding: const EdgeInsets.all(10),
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.18),
+                            color: Colors.white,
                             borderRadius: BorderRadius.circular(14),
                           ),
-                          child: const Text('🍽️', style: TextStyle(fontSize: 26)),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.asset(
+                              'assets/images/login-logo.png',
+                              height: 96,
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, _, _) => const Icon(
+                                Icons.restaurant_rounded,
+                                size: 40,
+                                color: AppTheme.brandDark,
+                              ),
+                            ),
+                          ),
                         ),
                         const SizedBox(height: 16),
                         const Text(
@@ -220,8 +255,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _tenantSelector(repository),
-                  const SizedBox(height: 14),
                   Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
@@ -308,6 +341,17 @@ class _LoginScreenState extends State<LoginScreen> {
                                     ),
                               icon: const Icon(Icons.help_outline_rounded, size: 15),
                               label: const Text('Recuperar contraseña'),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              onPressed: _loading
+                                  ? null
+                                  : () => unawaited(_openCreateRestaurant()),
+                              icon: const Icon(Icons.add_business_outlined, size: 15),
+                              label: const Text('Crear restaurante'),
                             ),
                           ),
                         ],

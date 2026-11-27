@@ -2,13 +2,16 @@ import 'dart:convert';
 
 /// Estilo visual publicado en la web pública.
 ///
-/// El `preset` viaja como texto (`mania`, `fuego`, `verde`, `noche`, `custom`)
+/// El `preset` viaja como texto (`mania`, `fuego`, `verde`, `noche`, `custom`, etc.)
 /// para que la app y la web compartan exactamente el mismo contrato.
 enum AppearancePreset {
   mania,
   fuego,
   verde,
   noche,
+  tierra,
+  oceano,
+  uva,
   custom;
 
   static AppearancePreset fromName(Object? value) {
@@ -68,6 +71,7 @@ class RestaurantAppearance {
     this.tiktokUrl,
     this.facebookUrl,
     this.gpsUrl,
+    this.googlePlaceUrl,
   });
 
   /// Textos actualmente visibles en la portada de la web.
@@ -83,6 +87,20 @@ class RestaurantAppearance {
     preset: AppearancePreset.mania,
   );
 
+  /// Textos neutros para una instancia recién creada.
+  static const generic = RestaurantAppearance(
+    slogan: 'Comida lista para compartir, todos los días.',
+    heroTitle: 'Tu próxima comida empieza aquí.',
+    heroDescription:
+        'Explora el menú, elige tu platillo favorito y recíbelo en la mesa o en la puerta. '
+        'Cada pedido se prepara al momento.',
+    heroBadge: '🍽️ Menú para todos',
+    ctaTitle: '¿Listo para pedir?',
+    ctaDescription:
+        'Elige tus platillos, confirma tu pedido y nosotros nos encargamos del resto.',
+    preset: AppearancePreset.tierra,
+  );
+
   // Iguales a los límites que valida la web antes de publicar en Firestore.
   static const sloganMaxLength = 160;
   static const heroTitleMaxLength = 120;
@@ -92,6 +110,7 @@ class RestaurantAppearance {
   static const ctaDescriptionMaxLength = 300;
   static const socialUrlMaxLength = 300;
   static const gpsUrlMaxLength = 500;
+  static const googlePlaceUrlMaxLength = 500;
 
   final String slogan;
   final String heroTitle;
@@ -107,6 +126,7 @@ class RestaurantAppearance {
   final String? tiktokUrl;
   final String? facebookUrl;
   final String? gpsUrl;
+  final String? googlePlaceUrl;
 
   RestaurantAppearance copyWith({
     String? slogan,
@@ -129,6 +149,8 @@ class RestaurantAppearance {
     bool clearFacebookUrl = false,
     String? gpsUrl,
     bool clearGpsUrl = false,
+    String? googlePlaceUrl,
+    bool clearGooglePlaceUrl = false,
   }) {
     return RestaurantAppearance(
       slogan: slogan ?? this.slogan,
@@ -146,6 +168,8 @@ class RestaurantAppearance {
       tiktokUrl: clearTiktokUrl ? null : tiktokUrl ?? this.tiktokUrl,
       facebookUrl: clearFacebookUrl ? null : facebookUrl ?? this.facebookUrl,
       gpsUrl: clearGpsUrl ? null : gpsUrl ?? this.gpsUrl,
+      googlePlaceUrl:
+          clearGooglePlaceUrl ? null : googlePlaceUrl ?? this.googlePlaceUrl,
     );
   }
 
@@ -170,6 +194,7 @@ class RestaurantAppearance {
             'facebook': cleanPublishedUrl(facebookUrl),
           },
           'gpsUrl': cleanPublishedUrl(gpsUrl),
+          'googlePlaceUrl': cleanPublishedUrl(googlePlaceUrl),
         },
       };
 
@@ -229,6 +254,7 @@ class RestaurantAppearance {
       tiktokUrl: socialUrl('tiktok'),
       facebookUrl: socialUrl('facebook'),
       gpsUrl: asset('gpsUrl'),
+      googlePlaceUrl: asset('googlePlaceUrl'),
     );
   }
 
@@ -266,6 +292,7 @@ class RestaurantAppearance {
           tiktokUrl == other.tiktokUrl &&
           facebookUrl == other.facebookUrl &&
           gpsUrl == other.gpsUrl &&
+          googlePlaceUrl == other.googlePlaceUrl &&
           jsonEncode(customColors) == jsonEncode(other.customColors);
 
   @override
@@ -283,6 +310,7 @@ class RestaurantAppearance {
         tiktokUrl,
         facebookUrl,
         gpsUrl,
+        googlePlaceUrl,
         jsonEncode(customColors),
       );
 }

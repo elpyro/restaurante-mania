@@ -10,6 +10,7 @@ import {
   MessageCircle,
   ReceiptText,
   Search,
+  Star,
   Wallet,
 } from "lucide-react";
 import { formatCOP, formatDateTime } from "@/lib/format";
@@ -55,9 +56,10 @@ interface Props {
   id: string;
   whatsapp: string;
   restaurantName: string;
+  googlePlaceUrl?: string | null;
 }
 
-export function OrderConfirmation({ id, whatsapp, restaurantName }: Props) {
+export function OrderConfirmation({ id, whatsapp, restaurantName, googlePlaceUrl }: Props) {
   const [tenantId, setTenantId] = useState(DEFAULT_TENANT_ID);
   const [order, setOrder] = useState<Order | null>(null);
   useEffect(() => { setTenantId(getClientTenantId()); }, []);
@@ -223,6 +225,27 @@ export function OrderConfirmation({ id, whatsapp, restaurantName }: Props) {
           <strong>{ORDER_STATUS_LABELS[order.status]}</strong>.
         </p>
       </section>
+
+      {googlePlaceUrl ? (
+        <section className="surface-card flex flex-col items-start gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="inline-flex items-center gap-2 font-display text-lg font-bold text-ink">
+              <Star size={17} className="text-brand" aria-hidden /> Mientras esperas
+            </h3>
+            <p className="mt-1 text-sm text-ink-muted">
+              ¿Te gusta nuestro servicio? Puedes calificar nuestro restaurante en Google.
+            </p>
+          </div>
+          <a
+            href={googlePlaceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-primary shrink-0"
+          >
+            <Star size={16} aria-hidden /> Calificar en Google
+          </a>
+        </section>
+      ) : null}
 
       <div className="grid gap-6 md:grid-cols-2">
         <section className="surface-card p-5">

@@ -50,11 +50,92 @@ const _presetStyles = <AppearancePreset, _PresetStyle>{
     description: 'Azul profundo con acentos dorados',
     colors: [Color(0xFF0F172A), Color(0xFF334155), Color(0xFFFBBF24)],
   ),
+  AppearancePreset.tierra: _PresetStyle(
+    label: 'Tierra',
+    description: 'Tonos cálidos y artesanales',
+    colors: [Color(0xFF9A5429), Color(0xFF78716C), Color(0xFFFBF7F2)],
+  ),
+  AppearancePreset.oceano: _PresetStyle(
+    label: 'Océano',
+    description: 'Azul verdoso fresco y ligero',
+    colors: [Color(0xFF009EA1), Color(0xFF0284C7), Color(0xFFF4FBFB)],
+  ),
+  AppearancePreset.uva: _PresetStyle(
+    label: 'Uva',
+    description: 'Morado elegante con acento rosa',
+    colors: [Color(0xFF9333EA), Color(0xFFDB2777), Color(0xFFFBF7FF)],
+  ),
   AppearancePreset.custom: _PresetStyle(
     label: 'Propio',
-    description: ' Tus colores, guardados desde la app',
+    description: 'Tus colores, guardados desde la app',
     colors: [Color(0xFFFE7F12), Color(0xFF059669), Color(0xFFFFFAF5)],
   ),
+};
+
+const _presetCustomColors = <AppearancePreset, Map<String, String>>{
+  AppearancePreset.mania: {
+    'brand': '#fe7f12',
+    'accent': '#059669',
+    'surface': '#fffaf5',
+    'ink': '#1c1917',
+    'heroFrom': '#fff8ed',
+    'heroTo': '#ecfdf5',
+    'footer': '#1c1917',
+  },
+  AppearancePreset.fuego: {
+    'brand': '#e11d48',
+    'accent': '#ea580c',
+    'surface': '#fff8f5',
+    'ink': '#291312',
+    'heroFrom': '#fff1f2',
+    'heroTo': '#fff7ed',
+    'footer': '#2a100d',
+  },
+  AppearancePreset.verde: {
+    'brand': '#16a34a',
+    'accent': '#65a30d',
+    'surface': '#f8fcf7',
+    'ink': '#10281c',
+    'heroFrom': '#f0fdf4',
+    'heroTo': '#f7fee7',
+    'footer': '#102319',
+  },
+  AppearancePreset.noche: {
+    'brand': '#6366f1',
+    'accent': '#22d3ee',
+    'surface': '#0b1120',
+    'ink': '#f8fafc',
+    'heroFrom': '#111827',
+    'heroTo': '#0f172a',
+    'footer': '#070b14',
+  },
+  AppearancePreset.tierra: {
+    'brand': '#b86a35',
+    'accent': '#78716c',
+    'surface': '#fbf7f2',
+    'ink': '#2b2118',
+    'heroFrom': '#fdf8f3',
+    'heroTo': '#f5f5f4',
+    'footer': '#2b2118',
+  },
+  AppearancePreset.oceano: {
+    'brand': '#05c7c7',
+    'accent': '#0284c7',
+    'surface': '#f4fbfb',
+    'ink': '#132a2e',
+    'heroFrom': '#effefd',
+    'heroTo': '#e0f2fe',
+    'footer': '#132a2e',
+  },
+  AppearancePreset.uva: {
+    'brand': '#a855f7',
+    'accent': '#db2777',
+    'surface': '#fbf7ff',
+    'ink': '#24162f',
+    'heroFrom': '#faf5ff',
+    'heroTo': '#fce7f3',
+    'footer': '#24162f',
+  },
 };
 
 Color _hexColor(String value) {
@@ -91,6 +172,7 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
   final _tiktokController = TextEditingController();
   final _facebookController = TextEditingController();
   final _gpsController = TextEditingController();
+  final _googlePlaceController = TextEditingController();
   AppearancePreset _preset = AppearancePreset.mania;
   String? _bannerUrl;
   String? _logoUrl;
@@ -116,6 +198,7 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
     _tiktokController.dispose();
     _facebookController.dispose();
     _gpsController.dispose();
+    _googlePlaceController.dispose();
     super.dispose();
   }
 
@@ -130,6 +213,7 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
     _tiktokController.text = appearance.tiktokUrl ?? '';
     _facebookController.text = appearance.facebookUrl ?? '';
     _gpsController.text = appearance.gpsUrl ?? '';
+    _googlePlaceController.text = appearance.googlePlaceUrl ?? '';
     _preset = appearance.preset;
     _bannerUrl = appearance.bannerUrl;
     _logoUrl = appearance.logoUrl;
@@ -152,6 +236,7 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
         tiktokUrl: _publishedUrl(_tiktokController),
         facebookUrl: _publishedUrl(_facebookController),
         gpsUrl: _publishedUrl(_gpsController),
+        googlePlaceUrl: _publishedUrl(_googlePlaceController),
       );
 
   @override
@@ -400,6 +485,18 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
               helperText: 'Se publica como enlace «Ver en el mapa».',
             ),
           ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _googlePlaceController,
+            keyboardType: TextInputType.url,
+            maxLength: RestaurantAppearance.googlePlaceUrlMaxLength,
+            decoration: const InputDecoration(
+              labelText: 'Google Place / reseñas',
+              hintText: 'https://g.page/r/...',
+              helperText:
+                  'Si se define, la web mostrará un enlace para calificar el restaurante.',
+            ),
+          ),
           const SizedBox(height: 18),
           SizedBox(
             width: double.infinity,
@@ -542,9 +639,13 @@ class _AppearanceScreenState extends State<AppearanceScreen> {
 
   Future<void> _openColorDialog() async {
     final repository = context.read<RestaurantRepository>();
+    final initialColors = _preset == AppearancePreset.custom
+        ? _customColors
+        : (_presetCustomColors[_preset] ??
+            Map<String, String>.from(defaultCustomColors));
     final colors = await showDialog<Map<String, String>>(
       context: context,
-      builder: (_) => _ColorDialog(colors: _customColors),
+      builder: (_) => _ColorDialog(colors: initialColors),
     );
     if (colors == null) return;
     setState(() {
@@ -859,13 +960,20 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
   static String _toHex(Color color) =>
       '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toLowerCase()}';
 
+  void _setHex(String value) {
+    _hex.value = TextEditingValue(
+      text: value,
+      selection: TextSelection.collapsed(offset: value.length),
+    );
+  }
+
   void _applyHex(String value) {
     final cleaned = value.trim().replaceFirst('#', '');
     if (!RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(cleaned)) return;
     final color = Color(int.parse('FF$cleaned', radix: 16));
     setState(() {
       _hsv = HSVColor.fromColor(color);
-      _hex.text = _toHex(color);
+      _setHex(_toHex(color));
     });
   }
 
@@ -874,7 +982,7 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
     final value = (1 - position.dy / size.height).clamp(0.0, 1.0);
     setState(() {
       _hsv = _hsv.withSaturation(saturation).withValue(value);
-      _hex.text = _toHex(_hsv.toColor());
+      _setHex(_toHex(_hsv.toColor()));
     });
   }
 
@@ -938,7 +1046,7 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
               activeColor: hueColor,
               onChanged: (hue) => setState(() {
                 _hsv = _hsv.withHue(hue);
-                _hex.text = _toHex(_hsv.toColor());
+                _setHex(_toHex(_hsv.toColor()));
               }),
             ),
             TextField(

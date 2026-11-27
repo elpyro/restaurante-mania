@@ -24,6 +24,7 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _index = 0;
+  String _ordersFilter = 'toCollect';
 
   void _navigate(AppTab tab) {
     final destinations = _destinationsFor(
@@ -33,20 +34,31 @@ class _AppShellState extends State<AppShell> {
     if (target >= 0) setState(() => _index = target);
   }
 
+  /// Abre Pedidos aplicando el filtro de la tarjeta tocada en el Inicio.
+  void _openOrders(String filter) {
+    setState(() {
+      _ordersFilter = filter;
+      _navigate(AppTab.orders);
+    });
+  }
+
   List<_Destination> _destinationsFor(UserRole role) {
     final dashboard = _Destination(
       tab: AppTab.dashboard,
       label: 'Inicio',
       icon: Icons.home_outlined,
       selectedIcon: Icons.home_rounded,
-      builder: () => DashboardScreen(onNavigate: _navigate),
+      builder: () => DashboardScreen(
+        onNavigate: _navigate,
+        onOpenOrders: _openOrders,
+      ),
     );
     final orders = _Destination(
       tab: AppTab.orders,
       label: 'Pedidos',
       icon: Icons.receipt_long_outlined,
       selectedIcon: Icons.receipt_long_rounded,
-      builder: () => const OrdersScreen(),
+      builder: () => OrdersScreen(initialFilter: _ordersFilter),
     );
     final tables = _Destination(
       tab: AppTab.tables,
@@ -113,6 +125,14 @@ class _AppShellState extends State<AppShell> {
                 fontSize: 10.5,
                 fontWeight: FontWeight.w500,
                 color: Color(0xFF78716C),
+              ),
+            ),
+            Text(
+              'Restaurante: ${repository.settings.name}',
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFFA8A29E),
               ),
             ),
           ],
@@ -237,9 +257,11 @@ class _AppShellState extends State<AppShell> {
         // NavigationBar no admite -1; mientras el admin ve «Mesas» (sin icono
         // en la barra) se marca «Inicio», que es desde donde se accede.
         selectedIndex: navIndex < 0 ? 0 : navIndex,
-        onDestinationSelected: (value) => setState(
-          () => _index = destinations.indexOf(navDestinations[value]),
-        ),
+        onDestinationSelected: (value) => setState(() {
+          _index = destinations.indexOf(navDestinations[value]);
+          // Al entrar desde la barra inferior se usa el filtro por defecto.
+          _ordersFilter = 'toCollect';
+        }),
         destinations: navDestinations
             .map(
               (item) => NavigationDestination(

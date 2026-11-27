@@ -22,6 +22,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _address;
   late final TextEditingController _city;
   late final TextEditingController _currency;
+  late final TextEditingController _tableCount;
   late final TextEditingController _serverUrl;
   late final TextEditingController _aiDescription;
   late final TextEditingController _aiKeywords;
@@ -52,6 +53,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _address = TextEditingController(text: settings.address);
     _city = TextEditingController(text: settings.city);
     _currency = TextEditingController(text: settings.currency);
+    _tableCount = TextEditingController(text: '${settings.tableCount}');
     _serverUrl = TextEditingController(text: repository.serverUrl);
     _aiDescription = TextEditingController(text: settings.aiDescription);
     _aiKeywords = TextEditingController(text: settings.aiKeywords);
@@ -77,6 +79,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _address.dispose();
     _city.dispose();
     _currency.dispose();
+    _tableCount.dispose();
     _serverUrl.dispose();
     _aiDescription.dispose();
     _aiKeywords.dispose();
@@ -115,6 +118,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() => _error = 'La moneda debe tener 3 letras, por ejemplo COP.');
       return;
     }
+    final parsedTableCount = int.tryParse(_tableCount.text.trim());
+    if (parsedTableCount == null ||
+        parsedTableCount < 0 ||
+        parsedTableCount > RestaurantSettings.maxTableCount) {
+      setState(() => _error = 'Cantidad de mesas: escribe un número entre 0 y '
+          '${RestaurantSettings.maxTableCount}.');
+      return;
+    }
     if (_paymentMethods.isEmpty) {
       setState(() => _error = 'Activa al menos un método de pago.');
       return;
@@ -149,6 +160,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       currency: _currency.text.trim().toUpperCase(),
       isOpen: _isOpen,
       showOrderTypeOptions: _showOrderTypeOptions,
+      tableCount: parsedTableCount,
       deliveryOptions: Map<String, bool>.from(_deliveryOptions),
       paymentMethods: List<String>.from(_paymentMethods),
       paymentMethodLabels: labels,
@@ -275,6 +287,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               labelText: 'Moneda',
               hintText: 'COP',
               helperText: 'Código ISO de 3 letras',
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _tableCount,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Cantidad de mesas',
+              helperText:
+                  'Mesas con las que opera el restaurante (0 = sin mesas).',
             ),
           ),
           const SizedBox(height: 10),

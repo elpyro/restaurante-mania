@@ -40,6 +40,7 @@ class RestaurantSettings {
     this.countryCode = '+57',
     this.phone = '300 123 4567',
     this.showOrderTypeOptions = true,
+    this.tableCount = 0,
     this.deliveryOptions = const {
       'pickup': true,
       'delivery': true,
@@ -67,6 +68,8 @@ class RestaurantSettings {
   final String countryCode;
   final String phone;
   final bool showOrderTypeOptions;
+  /// Cantidad de mesas con las que opera el restaurante. `0` = sin mesas.
+  final int tableCount;
   final Map<String, bool> deliveryOptions;
   final List<String> paymentMethods;
   final Map<String, String> paymentMethodLabels;
@@ -91,6 +94,31 @@ class RestaurantSettings {
     currency: 'COP',
     countryCode: '+57',
     phone: '300 123 4567',
+  );
+
+  /// Plantilla inicial de un restaurante nuevo. Sin ciudad, país ni platos
+  /// típicos: el dueño la reemplaza desde el POS o el panel web.
+  static const generic = RestaurantSettings(
+    name: 'Restaurante de ejemplo',
+    isOpen: true,
+    hours: 'Lun–Sáb 11:30–20:30',
+    whatsapp: '+000000000000',
+    address: 'Dirección por definir',
+    city: 'Ciudad por definir',
+    currency: 'USD',
+    countryCode: '+00',
+    phone: '000 000 0000',
+    paymentMethods: ['cash', 'card'],
+    paymentMethodLabels: {
+      'cash': 'Efectivo',
+      'card': 'Tarjeta',
+    },
+    aiDescription:
+        'Restaurante con pedidos en línea, menú actualizado y atención cercana.',
+    aiKeywords: 'restaurante, menú, pedidos en línea, comida',
+    aiServiceArea: 'Zona de atención por definir',
+    aiHighlights:
+        'Platillos preparados al momento, pedidos sencillos, servicio amable',
   );
 
   static const defaultTimeZone = 'America/Bogota';
@@ -165,6 +193,19 @@ class RestaurantSettings {
     if (phone.isEmpty) phone = defaults.phone;
     if (!RegExp(r'^\+\d{1,4}$').hasMatch(code)) code = '+57';
     return {'countryCode': code, 'phone': phone};
+  }
+
+  /// Cantidad de mesas válida para el POS (0 = sin mesas).
+  static const maxTableCount = 200;
+
+  static int cleanTableCount(Object? value) {
+    if (value is int) return value.clamp(0, maxTableCount);
+    if (value is num) return value.round().clamp(0, maxTableCount);
+    if (value is String) {
+      final parsed = int.tryParse(value.trim());
+      if (parsed != null) return parsed.clamp(0, maxTableCount);
+    }
+    return 0;
   }
 
   static bool isValidTimeOfDay(String value) =>
@@ -247,6 +288,7 @@ class RestaurantSettings {
     String? countryCode,
     String? phone,
     bool? showOrderTypeOptions,
+    int? tableCount,
     Map<String, bool>? deliveryOptions,
     List<String>? paymentMethods,
     Map<String, String>? paymentMethodLabels,
@@ -271,6 +313,7 @@ class RestaurantSettings {
       phone: phone ?? this.phone,
       showOrderTypeOptions:
           showOrderTypeOptions ?? this.showOrderTypeOptions,
+      tableCount: tableCount ?? this.tableCount,
       deliveryOptions: deliveryOptions ?? this.deliveryOptions,
       paymentMethods: paymentMethods ?? this.paymentMethods,
       paymentMethodLabels: paymentMethodLabels ?? this.paymentMethodLabels,
@@ -303,6 +346,7 @@ class RestaurantSettings {
         'countryCode': countryCode,
         'phone': phone,
         'showOrderTypeOptions': showOrderTypeOptions,
+        'tableCount': tableCount,
         'deliveryOptions': deliveryOptions,
         'paymentMethods': paymentMethods,
         'paymentMethodLabels': paymentMethodLabels,
@@ -329,6 +373,7 @@ class RestaurantSettings {
         'phone': phone,
         'currency': currency,
         'showOrderTypeOptions': showOrderTypeOptions,
+        'tableCount': tableCount,
         'deliveryOptions': deliveryOptions,
         'paymentMethods': paymentMethods,
         'paymentMethodLabels': paymentMethodLabels,
@@ -392,6 +437,7 @@ class RestaurantSettings {
       countryCode: countryCode,
       phone: phone,
       showOrderTypeOptions: json['showOrderTypeOptions'] as bool? ?? true,
+      tableCount: cleanTableCount(json['tableCount']),
       deliveryOptions: delivery.isEmpty ? defaults.deliveryOptions : delivery,
       paymentMethods: methods.isEmpty
           ? List<String>.from(defaults.paymentMethods)
@@ -482,6 +528,11 @@ class RestaurantSettings {
       showOrderTypeOptions: json['showOrderTypeOptions'] is bool
           ? json['showOrderTypeOptions'] as bool
           : null,
+      // La web no gestiona mesas, pero el documento de configuración sí
+      // guarda la cantidad para que el POS las cree al sincronizar.
+      tableCount: json.containsKey('tableCount')
+          ? cleanTableCount(json['tableCount'])
+          : null,
       deliveryOptions: delivery.isEmpty ? null : delivery,
       paymentMethods: methods.isEmpty ? null : methods,
       paymentMethodLabels: labels,
@@ -514,6 +565,7 @@ class RestaurantSettings {
           countryCode == other.countryCode &&
           phone == other.phone &&
           showOrderTypeOptions == other.showOrderTypeOptions &&
+          tableCount == other.tableCount &&
           jsonEncode(deliveryOptions) == jsonEncode(other.deliveryOptions) &&
           jsonEncode(paymentMethods) == jsonEncode(other.paymentMethods) &&
           jsonEncode(paymentMethodLabels) ==
@@ -539,6 +591,7 @@ class RestaurantSettings {
         countryCode,
         phone,
         showOrderTypeOptions,
+        tableCount,
         jsonEncode(deliveryOptions),
         jsonEncode(paymentMethods),
         jsonEncode(paymentMethodLabels),

@@ -4,6 +4,14 @@ rules_version = '2';
 // REVERTIR antes de producción real.
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Índice global de usuarios (colección raíz, junto a `tenants`).
+    // Se necesita lectura/anulación desde la APK para resolver el tenant en
+    // el login sin desplegable, y escritura al crear/editar/borrar usuarios.
+    match /all_user/{email} {
+      allow read, write: if true;
+    }
+
+    // TEMPORAL (DEBUG): el resto sigue abierto mientras se valida la sync.
     match /{document=**} {
       allow read, write: if true;
     }

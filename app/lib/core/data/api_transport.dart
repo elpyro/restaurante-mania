@@ -153,6 +153,9 @@ class FirestoreTransport implements ApiTransport {
     defaultValue: 'restaurante-mania-e47a0',
   );
 
+  /// Proyecto usado por el repositorio al crear instancias nuevas.
+  static String get defaultProjectId => _defaultProjectId;
+
   /// Clave pública de Firebase Web (no es un secreto).
   static String get _apiKey => AuthService.firebaseApiKey;
 
@@ -167,8 +170,10 @@ class FirestoreTransport implements ApiTransport {
     );
   }
 
-  String get _base =>
-      'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/tenants/${Uri.encodeComponent(tenantId)}';
+  String get _documentsBase =>
+      'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents';
+
+  String get _base => '$_documentsBase/tenants/${Uri.encodeComponent(tenantId)}';
 
   @override
   Future<ApiResponse> send(
@@ -221,8 +226,9 @@ class FirestoreTransport implements ApiTransport {
       parameters: route.queryParameters,
       maskPaths: maskPaths,
     );
+    final base = route.root ? _documentsBase : _base;
     final uri = Uri.parse(
-      '$_base/${route.collection}${route.id == null ? '' : '/${Uri.encodeComponent(route.id!)}'}',
+      '$base/${route.collection}${route.id == null ? '' : '/${Uri.encodeComponent(route.id!)}'}',
     ).replace(query: queryString.isEmpty ? null : queryString);
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
     try {
@@ -401,6 +407,20 @@ class FirestoreTransport implements ApiTransport {
   }
 
   _Route? _resolve(String path, String method, Map<String, String> query) {
+    // Registro global de instancias (raíz de Firestore, fuera de un tenant).
+    if (path == '/api/tenants') {
+      if (method == 'GET') return _Route.list('tenants', 'tenants', root: true);
+    }
+    final tenantMatch = RegExp(r'^/api/tenants/([^/]+)$').firstMatch(path);
+    if (tenantMatch != null) {
+      final id = Uri.decodeComponent(tenantMatch.group(1)!);
+      if (method == 'GET') {
+        return _Route.get('tenants', id, 'tenant', root: true);
+      }
+      if (method == 'PATCH' || method == 'POST') {
+        return _Route.patch('tenants', id, 'tenant', root: true);
+      }
+    }
     if (path == '/api/users') {
       if (method == 'GET') return _Route.list('users', 'users');
       if (method == 'POST') {
@@ -413,6 +433,20 @@ class FirestoreTransport implements ApiTransport {
     final userMatch = RegExp(r'^/api/users/([^/]+)$').firstMatch(path);
     if (userMatch != null && method == 'GET') {
       return _Route.get('users', Uri.decodeComponent(userMatch.group(1)!), 'user');
+    }
+    if (path == '/api/all-users') {
+      if (method == 'POST') {
+        return _Route.create('all_user', 'allUser', id: query['id'], root: true);
+      }
+    }
+    final allUserMatch = RegExp(r'^/api/all-users/([^/]+)$').firstMatch(path);
+    if (allUserMatch != null) {
+      final id = Uri.decodeComponent(allUserMatch.group(1)!);
+      if (method == 'GET') return _Route.get('all_user', id, 'allUser', root: true);
+      if (method == 'PATCH' || method == 'POST') {
+        return _Route.patch('all_user', id, 'allUser', root: true);
+      }
+      if (method == 'DELETE') return _Route.delete('all_user', id, root: true);
     }
     if (path == '/api/orders') {
       if (method == 'GET') return _Route.list('orders', 'orders');
@@ -447,6 +481,15 @@ class FirestoreTransport implements ApiTransport {
       // Ruta interna del modo directo (la web ya incluye las categorías en
       // `/api/menu`).
       return _Route.list('categories', 'categories');
+    }
+    final categoryMatch =
+        RegExp(r'^/api/menu/categories/([^/]+)$').firstMatch(path);
+    if (categoryMatch != null) {
+      final id = Uri.decodeComponent(categoryMatch.group(1)!);
+      if (method == 'PATCH' || method == 'POST') {
+        return _Route.patch('categories', id, 'category');
+      }
+      if (method == 'DELETE') return _Route.delete('categories', id);
     }
     if (path == '/api/menu/status' && method == 'GET') {
       return _Route.list('menuItems', 'items');
@@ -497,6 +540,7 @@ class _Route {
     required this.collection,
     this.id,
     this.list = false,
+    this.root = false,
     this.responseKey = 'items',
     this.singleKey = 'item',
   });
@@ -504,47 +548,53 @@ class _Route {
   /// Parámetros extra de query (actualmente vacío; los `updateMask` se añaden
   /// en `send`, no aquí).
 
-  factory _Route.list(String collection, String key) => _Route._(
+  factory _Route.list(String collection, String key, {bool root = false}) => _Route._(
         verb: 'GET',
         collection: collection,
         list: true,
+        root: root,
         responseKey: key,
       );
 
-  factory _Route.get(String collection, String id, String key) => _Route._(
+  factory _Route.get(String collection, String id, String key, {bool root = false}) => _Route._(
         verb: 'GET',
         collection: collection,
         id: id,
+        root: root,
         singleKey: key,
       );
 
-  factory _Route.create(String collection, String key, {String? id}) => _Route._(
+  factory _Route.create(String collection, String key, {String? id, bool root = false}) => _Route._(
         // Firestore no acepta `documentId` como query param: para conservar el
         // id local (y que reintentos offline sean idempotentes) se usa PATCH
         // sobre la ruta del documento, que crea el documento si no existe.
         verb: id == null ? 'POST' : 'PATCH',
         collection: collection,
         id: id,
+        root: root,
         singleKey: key,
       );
 
-  factory _Route.patch(String collection, String id, String key) => _Route._(
+  factory _Route.patch(String collection, String id, String key, {bool root = false}) => _Route._(
         verb: 'PATCH',
         collection: collection,
         id: id,
+        root: root,
         singleKey: key,
       );
 
-  factory _Route.delete(String collection, String id) => _Route._(
+  factory _Route.delete(String collection, String id, {bool root = false}) => _Route._(
         verb: 'DELETE',
         collection: collection,
         id: id,
+        root: root,
       );
 
   final String verb;
   final String collection;
   final String? id;
   final bool list;
+  final bool root;
   final String responseKey;
   final String singleKey;
   final Map<String, String> queryParameters = const <String, String>{};

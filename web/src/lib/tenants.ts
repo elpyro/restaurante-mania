@@ -70,15 +70,71 @@ export const TENANTS: Record<string, TenantDefinition> = {
 
 export const TENANT_IDS = Object.keys(TENANTS);
 
+/** Instancias fijas: mantienen su comportamiento histórico sin plantilla. */
+export const FIXED_TENANT_IDS: readonly string[] = ["mania", "fuego", "verde"];
+
+export function isFixedTenant(tenantId: string): boolean {
+  return FIXED_TENANT_IDS.includes(tenantId);
+}
+
+/**
+ * Restaurantes creados por el usuario. Arrancan con la plantilla genérica
+ * mientras no tengan configuración/catálogo propio en Firestore.
+ */
+export function isTemplateTenant(tenantId: string): boolean {
+  return isValidTenantId(tenantId) && !isFixedTenant(tenantId);
+}
+
+/**
+ * Formato de los IDs creados desde la APK. Se aceptan también los tres tenants
+ * fijos porque cumplen el mismo patrón.
+ */
+export const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/** Definiciones descubiertas en Firestore (restaurantes creados por el usuario). */
+const DYNAMIC_TENANTS: Record<string, TenantDefinition> = {};
+
+export function isValidTenantId(value: unknown): value is string {
+  return typeof value === "string" && TENANT_ID_PATTERN.test(value);
+}
+
+/** Registra la definición visible de una instancia creada en caliente. */
+export function registerTenantDefinition(
+  definition: Partial<TenantDefinition> & { id: string },
+): void {
+  const id = definition.id.trim().toLowerCase();
+  if (!isValidTenantId(id) || Object.hasOwn(TENANTS, id)) return;
+  const prefix =
+    id.replace(/[^a-z0-9]/g, "").slice(0, 3).toUpperCase() || "RM";
+  DYNAMIC_TENANTS[id] = {
+    id,
+    label: definition.label?.trim() || id,
+    description: definition.description ?? "",
+    preset: definition.preset ?? "custom",
+    city: definition.city ?? "",
+    address: definition.address ?? "",
+    phone: definition.phone ?? "",
+    whatsapp: definition.whatsapp ?? "",
+    hours: definition.hours ?? "",
+    currency: definition.currency ?? "COP",
+    orderPrefix: definition.orderPrefix || prefix,
+  };
+}
+
 export function normalizeTenantId(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const candidate = value.trim().toLowerCase();
   if (!candidate) return null;
-  return Object.hasOwn(TENANTS, candidate) ? candidate : null;
+  // Antes solo se aceptaban los tres tenants fijos. Ahora cualquier ID con
+  // el formato seguro es válido: la configuración se lee de Firestore.
+  return isValidTenantId(candidate) ? candidate : null;
 }
 
+/** Solo los tenants con definición propia (fijos o ya descubiertos). */
 export function isKnownTenant(tenantId: string): boolean {
-  return Object.hasOwn(TENANTS, tenantId);
+  return (
+    Object.hasOwn(TENANTS, tenantId) || Object.hasOwn(DYNAMIC_TENANTS, tenantId)
+  );
 }
 
 /** Compatibilidad: identifica tenants distintos del predeterminado. */
@@ -87,7 +143,14 @@ export function isDemoTenant(tenantId: string): boolean {
 }
 
 export function tenantDefinition(tenantId: string): TenantDefinition {
-  return TENANTS[tenantId] ?? TENANTS[DEFAULT_TENANT_ID]!;
+  const fixed = TENANTS[tenantId];
+  if (fixed) return fixed;
+  const dynamic = DYNAMIC_TENANTS[tenantId];
+  if (dynamic) return dynamic;
+  // Un restaurante nuevo puede resolverse antes de que se lea su config:
+  // derivamos una definición estable desde el ID para no caer en «Manía».
+  registerTenantDefinition({ id: tenantId });
+  return DYNAMIC_TENANTS[tenantId]!;
 }
 
 export function tenantLabel(tenantId: string): string {
@@ -102,8 +165,12 @@ export function tenantFromHost(host: string | null | undefined): string | null {
     return null;
   }
   const parts = hostname.split(".");
-  if (parts.length < 2) return null;
   // Solo subdominio de primer nivel: fuego.ejemplo.com, fuego.localhost.
+  // Un dominio raíz (ejemplo.com) NO es un tenant, aunque su etiqueta cumpla
+  // el formato de ID (antes lo ocultaba la lista fija de tenants).
+  const hasSubdomain =
+    parts.length >= 3 || (parts.length === 2 && parts[1] === "localhost");
+  if (!hasSubdomain) return null;
   return normalizeTenantId(parts[0]);
 }
 

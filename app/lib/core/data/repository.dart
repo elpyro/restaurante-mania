@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart' hide Category;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -98,6 +99,19 @@ List<Ingredient> mergeServerIngredients(
 /// sincronizar. Cuando el dispositivo recupera la conexión, la cola se envía
 /// (en la demo se marca como sincronizada; el adaptador de Firestore puede
 /// conectarse en [syncPendingOrders]).
+class TenantMembership {
+  const TenantMembership({required this.tenantId, required this.role, this.name = '', this.email = ''});
+  final String tenantId;
+  final String role;
+  final String name;
+  final String email;
+}
+
+class TenantSelectionRequiredException implements Exception {
+  TenantSelectionRequiredException(this.memberships);
+  final List<TenantMembership> memberships;
+}
+
 class RestaurantRepository extends ChangeNotifier {
   RestaurantRepository._({
     required TenantPreferences prefs,
@@ -113,6 +127,7 @@ class RestaurantRepository extends ChangeNotifier {
     required List<CustomerRecord> customers,
     required List<WebVisit> webVisits,
     required Map<String, Map<String, dynamic>> pendingMenuStatuses,
+    required Set<String> dirtyMenuItemIds,
     required Map<String, Map<String, dynamic>> pendingIngredientStocks,
     required CashShift activeShift,
     required List<CashShift> closedShifts,
@@ -130,8 +145,10 @@ class RestaurantRepository extends ChangeNotifier {
     required String serverUrl,
     required bool webSyncEnabled,
     required ApiTransport api,
+    required String deviceId,
   }) : _prefs = prefs,
         _api = api,
+        _deviceId = deviceId,
        tenantId = tenantId,
        _connectivity = connectivity,
        _ownsConnectivity = ownsConnectivity,
@@ -144,6 +161,7 @@ class RestaurantRepository extends ChangeNotifier {
        _customers = customers,
        _webVisits = webVisits,
        _pendingMenuStatuses = pendingMenuStatuses,
+       _dirtyMenuItemIds = dirtyMenuItemIds,
        _pendingIngredientStocks = pendingIngredientStocks,
        _activeShift = activeShift,
        _closedShifts = closedShifts,
@@ -163,6 +181,10 @@ class RestaurantRepository extends ChangeNotifier {
     _connectivity.online.addListener(_onConnectivityChanged);
   }
 
+  /// Identificador estable del dispositivo, global (no por tenant): se usa
+  /// para registrar el dispositivo en `all_user` y enviar notificaciones push.
+  static const _kDeviceId = 'rm_device_id_v1';
+
   static const _kCategories = 'rm_categories_v1';
   static const _kItems = 'rm_menu_items_v1';
   static const _kIngredients = 'rm_ingredients_v1';
@@ -177,6 +199,7 @@ class RestaurantRepository extends ChangeNotifier {
   static const _kCustomers = 'rm_customers_v1';
   static const _kWebVisits = 'rm_web_visits_v1';
   static const _kPendingMenuStatuses = 'rm_pending_menu_statuses_v1';
+  static const _kPendingMenuItemPatches = 'rm_pending_menu_item_patches_v1';
   static const _kPendingIngredientStocks = 'rm_pending_ingredient_stocks_v1';
   static const _kActiveCashShift = 'rm_active_cash_shift_v1';
   static const _kCashShifts = 'rm_cash_shifts_v1';
@@ -242,6 +265,11 @@ class RestaurantRepository extends ChangeNotifier {
   final AuthService _authService;
   final bool _webSyncEnabled;
   Map<String, Map<String, dynamic>> _pendingMenuStatuses = {};
+  Set<String> _dirtyMenuItemIds = {};
+  // Solo publicamos estados/favoritos de platos que existen en Firestore.
+  // Sin esto, una semilla local crearía documentos parciales con solo `status`.
+  bool _serverMenuCatalogLoaded = false;
+  Set<String> _serverMenuCatalogIds = <String>{};
   Map<String, Map<String, dynamic>> _pendingIngredientStocks = {};
   Map<String, Map<String, dynamic>> _pendingCashShiftClosures = {};
   CashShift _activeShift;
@@ -252,9 +280,49 @@ class RestaurantRepository extends ChangeNotifier {
   Map<String, bool> _pendingFeaturedItems;
   bool _firebaseSignedIn;
   bool _needsFirebaseReLogin = false;
-  late final ApiTransport _api;
+  // No final: `switchTenant` debe reemplazarlo por el transporte del nuevo
+  // tenant (si no, las lecturas siguen apuntando al tenant anterior).
+  ApiTransport _api;
+  final String _deviceId;
   Future<void>? _syncFuture;
   Timer? _webPollTimer;
+
+  /// Descubre instancias creadas desde la APK (`tenants/{id}` en Firestore)
+  /// antes de resolver el tenant guardado. Sin esto, un restaurante nuevo se
+  /// normalizaría a `mania` al reiniciar la app.
+  static Future<void> _loadTenantRegistry(AuthService auth) async {
+    if (!_directFirestoreByDefault || AuthService.firebaseApiKey.isEmpty) return;
+    try {
+      final transport = FirestoreTransport.fromEnvironment(
+        auth: auth,
+        tenantId: defaultTenantId,
+      );
+      final response = await transport.send(
+        'GET',
+        '/api/tenants',
+        authorized: false,
+      );
+      if (!response.ok) return;
+      final rows = response.json?['tenants'];
+      if (rows is! List) return;
+      for (final row in rows) {
+        if (row is! Map<String, dynamic>) continue;
+        final id = (row['id'] as String?)?.trim().toLowerCase() ?? '';
+        if (!isValidTenantId(id)) continue;
+        final name = (row['name'] as String?)?.trim();
+        registerTenant(
+          TenantDefinition(
+            id: id,
+            label: name?.isNotEmpty == true ? name! : id,
+            description: (row['description'] as String?) ?? '',
+            emoji: (row['emoji'] as String?) ?? '🍽️',
+          ),
+        );
+      }
+    } catch (_) {
+      // Registro en caliente best-effort: los tenants fijos siguen funcionando.
+    }
+  }
 
   static Future<RestaurantRepository> load({
     ConnectivityService? connectivity,
@@ -265,6 +333,14 @@ class RestaurantRepository extends ChangeNotifier {
     ApiTransport? transport,
   }) async {
     final rawPrefs = await SharedPreferences.getInstance();
+    final registryAuth = authService ?? AuthService();
+    await _loadTenantRegistry(registryAuth);
+    var deviceId = rawPrefs.getString(_kDeviceId)?.trim() ?? '';
+    if (deviceId.isEmpty) {
+      deviceId = 'dev-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-'
+          '${Random.secure().nextInt(0x7fffffff).toRadixString(36)}';
+      await rawPrefs.setString(_kDeviceId, deviceId);
+    }
     final activeTenantId = normalizeTenantId(
       tenantId ?? rawPrefs.getString(tenantPreferenceKey),
     );
@@ -274,20 +350,69 @@ class RestaurantRepository extends ChangeNotifier {
       await service.init();
     }
 
+    final serverUrl = _normalizeServerUrl(
+      prefs.getString(_kServerUrl) ?? defaultServerUrl,
+    );
+    final auth = authService ?? AuthService();
+    final api = transport ??
+        (_directFirestoreByDefault && AuthService.firebaseApiKey.isNotEmpty
+            ? FirestoreTransport.fromEnvironment(
+                auth: auth,
+                tenantId: activeTenantId,
+              )
+            : WebApiTransport(
+                baseUrl: serverUrl,
+                auth: auth,
+                tenantId: activeTenantId,
+              ));
+
+    // Un tenant dinámico sin configuración es un restaurante nuevo y usa la
+    // plantilla. Si ya publicó su configuración, conserva el catálogo
+    // histórico que sirve la web (sin sobreescribirlo con la plantilla).
+    final isDynamicTenant = isTemplateTenant(activeTenantId);
+    var hasExistingServerConfig = false;
+    if (isDynamicTenant) {
+      try {
+        final response = await api.send(
+          'GET',
+          '/api/restaurant/config',
+          authorized: false,
+        );
+        if (response.ok) {
+          final decoded = jsonDecode(response.body);
+          final config =
+              decoded is Map<String, dynamic> ? decoded['config'] : null;
+          final name = config is Map<String, dynamic> ? config['name'] : null;
+          hasExistingServerConfig = name is String &&
+              name.trim().isNotEmpty &&
+              name.trim() != SeedData.genericSettings.name;
+        }
+      } catch (_) {
+        // Sin servidor se mantiene la plantilla local del restaurante nuevo.
+      }
+    }
+    final useHistoricalSeed = isDynamicTenant && hasExistingServerConfig;
+    final useGenericSeed = isDynamicTenant && !hasExistingServerConfig;
+
     // En producción (API key Firebase compilada) no sembramos datos demo:
     // el dispositivo arranca limpio y se sincroniza desde Firestore. En
     // debug/tests sin API key se mantiene el seed para el modo demo.
     final seedDemo = AuthService.firebaseApiKey.isEmpty;
-
+    // Los restaurantes creados por el usuario arrancan con la plantilla
+    // genérica, nunca con los datos de Manía. Un tenant dinámico que ya tiene
+    // configuración guardada (casos históricos como `taquitos-mexicanos`)
+    // conserva el catálogo de siempre, igual que hace la web.
     final categories = _readList<Category>(
       prefs,
       _kCategories,
       Category.fromJson,
     );
     final storedItems = _readList<MenuItem>(prefs, _kItems, MenuItem.fromJson);
-    final seedItems = seedDemo
-        ? SeedData.menuItemsFor(activeTenantId)
-        : const <MenuItem>[];
+    final seedItems = useGenericSeed
+        ? SeedData.genericMenuItems()
+        : seedDemo || useHistoricalSeed
+            ? SeedData.menuItemsFor(activeTenantId)
+            : const <MenuItem>[];
     final migratedItems = _migrateRecipeIngredientIds(storedItems);
     final items = storedItems.isEmpty
         ? seedItems
@@ -311,7 +436,11 @@ class RestaurantRepository extends ChangeNotifier {
     );
     final settingsRaw = prefs.getString(_kSettings);
     final settings = settingsRaw == null
-        ? (seedDemo ? SeedData.settings : RestaurantSettings.defaults)
+        ? (useGenericSeed
+            ? SeedData.genericSettings
+            : seedDemo || useHistoricalSeed
+                ? SeedData.settings
+                : RestaurantSettings.defaults)
         : RestaurantSettings.fromJson(
             jsonDecode(settingsRaw) as Map<String, dynamic>,
           );
@@ -321,15 +450,16 @@ class RestaurantRepository extends ChangeNotifier {
         : AppUser.fromJson(jsonDecode(sessionRaw) as Map<String, dynamic>);
     final storedUsers = _readList(prefs, _kUsers, AppUser.fromJson);
     final users = storedUsers.isEmpty
-        ? (seedDemo ? [...SeedData.users] : <AppUser>[])
+        ? (useGenericSeed || useHistoricalSeed
+            ? <AppUser>[]
+            : seedDemo
+                ? [...SeedData.users]
+                : <AppUser>[])
         : storedUsers;
     final lastSyncRaw = prefs.getString(_kLastSync);
     final lastSync = lastSyncRaw == null
         ? null
         : DateTime.tryParse(lastSyncRaw);
-    final serverUrl = _normalizeServerUrl(
-      prefs.getString(_kServerUrl) ?? defaultServerUrl,
-    );
     final customers = _readList(prefs, _kCustomers, CustomerRecord.fromJson);
     final webVisits = _readList(prefs, _kWebVisits, WebVisit.fromJson);
     final pendingMenuStatuses = _readPendingMenuStatuses(prefs);
@@ -346,25 +476,16 @@ class RestaurantRepository extends ChangeNotifier {
     final pendingCashShiftClosures = _readPendingCashShiftClosures(prefs);
     final appearanceRaw = prefs.getString(_kAppearance);
     final appearance = appearanceRaw == null
-        ? RestaurantAppearance.defaults
+        ? (useGenericSeed
+            ? RestaurantAppearance.generic
+            : RestaurantAppearance.defaults)
         : RestaurantAppearance.fromStoredJson(appearanceRaw);
     final pendingConfig = RestaurantAppearance.tryFromStoredJson(
       prefs.getString(_kPendingRestaurantConfig),
     );
     final pendingConfigPatch = _readPendingConfigPatch(prefs);
     final pendingFeaturedItems = _readPendingFeaturedItems(prefs);
-    final auth = authService ?? AuthService();
-    final api = transport ??
-        (_directFirestoreByDefault && AuthService.firebaseApiKey.isNotEmpty
-            ? FirestoreTransport.fromEnvironment(
-                auth: auth,
-                tenantId: activeTenantId,
-              )
-            : WebApiTransport(
-                baseUrl: serverUrl,
-                auth: auth,
-                tenantId: activeTenantId,
-              ));
+    final dirtyMenuItemIds = _readDirtyMenuItemIds(prefs);
     var firebaseSignedIn = false;
     // Sin clave pública no puede existir una sesión Firebase: evita además
     // consultar el almacén seguro en tests y dispositivos sin el plugin.
@@ -390,25 +511,42 @@ class RestaurantRepository extends ChangeNotifier {
       connectivity: service,
       ownsConnectivity: connectivity == null,
       categories: categories.isEmpty
-          ? (seedDemo ? [...SeedData.categories] : <Category>[])
+          ? (useGenericSeed
+              ? [...SeedData.genericCategories]
+              : seedDemo || useHistoricalSeed
+                  ? [...SeedData.categories]
+                  : <Category>[])
           : categories,
       items: items,
       ingredients: ingredients.isEmpty
-          ? (seedDemo ? SeedData.ingredientsFor(activeTenantId) : <Ingredient>[])
+          ? (useGenericSeed
+              ? [...SeedData.genericIngredients]
+              : seedDemo || useHistoricalSeed
+                  ? SeedData.ingredientsFor(activeTenantId)
+                  : <Ingredient>[])
           : ingredients,
       orders: _hydrateOrderExtras(
         orders.isEmpty
-            ? (seedDemo ? SeedData.ordersFor(activeTenantId) : <Order>[])
+            ? (useGenericSeed
+                ? <Order>[]
+                : seedDemo || useHistoricalSeed
+                    ? SeedData.ordersFor(activeTenantId)
+                    : <Order>[])
             : orders,
         seedItems,
       )..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
       inventoryLosses: inventoryLosses,
       tables: tables.isEmpty
-          ? (seedDemo ? SeedData.tables() : <RestaurantTable>[])
+          ? (useGenericSeed
+              ? <RestaurantTable>[]
+              : seedDemo || useHistoricalSeed
+                  ? SeedData.tables()
+                  : <RestaurantTable>[])
           : tables,
       customers: customers,
       webVisits: webVisits,
       pendingMenuStatuses: pendingMenuStatuses,
+      dirtyMenuItemIds: dirtyMenuItemIds,
       pendingIngredientStocks: pendingIngredientStocks,
       activeShift: activeShift,
       closedShifts: closedShifts,
@@ -426,6 +564,7 @@ class RestaurantRepository extends ChangeNotifier {
       serverUrl: serverUrl,
       webSyncEnabled: watchConnectivity,
       api: api,
+      deviceId: deviceId,
     );
 
     repository._rebuildCustomersFromOrders(persist: customers.isEmpty);
@@ -445,6 +584,7 @@ class RestaurantRepository extends ChangeNotifier {
     if (customers.isEmpty) await repository._persistCustomers();
     if (activeShiftRaw == null) await repository._persistActiveShift();
     if (appearanceRaw == null) await repository._persistAppearance();
+    await repository._applyTableCount();
 
     if (watchConnectivity) {
       repository._startWebPolling();
@@ -482,6 +622,7 @@ class RestaurantRepository extends ChangeNotifier {
 
   void _copyTenantStateFrom(RestaurantRepository other) {
     tenantId = other.tenantId;
+    _api = other._api;
     _prefs = other._prefs;
     _categories = other._categories;
     _items = other._items;
@@ -497,6 +638,9 @@ class RestaurantRepository extends ChangeNotifier {
     _lastSync = other._lastSync;
     _serverUrl = other._serverUrl;
     _pendingMenuStatuses = other._pendingMenuStatuses;
+    _dirtyMenuItemIds = other._dirtyMenuItemIds;
+    _serverMenuCatalogLoaded = other._serverMenuCatalogLoaded;
+    _serverMenuCatalogIds = other._serverMenuCatalogIds;
     _pendingIngredientStocks = other._pendingIngredientStocks;
     _pendingCashShiftClosures = other._pendingCashShiftClosures;
     _activeShift = other._activeShift;
@@ -735,6 +879,18 @@ class RestaurantRepository extends ChangeNotifier {
     }
   }
 
+  static Set<String> _readDirtyMenuItemIds(TenantPreferences prefs) {
+    final raw = prefs.getString(_kPendingMenuItemPatches);
+    if (raw == null || raw.isEmpty) return <String>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return <String>{};
+      return decoded.whereType<String>().toSet();
+    } catch (_) {
+      return <String>{};
+    }
+  }
+
   static Map<String, Map<String, dynamic>> _readPendingIngredientStocks(
     TenantPreferences prefs,
   ) {
@@ -846,7 +1002,11 @@ class RestaurantRepository extends ChangeNotifier {
   /// Inicia sesión con Firebase Auth (REST) y resuelve el rol desde
   /// `tenants/{tenantId}/users/{uid}` en Firestore (nunca exige un usuario
   /// local con el mismo correo ni una coincidencia en la lista local).
-  Future<AppUser> loginWithFirebase(String email, String password) async {
+  Future<AppUser> loginWithFirebase(
+    String email,
+    String password, {
+    String? tenantId,
+  }) async {
     if (AuthService.firebaseApiKey.isEmpty) {
       throw StateError(
         'Firebase no está configurado. Define FIREBASE_WEB_API_KEY.',
@@ -856,6 +1016,25 @@ class RestaurantRepository extends ChangeNotifier {
     await _authService.signIn(email, password);
     _firebaseSignedIn = true;
     _needsFirebaseReLogin = false;
+
+    // Resolver tenant desde índice global all_user antes de buscar el perfil.
+    if (tenantId != null && tenantId.isNotEmpty && tenantId != this.tenantId) {
+      await switchTenant(tenantId);
+    }
+    if (tenantId == null || tenantId.isEmpty) {
+      final memberships = await _resolveAllUserMemberships(normalized);
+      if (memberships.length == 1) {
+        final target = memberships.first.tenantId;
+        if (target != this.tenantId) {
+          await switchTenant(target);
+        }
+      } else if (memberships.length > 1) {
+        await _authService.logout();
+        _firebaseSignedIn = false;
+        throw TenantSelectionRequiredException(memberships);
+      }
+      // Si 0 memberships, fallback al comportamiento anterior (tenant actual).
+    }
 
     // 1) Rol real desde el documento del tenant (fuente de verdad).
     AppUser? resolved;
@@ -882,8 +1061,8 @@ class RestaurantRepository extends ChangeNotifier {
       await _authService.logout();
       _firebaseSignedIn = false;
       throw ArgumentError(
-        'Tu cuenta no tiene un rol asignado en la instancia «$tenantId». '
-        'Un administrador debe crearla en tenants/$tenantId/users.',
+        'Tu cuenta no tiene un rol asignado en la instancia «${this.tenantId}». '
+        'Un administrador debe crearla en tenants/${this.tenantId}/users.',
       );
     }
 
@@ -891,12 +1070,358 @@ class RestaurantRepository extends ChangeNotifier {
     await _prefs.setString(_kSession, jsonEncode(_currentUser!.toJson()));
     notifyListeners();
 
+    // El índice global ya existe (memberships), así que podemos anotar el
+    // dispositivo que abre sesión para futuras notificaciones push.
+    await registerDeviceId(email: normalized);
+
     if (_webSyncEnabled && isOnline) {
       await _flushPendingRestaurantConfig();
       await pullServerRestaurantConfig();
       if (_currentUser?.role == UserRole.admin) await pullServerUsers();
     }
     return _currentUser!;
+  }
+
+  /// Crea una instancia nueva de restaurante y deja la sesión lista para entrar.
+  ///
+  /// 1. Intenta iniciar sesión con el correo y la contraseña written por el
+  ///    usuario. Si la cuenta no existe, la crea; si ya existía, exige la
+  ///    contraseña actual (nunca crea una cuenta nueva con otro dueño).
+  /// 2. Deriva un ID desde el nombre y busca un slug disponible en
+  ///    `tenants/{id}` (añade `-2`, `-3`, … si ya está ocupado).
+  /// 3. Escribe la instancia con la plantilla genérica: `tenants/{id}`,
+  ///    configuración, categoría, dos platillos, insumos, usuario admin y la
+  ///    membresía en `all_user/{email}`.
+  /// 4. Cambia el repositorio al tenant nuevo y aplica la configuración para
+  ///    que las mesas se creen antes de mostrar el POS.
+  Future<String> createRestaurant({
+    required String email,
+    required String password,
+    required String restaurantName,
+    required String timeZone,
+    required String openTime,
+    required String closeTime,
+    required int tableCount,
+    required String countryCode,
+    required String phone,
+  }) async {
+    if (AuthService.firebaseApiKey.isEmpty) {
+      throw StateError(
+        'Firebase no está configurado. Define FIREBASE_WEB_API_KEY.',
+      );
+    }
+    final normalizedEmail = email.trim().toLowerCase();
+    final name = restaurantName.trim();
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(normalizedEmail)) {
+      throw ArgumentError('Escribe un correo válido.');
+    }
+    if (password.length < 6) {
+      throw ArgumentError('La contraseña debe tener al menos 6 caracteres.');
+    }
+    if (name.isEmpty) {
+      throw ArgumentError('Escribe el nombre del restaurante.');
+    }
+    if (!RestaurantSettings.isValidTimeZone(timeZone)) {
+      throw ArgumentError('La zona horaria no es válida.');
+    }
+    if (!RestaurantSettings.isValidTimeOfDay(openTime) ||
+        !RestaurantSettings.isValidTimeOfDay(closeTime)) {
+      throw ArgumentError('El horario debe tener el formato HH:mm.');
+    }
+    if (tableCount < 0 || tableCount > RestaurantSettings.maxTableCount) {
+      throw ArgumentError(
+        'La cantidad de mesas debe estar entre 0 y ${RestaurantSettings.maxTableCount}.',
+      );
+    }
+
+    // Credenciales: si la cuenta existe se usan las actuales; si no, se crea.
+    try {
+      await _authService.signIn(normalizedEmail, password);
+    } on AuthException catch (error) {
+      final code = error.code;
+      final couldBeNewAccount = code == 'EMAIL_NOT_FOUND' ||
+          code == 'INVALID_LOGIN_CREDENTIALS' ||
+          code == 'INVALID_PASSWORD';
+      if (!couldBeNewAccount) rethrow;
+      try {
+        await _authService.signUp(normalizedEmail, password);
+      } on AuthException catch (signUpError) {
+        if (signUpError.code == 'EMAIL_EXISTS') {
+          throw const AuthException(
+            'Ya existe una cuenta con ese correo. Usa tu contraseña actual.',
+          );
+        }
+        rethrow;
+      }
+    }
+    final uid = await _authService.currentUid();
+    if (uid == null || uid.isEmpty) {
+      throw StateError('Firebase no devolvió un identificador de usuario.');
+    }
+
+    final transport = FirestoreTransport(
+      auth: _authService,
+      projectId: FirestoreTransport.defaultProjectId,
+      tenantId: defaultTenantId,
+    );
+
+    // Disponibilidad del slug: nunca sobrescribimos una instancia existente.
+    final baseId = tenantIdFromName(name);
+    var chosenId = baseId;
+    var available = false;
+    for (var attempt = 1; attempt <= 20; attempt++) {
+      final candidate = attempt == 1 ? baseId : '$baseId-$attempt';
+      final response = await transport.send(
+        'GET',
+        '/api/tenants/$candidate',
+      );
+      final existing = response.json?['tenant'];
+      if (!response.ok || existing is! Map || existing.isEmpty) {
+        chosenId = candidate;
+        available = true;
+        break;
+      }
+    }
+    if (!available) {
+      throw ArgumentError(
+        'Ya hay muchas instancias con ese nombre. Elige otro restaurante.',
+      );
+    }
+
+    final now = DateTime.now().toIso8601String();
+    final digitsOnly = chosenId.replaceAll(RegExp(r'[^a-z0-9]'), '');
+    final prefix = digitsOnly.isEmpty
+        ? 'RM'
+        : digitsOnly.substring(0, digitsOnly.length < 3 ? digitsOnly.length : 3)
+            .toUpperCase();
+    final whatsapp = RestaurantSettings.compactNumber(countryCode, phone);
+    final hours = RestaurantSettings.scheduleHours(
+      days: RestaurantSettings.defaultOpeningDays,
+      openTime: openTime,
+      closeTime: closeTime,
+    );
+
+    await transport.send('PATCH', '/api/tenants/$chosenId', body: {
+      'id': chosenId,
+      'name': name,
+      'label': name,
+      'description': 'Instancia creada desde la APK.',
+      'preset': 'custom',
+      'emoji': '🍽️',
+      'orderPrefix': prefix,
+      'currency': 'COP',
+      'city': '',
+      'address': '',
+      'countryCode': countryCode,
+      'phone': phone,
+      'whatsapp': whatsapp,
+      'hours': hours,
+      'createdAt': now,
+      'updatedAt': now,
+    });
+
+    final tenantTransport = FirestoreTransport(
+      auth: _authService,
+      projectId: FirestoreTransport.defaultProjectId,
+      tenantId: chosenId,
+    );
+    final settings = SeedData.genericSettings.copyWith(
+      name: name,
+      hours: hours,
+      whatsapp: whatsapp,
+      countryCode: countryCode,
+      phone: phone,
+      tableCount: tableCount,
+      timeZone: timeZone,
+      openTime: openTime,
+      closeTime: closeTime,
+    );
+    final configResponse = await tenantTransport.send(
+      'PATCH',
+      '/api/restaurant/config',
+      body: {
+        ...settings.toWebConfigPatch(),
+        ...RestaurantAppearance.generic.toJson(),
+        'updatedAt': now,
+      },
+    );
+    if (!configResponse.ok) {
+      throw StateError(
+        'No se pudo guardar la configuración del restaurante (${configResponse.statusCode}).',
+      );
+    }
+
+    // Catálogo mínimo de la plantilla: una categoría, dos platillos nuevos y
+    // sus insumos con receta. La web y el POS leen los mismos documentos.
+    Future<void> writeTemplateDoc({
+      required String path,
+      required Map<String, dynamic> body,
+      required String label,
+    }) async {
+      final response = await tenantTransport.send('PATCH', path, body: body);
+      if (!response.ok) {
+        throw StateError(
+          'No se pudo guardar $label (${response.statusCode}).',
+        );
+      }
+    }
+
+    for (final category in SeedData.genericCategories) {
+      await writeTemplateDoc(
+        path: '/api/menu/categories/${Uri.encodeComponent(category.id)}',
+        body: category.toJson(),
+        label: 'la categoría inicial',
+      );
+    }
+    for (final item in SeedData.genericMenuItems()) {
+      await writeTemplateDoc(
+        path: '/api/menu/${Uri.encodeComponent(item.id)}',
+        body: item.toJson(),
+        label: 'el platillo ${item.name}',
+      );
+    }
+    for (final ingredient in SeedData.genericIngredients) {
+      await writeTemplateDoc(
+        path: '/api/ingredients/${Uri.encodeComponent(ingredient.id)}',
+        body: ingredient.toJson(),
+        label: 'el insumo ${ingredient.name}',
+      );
+    }
+
+    final userResponse = await tenantTransport.send(
+      'POST',
+      '/api/users',
+      query: {'id': uid},
+      body: {
+        'id': uid,
+        'uid': uid,
+        'name': name,
+        'email': normalizedEmail,
+        'role': 'admin',
+        'createdAt': now,
+      },
+    );
+    if (!userResponse.ok) {
+      throw StateError(
+        'No se pudo crear el usuario administrador (${userResponse.statusCode}).',
+      );
+    }
+
+    // Índice global: se conservan los dispositivos ya registrados para push.
+    final existingAllUser = await transport.send(
+      'GET',
+      '/api/all-users/$normalizedEmail',
+    );
+    Map<String, dynamic> current = {};
+    if (existingAllUser.ok) {
+      final data = existingAllUser.json?['allUser'];
+      if (data is Map<String, dynamic>) current = Map<String, dynamic>.from(data);
+    }
+    final memberships = <Map<String, dynamic>>[];
+    final rawMemberships = current['memberships'];
+    if (rawMemberships is List) {
+      for (final membership in rawMemberships) {
+        if (membership is! Map) continue;
+        final map = Map<String, dynamic>.from(membership);
+        if (map['tenantId']?.toString() == chosenId) continue;
+        memberships.add(map);
+      }
+    }
+    memberships.add({
+      'tenantId': chosenId,
+      'role': 'admin',
+      'uid': uid,
+      'name': name,
+      'email': normalizedEmail,
+    });
+    final deviceIds = <String>[];
+    final rawDeviceIds = current['deviceIds'];
+    if (rawDeviceIds is List) {
+      for (final value in rawDeviceIds) {
+        final id = value?.toString().trim() ?? '';
+        if (id.isNotEmpty && !deviceIds.contains(id)) deviceIds.add(id);
+      }
+    }
+    final lastDevice = current['deviceId']?.toString().trim();
+    if (lastDevice != null && lastDevice.isNotEmpty && !deviceIds.contains(lastDevice)) {
+      deviceIds.add(lastDevice);
+    }
+    if (!deviceIds.contains(_deviceId)) deviceIds.add(_deviceId);
+    final storedName = current['name']?.toString().trim() ?? '';
+    final allUserResponse = await transport.send(
+      'PATCH',
+      '/api/all-users/$normalizedEmail',
+      body: {
+        'email': normalizedEmail,
+        'name': storedName.isNotEmpty ? storedName : name,
+        'memberships': memberships,
+        'deviceId': _deviceId,
+        'deviceIds': deviceIds,
+        'updatedAt': now,
+      },
+    );
+    if (!allUserResponse.ok) {
+      throw StateError(
+        'No se pudo registrar la cuenta global (${allUserResponse.statusCode}).',
+      );
+    }
+
+    registerTenant(
+      TenantDefinition(
+        id: chosenId,
+        label: name,
+        description: 'Instancia creada desde la APK.',
+        emoji: '🍽️',
+      ),
+    );
+
+    _firebaseSignedIn = true;
+    _needsFirebaseReLogin = false;
+    if (tenantId != chosenId) await switchTenant(chosenId);
+    final admin = AppUser(
+      id: uid,
+      name: name,
+      email: normalizedEmail,
+      role: UserRole.admin,
+    );
+    _currentUser = admin;
+    _users = [..._users.where((user) => user.id != uid), admin];
+    await _prefs.setString(_kSession, jsonEncode(admin.toJson()));
+    await _persistUsers();
+    await pullServerRestaurantConfig();
+    await _pullWebCatalogState();
+    await registerDeviceId(email: normalizedEmail);
+    notifyListeners();
+    return chosenId;
+  }
+
+  Future<List<TenantMembership>> _resolveAllUserMemberships(String email) async {
+    if (!useDirectFirestore || !_webSyncEnabled || !isOnline) return const [];
+    try {
+      final docId = email.trim().toLowerCase();
+      final response = await _request('GET', '/api/all-users/$docId');
+      if (!response.ok) return const [];
+      final data = response.json?['allUser'];
+      if (data is! Map<String, dynamic>) return const [];
+      final raw = data['memberships'];
+      if (raw is! List) return const [];
+      final out = <TenantMembership>[];
+      for (final m in raw) {
+        if (m is! Map) continue;
+        final tenantId = m['tenantId']?.toString() ?? '';
+        final role = m['role']?.toString() ?? '';
+        if (tenantId.isEmpty || role.isEmpty) continue;
+        out.add(TenantMembership(
+          tenantId: tenantId,
+          role: role,
+          name: m['name']?.toString() ?? '',
+          email: m['email']?.toString() ?? email,
+        ));
+      }
+      return out;
+    } catch (_) {
+      return const [];
+    }
   }
 
   /// Lee `tenants/{tenantId}/users/{uid}` con el token del usuario (regla
@@ -1011,7 +1536,11 @@ class RestaurantRepository extends ChangeNotifier {
     }
     await _persistUsers();
     notifyListeners();
-    await _pushUserToServer(updated, delete: false);
+    await _pushUserToServer(
+      updated,
+      delete: false,
+      oldEmail: current.email != updated.email ? current.email : null,
+    );
     return updated;
   }
 
@@ -1034,7 +1563,7 @@ class RestaurantRepository extends ChangeNotifier {
   /// a través de la web. El cambio ya quedó guardado en el dispositivo: sin
   /// sesión Firebase o sin conexión se conserva localmente y se reenvía en la
   /// siguiente operación.
-  Future<void> _pushUserToServer(AppUser user, {required bool delete}) async {
+  Future<void> _pushUserToServer(AppUser user, {required bool delete, String? oldEmail}) async {
     if (!_webSyncEnabled || !isOnline) return;
     if (!useDirectFirestore && _serverUrl.isEmpty) return;
     final response = delete
@@ -1053,6 +1582,98 @@ class RestaurantRepository extends ChangeNotifier {
     if (response.statusCode == 401) {
       _markNeedsFirebaseReLogin();
     }
+    await _syncAllUserEntry(user, delete: delete, oldEmail: oldEmail);
+  }
+
+  /// Mantiene `all_user/{email}` en la raíz de Firestore como índice global
+  /// de usuarios por tenant/rol para resolver el login sin dropdown de tenant.
+  Future<void> _syncAllUserEntry(AppUser user, {required bool delete, String? oldEmail}) async {
+    if (!_webSyncEnabled || !isOnline) return;
+    if (!useDirectFirestore && _serverUrl.isEmpty) return;
+    final email = user.email.trim().toLowerCase();
+    if (email.isEmpty) return;
+
+    // El id del documento es el email normalizado sin codificar: la web API
+    // usa el mismo criterio en `web/src/app/api/users/route.ts`.
+    final docId = email;
+    try {
+      // Si cambió el correo, eliminar la membresía del tenant en el doc viejo.
+      final old = oldEmail?.trim().toLowerCase();
+      if (old != null && old.isNotEmpty && old != email) {
+        await _syncAllUserEntryRemoveTenant(old, tenantId);
+      }
+
+      if (delete) {
+        await _syncAllUserEntryRemoveTenant(email, tenantId);
+        return;
+      }
+
+      final existing = await _request('GET', '/api/all-users/$docId');
+      Map<String, dynamic> current = {};
+      if (existing.ok) {
+        final data = existing.json?['allUser'];
+        if (data is Map<String, dynamic>) current = Map<String, dynamic>.from(data);
+      }
+
+      final rawMemberships = current['memberships'];
+      final memberships = <Map<String, dynamic>>[];
+      if (rawMemberships is List) {
+        for (final m in rawMemberships) {
+          if (m is Map) {
+            final map = Map<String, dynamic>.from(m);
+            if (map['tenantId']?.toString() == tenantId) continue;
+            memberships.add(map);
+          }
+        }
+      }
+      memberships.add({
+        'tenantId': tenantId,
+        'role': user.role.name,
+        'uid': user.id,
+        'name': user.name,
+        'email': email,
+      });
+
+      await _request('PATCH', '/api/all-users/$docId', body: {
+        'email': email,
+        'name': user.name,
+        'memberships': memberships,
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {
+      // Best-effort: no bloquear el flujo principal por el índice global.
+    }
+  }
+
+  Future<void> _syncAllUserEntryRemoveTenant(String email, String tenant) async {
+    final docId = email.trim().toLowerCase();
+    try {
+      final existing = await _request('GET', '/api/all-users/$docId');
+      if (!existing.ok) return;
+      final data = existing.json?['allUser'];
+      if (data is! Map<String, dynamic>) return;
+      final rawMemberships = data['memberships'];
+      final memberships = <Map<String, dynamic>>[];
+      if (rawMemberships is List) {
+        for (final m in rawMemberships) {
+          if (m is Map) {
+            final map = Map<String, dynamic>.from(m);
+            if (map['tenantId']?.toString() == tenant) continue;
+            memberships.add(map);
+          }
+        }
+      }
+      if (memberships.isEmpty) {
+        await _request('DELETE', '/api/all-users/$docId');
+      } else {
+        await _request('PATCH', '/api/all-users/$docId', body: {
+          'email': email,
+          'name': data['name']?.toString() ?? '',
+          'memberships': memberships,
+          'updatedAt': DateTime.now().toIso8601String(),
+        });
+      }
+    } catch (_) {}
   }
 
   /// Trae las cuentas desde Firestore (directo o vía la web) y las fusiona con
@@ -1302,6 +1923,7 @@ class RestaurantRepository extends ChangeNotifier {
     await _flushPendingIngredientPatches();
     await pullServerIngredients();
     await pullServerCategories();
+    await _flushDirtyMenuItems();
     await pullServerMenuCatalog();
     await _flushPendingMenuStatuses();
     await _flushPendingFeaturedItems();
@@ -1726,8 +2348,10 @@ class RestaurantRepository extends ChangeNotifier {
 
   Future<void> _flushPendingFeaturedItems() async {
     if (!_webSyncEnabled || !isOnline || _pendingFeaturedItems.isEmpty) return;
+    if (!_serverMenuCatalogLoaded) return;
     final snapshot = Map<String, bool>.from(_pendingFeaturedItems);
     for (final entry in snapshot.entries) {
+      if (!_serverMenuCatalogIds.contains(entry.key)) continue;
       final ok = await _pushMenuItemFeaturedToServer(entry.key, entry.value);
       if (!ok) continue;
       if (_pendingFeaturedItems[entry.key] != entry.value) continue;
@@ -1740,6 +2364,9 @@ class RestaurantRepository extends ChangeNotifier {
   Future<void> _flushPendingMenuStatuses() async {
     if (!_webSyncEnabled || !isOnline || _flushingMenuStatuses) return;
     if (_pendingMenuStatuses.isEmpty) return;
+    // Nunca crear documentos nuevos solo con el estado: un plato local que no
+    // existe en Firestore se queda sin publicar hasta que su catálogo exista.
+    if (!_serverMenuCatalogLoaded) return;
     _flushingMenuStatuses = true;
     try {
       final snapshot = Map<String, Map<String, dynamic>>.from(
@@ -1747,6 +2374,13 @@ class RestaurantRepository extends ChangeNotifier {
       );
       var localChanges = 0;
       for (final entry in snapshot.entries) {
+        if (!_serverMenuCatalogIds.contains(entry.key)) {
+          if (_pendingMenuStatuses[entry.key] == entry.value) {
+            _pendingMenuStatuses.remove(entry.key);
+            await _persistPendingMenuStatuses();
+          }
+          continue;
+        }
         final status = entry.value['status'] as String? ?? '';
         final manual =
             entry.value['manual'] as bool? ?? status == 'unavailable';
@@ -1807,6 +2441,15 @@ class RestaurantRepository extends ChangeNotifier {
         : decoded is Map<String, dynamic>
         ? decoded['items']
         : null;
+    _serverMenuCatalogIds = rawList is List
+        ? rawList
+            .whereType<Map<String, dynamic>>()
+            .map((raw) => raw['id'] as String?)
+            .whereType<String>()
+            .where((id) => id.isNotEmpty)
+            .toSet()
+        : <String>{};
+    _serverMenuCatalogLoaded = true;
     if (rawList is! List || rawList.isEmpty) return 0;
 
     final next = <MenuItem>[];
@@ -1820,6 +2463,11 @@ class RestaurantRepository extends ChangeNotifier {
         ..['manualUnavailable'] = raw['manualUnavailable'] == true ||
             raw['manualStatus'] == 'unavailable';
       var item = MenuItem.fromJson(json);
+      if (local != null && _dirtyMenuItemIds.contains(id)) {
+        // Edición local pendiente de subir: no la pisamos con el servidor.
+        next.add(local);
+        continue;
+      }
       if (local != null && _pendingMenuStatuses.containsKey(id)) {
         item = item.copyWith(
           status: local.status,
@@ -2574,8 +3222,44 @@ class RestaurantRepository extends ChangeNotifier {
     } else {
       _items.add(item);
     }
+    _dirtyMenuItemIds.add(item.id);
     await _persistItems();
+    await _persistDirtyMenuItemIds();
     notifyListeners();
+    await _pushMenuItemToServer(item);
+  }
+
+  Future<void> _pushMenuItemToServer(MenuItem item) async {
+    if (!_webSyncEnabled || !isOnline) return;
+    if (!useDirectFirestore && _serverUrl.isEmpty) return;
+    try {
+      final response = await _request(
+        'PATCH',
+        '/api/menu/${Uri.encodeComponent(item.id)}',
+        body: item.toJson(),
+      );
+      if (response.ok) {
+        _dirtyMenuItemIds.remove(item.id);
+        await _persistDirtyMenuItemIds();
+      }
+    } catch (_) {
+      // El cambio queda local; el próximo pull/sync puede reintentar.
+    }
+  }
+
+  Future<void> _flushDirtyMenuItems() async {
+    if (_dirtyMenuItemIds.isEmpty || !_webSyncEnabled || !isOnline) return;
+    if (!useDirectFirestore && _serverUrl.isEmpty) return;
+    final ids = _dirtyMenuItemIds.toList();
+    for (final id in ids) {
+      final index = _items.indexWhere((item) => item.id == id);
+      if (index < 0) {
+        _dirtyMenuItemIds.remove(id);
+        continue;
+      }
+      await _pushMenuItemToServer(_items[index]);
+    }
+    await _persistDirtyMenuItemIds();
   }
 
   Future<MenuItem> addMenuItem({
@@ -3398,6 +4082,47 @@ class RestaurantRepository extends ChangeNotifier {
   List<RestaurantTable> get tables =>
       [..._tables]..sort((a, b) => a.number.compareTo(b.number));
 
+  /// Ajusta las mesas al número configurado (`settings.tableCount`).
+  /// - Conserva las existentes por número (y su estado/pedido actual).
+  /// - Crea las que falten como `libres`.
+  /// - Si hay más mesas de las configuradas, elimina solo las sobrantes libres
+  ///   (nunca borra mesas ocupadas/con pedido).
+  /// - `0` significa «no gestionar mesas»: deja las existentes intactas para
+  ///   no borrar datos demo o de instalaciones anteriores.
+  Future<void> _applyTableCount() async {
+    final count = _settings.tableCount;
+    if (count <= 0) return;
+    final existing = <int, RestaurantTable>{
+      for (final table in _tables) table.number: table,
+    };
+    final next = <RestaurantTable>[];
+    for (var number = 1; number <= count; number++) {
+      final table = existing.remove(number);
+      next.add(
+        table ??
+            RestaurantTable(
+              id: 'table-$number',
+              number: number,
+              status: TableStatus.libre,
+              capacity: 4,
+              currentOrderId: null,
+            ),
+      );
+    }
+    // Sobrantes: conservar las ocupadas, descartar las libres.
+    for (final entry in existing.entries) {
+      final table = entry.value;
+      if (table.status == TableStatus.libre && table.currentOrderId == null) {
+        continue;
+      }
+      next.add(table);
+    }
+    final changed = next.length != _tables.length ||
+        next.any((table) => !_tables.contains(table));
+    _tables = next;
+    if (changed) await _persistTables();
+  }
+
   RestaurantTable? tableByNumber(int number) {
     final matches = _tables.where((table) => table.number == number);
     return matches.isEmpty ? null : matches.first;
@@ -3465,6 +4190,7 @@ class RestaurantRepository extends ChangeNotifier {
   }) async {
     _settings = settings;
     await _prefs.setString(_kSettings, jsonEncode(settings.toJson()));
+    await _applyTableCount();
     if (publishToWeb) {
       _pendingConfigPatch = settings.toWebConfigPatch();
       await _prefs.setString(
@@ -3487,10 +4213,50 @@ class RestaurantRepository extends ChangeNotifier {
       _pendingRestaurantConfig != null || _pendingConfigPatch != null;
   bool get hasFirebaseSession => _firebaseSignedIn;
 
+  /// Id estable de este dispositivo (persistido fuera del prefijo de tenant).
+  String get deviceId => _deviceId;
+
+  /// Registra el dispositivo en `all_user/{email}` para notificaciones push.
+  /// Mantiene `deviceId` (último) y `deviceIds` (historial) sin borrar los que
+  /// ya había, y respeta las memberships existentes.
+  Future<void> registerDeviceId({String? email}) async {
+    if (!useDirectFirestore || !_webSyncEnabled || !isOnline) return;
+    final normalized = (email ?? _currentUser?.email ?? '').trim().toLowerCase();
+    if (normalized.isEmpty) return;
+    try {
+      final existing = await _request('GET', '/api/all-users/$normalized');
+      if (!existing.ok) return;
+      final data = existing.json?['allUser'];
+      if (data is! Map<String, dynamic>) return;
+      final ids = <String>[];
+      final raw = data['deviceIds'];
+      if (raw is List) {
+        for (final value in raw) {
+          final id = value?.toString().trim() ?? '';
+          if (id.isNotEmpty && !ids.contains(id)) ids.add(id);
+        }
+      }
+      final lastDevice = data['deviceId']?.toString().trim();
+      if (lastDevice != null && lastDevice.isNotEmpty && !ids.contains(lastDevice)) {
+        ids.add(lastDevice);
+      }
+      if (!ids.contains(_deviceId)) ids.add(_deviceId);
+      await _request('PATCH', '/api/all-users/$normalized', body: {
+        'deviceId': _deviceId,
+        'deviceIds': ids,
+        'updatedAt': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {
+      // Best-effort: el registro de push no debe bloquear el login.
+    }
+  }
+
   // --- Diagnóstico (sin secretos) -------------------------------------------
   /// Proyecto Firebase al que apunta el transporte activo.
-  String get firebaseProjectId =>
-      _api is FirestoreTransport ? _api.projectId : '';
+  String get firebaseProjectId {
+    final api = _api;
+    return api is FirestoreTransport ? api.projectId : '';
+  }
   /// `firestore` (directo a Firestore REST) o `web` (API Next.js).
   String get apiTransportName => useDirectFirestore ? 'firestore' : 'web';
   /// Clave de API pública compilada (nunca el service account).
@@ -3622,6 +4388,7 @@ class RestaurantRepository extends ChangeNotifier {
       if (settingsChanged) {
         _settings = remoteSettings;
         await _prefs.setString(_kSettings, jsonEncode(_settings.toJson()));
+        await _applyTableCount();
         changed = true;
       }
       if (changed) notifyListeners();
@@ -4072,6 +4839,7 @@ class RestaurantRepository extends ChangeNotifier {
     await _prefs.remove(_kCustomers);
     await _prefs.remove(_kWebVisits);
     await _prefs.remove(_kPendingMenuStatuses);
+    await _prefs.remove(_kPendingMenuItemPatches);
     await _prefs.remove(_kPendingIngredientStocks);
     await _prefs.remove(_kActiveCashShift);
     await _prefs.remove(_kCashShifts);
@@ -4086,6 +4854,7 @@ class RestaurantRepository extends ChangeNotifier {
     _firebaseSignedIn = false;
     _needsFirebaseReLogin = false;
     _pendingMenuStatuses = {};
+    _dirtyMenuItemIds = {};
     _pendingIngredientStocks = {};
     _pendingCashShiftClosures = {};
     _closedShifts = [];
@@ -4158,6 +4927,13 @@ class RestaurantRepository extends ChangeNotifier {
     await _prefs.setString(
       _kItems,
       jsonEncode(_items.map((item) => item.toJson()).toList()),
+    );
+  }
+
+  Future<void> _persistDirtyMenuItemIds() async {
+    await _prefs.setString(
+      _kPendingMenuItemPatches,
+      jsonEncode(_dirtyMenuItemIds.toList()),
     );
   }
 

@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/data/repository.dart';
+import '../../core/services/media_upload_service.dart';
 import '../../core/models/category.dart';
 import '../../core/models/ingredient.dart';
 import '../../core/models/menu_item.dart';
@@ -65,6 +66,9 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
           recipeSteps: draft.recipeSteps,
           recipe: draft.recipe,
           ingredients: draft.ingredients,
+          calories: draft.calories,
+          prepMinutes: draft.prepMinutes,
+          allergens: draft.allergens,
         ),
       );
     } else {
@@ -83,6 +87,9 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
           recipeSteps: draft.recipeSteps,
           recipe: draft.recipe,
           ingredients: draft.ingredients,
+          calories: draft.calories,
+          prepMinutes: draft.prepMinutes,
+          allergens: draft.allergens,
         ),
       );
     }
@@ -488,6 +495,9 @@ class _MenuDraft {
     required this.recipeSteps,
     required this.recipe,
     required this.ingredients,
+    required this.calories,
+    required this.prepMinutes,
+    required this.allergens,
   });
 
   final String name;
@@ -501,6 +511,9 @@ class _MenuDraft {
   final String recipeSteps;
   final List<RecipeIngredient> recipe;
   final List<String> ingredients;
+  final int calories;
+  final int prepMinutes;
+  final List<String> allergens;
 }
 
 class _MenuEditorDialog extends StatefulWidget {
@@ -527,6 +540,9 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
   late final TextEditingController _imageUrl;
   late final TextEditingController _videoUrl;
   late final TextEditingController _recipeSteps;
+  late final TextEditingController _calories;
+  late final TextEditingController _prepMinutes;
+  late final TextEditingController _allergens;
   late String _categoryId;
   late List<RecipeIngredient> _recipe;
   String? _error;
@@ -544,6 +560,19 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
     _imageUrl = TextEditingController(text: widget.item?.imageUrl ?? '');
     _videoUrl = TextEditingController(text: widget.item?.videoUrl ?? '');
     _recipeSteps = TextEditingController(text: widget.item?.recipeSteps ?? '');
+    _calories = TextEditingController(
+      text: widget.item == null || widget.item!.calories <= 0
+          ? ''
+          : widget.item!.calories.toString(),
+    );
+    _prepMinutes = TextEditingController(
+      text: widget.item == null || widget.item!.prepMinutes <= 0
+          ? ''
+          : widget.item!.prepMinutes.toString(),
+    );
+    _allergens = TextEditingController(
+      text: widget.item?.allergens.join(', ') ?? '',
+    );
     _categoryId = widget.item?.categoryId ??
         (widget.categories.isEmpty ? '' : widget.categories.first.id);
     _recipe = List<RecipeIngredient>.from(widget.item?.recipe ?? const []);
@@ -586,19 +615,52 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
   }
 
   Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final file = await picker.pickImage(source: ImageSource.gallery);
-    if (file == null) return;
-    final saved = await _copyToAppDir(file, 'images');
-    setState(() => _imageUrl.text = saved);
+    try {
+      final picker = ImagePicker();
+      final file = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+      if (file == null) return;
+      final url = await _uploadMedia(file, isVideo: false);
+      if (!mounted) return;
+      setState(() => _imageUrl.text = url);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo cargar la imagen: $e')),
+      );
+    }
   }
 
   Future<void> _pickVideo() async {
-    final picker = ImagePicker();
-    final file = await picker.pickVideo(source: ImageSource.gallery);
-    if (file == null) return;
-    final saved = await _copyToAppDir(file, 'videos');
-    setState(() => _videoUrl.text = saved);
+    try {
+      final picker = ImagePicker();
+      final file = await picker.pickVideo(source: ImageSource.gallery);
+      if (file == null) return;
+      final url = await _uploadMedia(file, isVideo: true);
+      if (!mounted) return;
+      setState(() => _videoUrl.text = url);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo cargar el video: $e')),
+      );
+    }
+  }
+
+  Future<String> _uploadMedia(XFile file, {required bool isVideo}) async {
+    final repository = context.read<RestaurantRepository>();
+    final service = MediaUploadService(authService: repository.authServiceForMedia);
+    final ext = p.extension(file.path).replaceFirst('.', '').toLowerCase();
+    final safeExt = ext.isEmpty ? (isVideo ? 'mp4' : 'jpg') : ext;
+    final kind = isVideo ? 'videos' : 'images';
+    final name = 'tenants/${repository.tenantId}/menu/$kind/${DateTime.now().millisecondsSinceEpoch}.$safeExt';
+    return service.uploadFile(
+      filePath: file.path,
+      objectName: name,
+      maxBytes: isVideo ? 30 * 1024 * 1024 : 6 * 1024 * 1024,
+      allowedMimeTypes: isVideo
+          ? MediaUploadService.allowedVideoMimeTypes
+          : MediaUploadService.allowedImageMimeTypes,
+    );
   }
 
   Future<String> _copyToAppDir(XFile file, String subdir) async {
@@ -630,6 +692,13 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
     final ingredientNames = _recipe
         .map((line) => _ingredientName(line.ingredientId))
         .toList();
+    final calories = int.tryParse(_calories.text.trim()) ?? 0;
+    final prepMinutes = int.tryParse(_prepMinutes.text.trim()) ?? 0;
+    final allergens = _allergens.text
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
     Navigator.of(context).pop(
       _MenuDraft(
         name: name,
@@ -645,14 +714,52 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
         ingredients: ingredientNames.isEmpty
             ? (widget.item?.ingredients ?? const [])
             : ingredientNames,
+        calories: calories < 0 ? 0 : calories,
+        prepMinutes: prepMinutes < 0 ? 0 : prepMinutes,
+        allergens: allergens,
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final isNew = widget.item == null;
     return AlertDialog(
-      title: Text(widget.item == null ? 'Nuevo producto' : 'Editar producto'),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      titlePadding: EdgeInsets.zero,
+      contentPadding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      title: Container(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [AppTheme.brand.withValues(alpha: 0.14), AppTheme.brand.withValues(alpha: 0.03)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42, height: 42,
+              decoration: BoxDecoration(color: AppTheme.brand, borderRadius: BorderRadius.circular(12)),
+              child: Icon(isNew ? Icons.add_rounded : Icons.edit_rounded, color: Colors.white),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(isNew ? 'Nuevo producto' : 'Editar producto', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppTheme.ink)),
+                  const SizedBox(height: 2),
+                  Text(isNew ? 'Agrega un plato al menú' : 'Actualiza la información del plato', style: const TextStyle(fontSize: 12, color: Color(0xFF78716C))),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -690,6 +797,41 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
             TextField(
               controller: _sku,
               decoration: const InputDecoration(labelText: 'SKU'),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _calories,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Calorías',
+                      helperText: 'kcal (opcional)',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _prepMinutes,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Prep. (min)',
+                      helperText: 'minutos (opcional)',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _allergens,
+              decoration: const InputDecoration(
+                labelText: 'Alérgenos',
+                hintText: 'Ej.: Gluten, Lácteos',
+                helperText: 'Separados por coma. Vacío = no mostrar en web.',
+              ),
             ),
             const SizedBox(height: 10),
             _MediaPicker(

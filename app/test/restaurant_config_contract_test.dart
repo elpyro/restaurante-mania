@@ -35,6 +35,7 @@ void main() {
         'facebook': isNull,
       });
       expect(nested['gpsUrl'], isNull);
+      expect(nested['googlePlaceUrl'], isNull);
 
       final withAssets = RestaurantAppearance(
           slogan: appearance.slogan,
@@ -48,7 +49,8 @@ void main() {
           instagramUrl: 'https://instagram.com/mania',
           tiktokUrl: 'https://tiktok.com/@mania',
           facebookUrl: 'https://facebook.com/mania',
-          gpsUrl: 'https://maps.google.com/?q=medellin');
+          gpsUrl: 'https://maps.google.com/?q=medellin',
+          googlePlaceUrl: 'https://g.page/r/CafeMania/review');
       final restored = RestaurantAppearance.fromJson(withAssets.toJson());
       expect(restored.bannerUrl, withAssets.bannerUrl);
       expect(restored.logoUrl, withAssets.logoUrl);
@@ -57,6 +59,7 @@ void main() {
       expect(restored.tiktokUrl, withAssets.tiktokUrl);
       expect(restored.facebookUrl, withAssets.facebookUrl);
       expect(restored.gpsUrl, withAssets.gpsUrl);
+      expect(restored.googlePlaceUrl, withAssets.googlePlaceUrl);
     });
 
     test('limpia redes y mapa cuando el usuario deja los campos vacíos', () {
@@ -169,6 +172,20 @@ void main() {
       expect(remote.aiKeywords, 'comida típica');
       expect(remote.aiServiceArea, current.aiServiceArea);
       expect(remote.aiHighlights, current.aiHighlights);
+    });
+
+    test('reconoce la cantidad de mesas publicada en la configuración', () {
+      final remote = RestaurantSettings.fromWebConfig({
+        'name': 'Casa con mesas',
+        'tableCount': 7,
+      }, RestaurantSettings.defaults);
+      expect(remote.tableCount, 7);
+
+      final unchanged = RestaurantSettings.fromWebConfig(
+        {'name': 'Sin mesas configuradas'},
+        RestaurantSettings.defaults,
+      );
+      expect(unchanged.tableCount, RestaurantSettings.defaults.tableCount);
     });
 
     test('separa el indicativo de teléfonos guardados con +', () {

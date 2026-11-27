@@ -653,6 +653,107 @@ class SeedData {
 
   static const settings = RestaurantSettings.defaults;
 
+  /// Configuración y catálogo inicial de cualquier restaurante nuevo.
+  /// Los IDs coinciden con `web/src/lib/generic-template.ts`.
+  static const genericSettings = RestaurantSettings.generic;
+
+  static const genericCategories = <Category>[
+    Category(
+      id: 'cat-generales',
+      name: 'Platos',
+      slug: 'platos',
+      description: 'Opciones preparadas al momento para todos los gustos.',
+      order: 1,
+      emoji: '🍽️',
+    ),
+  ];
+
+  static const genericIngredients = <Ingredient>[
+    Ingredient(
+      id: 'ing-base-generico',
+      name: 'Ingrediente base',
+      unit: IngredientUnit.gramo,
+      stock: 5000,
+      minStock: 500,
+    ),
+    Ingredient(
+      id: 'ing-vegetales-genericos',
+      name: 'Vegetales frescos',
+      unit: IngredientUnit.gramo,
+      stock: 5000,
+      minStock: 500,
+    ),
+    Ingredient(
+      id: 'ing-acompanamiento-generico',
+      name: 'Acompañamiento',
+      unit: IngredientUnit.gramo,
+      stock: 5000,
+      minStock: 500,
+    ),
+    Ingredient(
+      id: 'ing-aderezo-suave',
+      name: 'Aderezo suave',
+      unit: IngredientUnit.mililitro,
+      stock: 2000,
+      minStock: 200,
+    ),
+  ];
+
+  static List<MenuItem> genericMenuItems() => <MenuItem>[
+        MenuItem(
+          id: 'item-plato-del-dia',
+          name: 'Plato del día',
+          slug: 'plato-del-dia',
+          description:
+              'Una preparación completa con ingredientes frescos, lista para disfrutar en cualquier momento.',
+          price: 15000,
+          categoryId: 'cat-generales',
+          categorySlug: 'platos',
+          status: MenuItemStatus.available,
+          ingredients: ['Ingrediente base', 'Vegetales frescos', 'Acompañamiento'],
+          allergens: const [],
+          emoji: '🍽️',
+          featured: true,
+          prepMinutes: 20,
+          calories: 550,
+          sku: 'SKU-PLATO-DIA',
+          recipeSteps:
+              'Prepara la base, añade los vegetales y sirve con el acompañamiento.',
+          recipe: const [
+            RecipeIngredient(ingredientId: 'ing-base-generico', quantity: 150),
+            RecipeIngredient(
+                ingredientId: 'ing-vegetales-genericos', quantity: 100),
+            RecipeIngredient(
+                ingredientId: 'ing-acompanamiento-generico', quantity: 120),
+          ],
+        ),
+        MenuItem(
+          id: 'item-ensalada-fresca',
+          name: 'Ensalada fresca',
+          slug: 'ensalada-fresca',
+          description:
+              'Vegetales frescos con un aderezo suave, preparados al momento.',
+          price: 12000,
+          categoryId: 'cat-generales',
+          categorySlug: 'platos',
+          status: MenuItemStatus.available,
+          ingredients: ['Vegetales frescos', 'Aderezo suave'],
+          allergens: const [],
+          emoji: '🥗',
+          featured: false,
+          prepMinutes: 10,
+          calories: 320,
+          sku: 'SKU-ENSALADA',
+          recipeSteps: 'Lava y corta los vegetales, mezcla con el aderezo y sirve.',
+          recipe: const [
+            RecipeIngredient(
+                ingredientId: 'ing-vegetales-genericos', quantity: 120),
+            RecipeIngredient(
+                ingredientId: 'ing-aderezo-suave', quantity: 30),
+          ],
+        ),
+      ];
+
   static List<RestaurantTable> tables() {
     return List.generate(10, (index) {
       final number = index + 1;

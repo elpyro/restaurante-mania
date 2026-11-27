@@ -34,6 +34,7 @@ export default async function OrderPage({
         id={id}
         whatsapp={config.whatsapp}
         restaurantName={config.name}
+        googlePlaceUrl={config.appearance.googlePlaceUrl}
       />
     </div>
   );

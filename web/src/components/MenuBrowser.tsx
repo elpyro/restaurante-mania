@@ -136,7 +136,7 @@ export function MenuBrowser({ categories, items, initialQuery = "" }: Props) {
                   {categoryItems.length} platos
                 </span>
               </div>
-              <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3">
                 {categoryItems.map((item) => (
                   <MenuItemCard key={item.id} item={item} />
                 ))}
@@ -145,7 +145,7 @@ export function MenuBrowser({ categories, items, initialQuery = "" }: Props) {
           ))}
         </div>
       ) : (
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3">
           {visible.map((item) => (
             <MenuItemCard key={item.id} item={item} />
           ))}

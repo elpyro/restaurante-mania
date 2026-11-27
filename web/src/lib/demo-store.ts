@@ -6,15 +6,27 @@
 
 import {
   DEFAULT_RESTAURANT_CONFIG,
+  GENERIC_RESTAURANT_CONFIG,
   type RestaurantConfig,
 } from "./restaurant-config";
+import {
+  genericCategories,
+  genericIngredientStocks,
+  genericMenuItems,
+  genericRecipes,
+} from "./generic-template";
 import {
   demoIngredientStocks,
   demoRecipes,
   seedCategories,
   seedMenuItems,
 } from "./seed";
-import { DEFAULT_TENANT_ID, tenantDefinition } from "./tenants";
+import {
+  DEFAULT_TENANT_ID,
+  isKnownTenant,
+  isTemplateTenant,
+  tenantDefinition,
+} from "./tenants";
 import type {
   CashShift,
   Category,
@@ -48,6 +60,14 @@ function clone<T>(value: T): T {
 
 function buildConfig(tenantId: string): RestaurantConfig {
   const tenant = tenantDefinition(tenantId);
+  if (isTemplateTenant(tenantId)) {
+    return {
+      ...clone(GENERIC_RESTAURANT_CONFIG),
+      name: isKnownTenant(tenantId)
+        ? tenant.label
+        : GENERIC_RESTAURANT_CONFIG.name,
+    };
+  }
   return {
     ...clone(DEFAULT_RESTAURANT_CONFIG),
     name: tenant.label,
@@ -85,10 +105,18 @@ function buildCatalog(tenantId: string): Pick<
   DemoTenantState,
   "categories" | "items" | "stocks" | "recipes"
 > {
-  const categories = clone(seedCategories);
-  const items = clone(seedMenuItems);
-  const stocks = clone(demoIngredientStocks);
-  const recipes = clone(demoRecipes);
+  const categories = clone(
+    isTemplateTenant(tenantId) ? genericCategories : seedCategories,
+  );
+  const items = clone(
+    isTemplateTenant(tenantId) ? genericMenuItems : seedMenuItems,
+  );
+  const stocks = clone(
+    isTemplateTenant(tenantId) ? genericIngredientStocks : demoIngredientStocks,
+  );
+  const recipes = clone(
+    isTemplateTenant(tenantId) ? genericRecipes : demoRecipes,
+  );
 
   if (tenantId === "fuego") {
     items.push({

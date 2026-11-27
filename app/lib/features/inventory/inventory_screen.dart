@@ -262,29 +262,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
     if (amount == null || amount <= 0) return false;
 
     await repository.adjustIngredientStock(ingredient.id, amount);
-    if (!context.mounted) return true;
-
-    final updated = repository.ingredientById(ingredient.id);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: AppTheme.success,
-        duration: const Duration(seconds: 4),
-        content: Row(
-          children: [
-            const Icon(Icons.check_circle_rounded, color: Colors.white),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Surtido ${ingredient.name}: +${_formatNumber(amount)} '
-                '${ingredient.unit.symbol}. Stock: '
-                '${updated?.stockLabel ?? ingredient.stockLabel}',
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
     return true;
   }
 }

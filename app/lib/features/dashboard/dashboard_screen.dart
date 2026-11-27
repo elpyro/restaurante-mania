@@ -16,9 +16,15 @@ import '../inventory_losses/inventory_losses_screen.dart';
 import '../orders/order_detail_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
-  const DashboardScreen({super.key, required this.onNavigate});
+  const DashboardScreen({
+    super.key,
+    required this.onNavigate,
+    this.onOpenOrders,
+  });
 
   final void Function(AppTab tab) onNavigate;
+  /// Abre Pedidos con un filtro ya aplicado (desde las tarjetas del Inicio).
+  final void Function(String filter)? onOpenOrders;
 
   @override
   Widget build(BuildContext context) {
@@ -60,6 +66,7 @@ class DashboardScreen extends StatelessWidget {
               repository: repository,
               role: role,
               onNavigate: onNavigate,
+              onOpenOrders: onOpenOrders,
             ),
             if (role == UserRole.cook) ...[
               const SectionHeader(title: 'Cola de cocina'),
@@ -163,11 +170,22 @@ class _KpiGrid extends StatelessWidget {
     required this.repository,
     required this.role,
     required this.onNavigate,
+    required this.onOpenOrders,
   });
 
   final RestaurantRepository repository;
   final UserRole role;
   final void Function(AppTab tab) onNavigate;
+  final void Function(String filter)? onOpenOrders;
+
+  void _openOrders(String filter) {
+    final callback = onOpenOrders;
+    if (callback != null) {
+      callback(filter);
+    } else {
+      onNavigate(AppTab.orders);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -187,21 +205,21 @@ class _KpiGrid extends StatelessWidget {
           icon: Icons.payments_outlined,
           accent: AppTheme.warning,
           subtitle: '${repository.ordersToCollect.length} pendientes de pago',
-          onTap: () => onNavigate(AppTab.orders),
+          onTap: () => _openOrders('toCollect'),
         ),
         StatCard(
           label: 'En preparación',
           value: '${repository.preparingCount}',
           icon: Icons.soup_kitchen_outlined,
           accent: const Color(0xFF2563EB),
-          onTap: () => onNavigate(AppTab.orders),
+          onTap: () => _openOrders('preparing'),
         ),
         StatCard(
           label: 'Pedidos listos',
           value: '${repository.readyCount}',
           icon: Icons.room_service_outlined,
           accent: AppTheme.success,
-          onTap: () => onNavigate(AppTab.orders),
+          onTap: () => _openOrders('ready'),
         ),
         StatCard(
           label: 'Ingredientes agotados',
@@ -236,20 +254,20 @@ class _KpiGrid extends StatelessWidget {
           value: '${repository.ordersToCollect.length}',
           icon: Icons.payments_outlined,
           accent: AppTheme.warning,
-          onTap: () => onNavigate(AppTab.orders),
+          onTap: () => _openOrders('toCollect'),
         ),
         StatCard(
           label: 'Listos para entregar',
           value: '${repository.readyCount}',
           icon: Icons.room_service_outlined,
-          onTap: () => onNavigate(AppTab.orders),
+          onTap: () => _openOrders('ready'),
         ),
         StatCard(
           label: 'Pedidos hoy',
           value: '${repository.todayOrderCount}',
           icon: Icons.receipt_long_outlined,
           accent: const Color(0xFF2563EB),
-          onTap: () => onNavigate(AppTab.orders),
+          onTap: () => _openOrders('all'),
         ),
       ],
       UserRole.waiter => [
@@ -272,14 +290,14 @@ class _KpiGrid extends StatelessWidget {
           value: '${repository.ordersToCollect.length}',
           icon: Icons.payments_outlined,
           accent: AppTheme.warning,
-          onTap: () => onNavigate(AppTab.orders),
+          onTap: () => _openOrders('toCollect'),
         ),
         StatCard(
           label: 'Listos',
           value: '${repository.readyCount}',
           icon: Icons.room_service_outlined,
           accent: AppTheme.success,
-          onTap: () => onNavigate(AppTab.orders),
+          onTap: () => _openOrders('ready'),
         ),
       ],
       UserRole.cook => [
@@ -288,27 +306,27 @@ class _KpiGrid extends StatelessWidget {
           value: '${repository.pendingCount}',
           icon: Icons.hourglass_top_rounded,
           accent: AppTheme.warning,
-          onTap: () => onNavigate(AppTab.orders),
+          onTap: () => _openOrders('pending'),
         ),
         StatCard(
           label: 'En preparación',
           value: '${repository.preparingCount}',
           icon: Icons.soup_kitchen_outlined,
-          onTap: () => onNavigate(AppTab.orders),
+          onTap: () => _openOrders('preparing'),
         ),
         StatCard(
           label: 'Listos',
           value: '${repository.readyCount}',
           icon: Icons.room_service_outlined,
           accent: AppTheme.success,
-          onTap: () => onNavigate(AppTab.orders),
+          onTap: () => _openOrders('ready'),
         ),
         StatCard(
           label: 'Pedidos hoy',
           value: '${repository.todayOrderCount}',
           icon: Icons.receipt_long_outlined,
           accent: const Color(0xFF2563EB),
-          onTap: () => onNavigate(AppTab.orders),
+          onTap: () => _openOrders('all'),
         ),
       ],
     };

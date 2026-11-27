@@ -26,12 +26,20 @@ class MediaUploadService {
     defaultValue: 'restaurante-mania-e47a0.firebasestorage.app',
   );
 
-  static const allowedMimeTypes = <String>{
+  static const allowedImageMimeTypes = <String>{
     'image/jpeg',
     'image/png',
     'image/webp',
     'image/gif',
   };
+
+  static const allowedVideoMimeTypes = <String>{
+    'video/mp4',
+    'video/webm',
+    'video/quicktime',
+  };
+
+  static const allowedMimeTypes = allowedImageMimeTypes;
 
   /// Mensajes diferenciados para permisos, red y tiempo de espera.
   static const networkMessage =
@@ -50,6 +58,9 @@ class MediaUploadService {
     if (lower.endsWith('.png')) return 'image/png';
     if (lower.endsWith('.webp')) return 'image/webp';
     if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.mp4')) return 'video/mp4';
+    if (lower.endsWith('.webm')) return 'video/webm';
+    if (lower.endsWith('.mov')) return 'video/quicktime';
     return '';
   }
 
@@ -80,6 +91,15 @@ class MediaUploadService {
       // WEBP
       return 'image/webp';
     }
+    if (bytes.length >= 12 && _startsWith(bytes, [0x1A, 0x45, 0xDF, 0xA3])) {
+      return 'video/webm';
+    }
+    if (bytes.length >= 12 &&
+        bytes[4] == 0x66 && bytes[5] == 0x74 && bytes[6] == 0x79 && bytes[7] == 0x70) {
+      final brand = String.fromCharCodes(bytes.sublist(8, 12));
+      if (brand == 'qt  ') return 'video/quicktime';
+      return 'video/mp4';
+    }
     return '';
   }
 
@@ -96,13 +116,19 @@ class MediaUploadService {
   static String resolveMimeType({
     required String filePath,
     required List<int> bytes,
+    Set<String>? allowed,
   }) {
     final byPath = mimeTypeFromPath(filePath);
     final byBytes = mimeTypeFromBytes(bytes);
+    final allowedTypes = allowed ?? allowedImageMimeTypes;
     if (byBytes.isEmpty) {
-      throw const MediaUploadException(
-        'No se reconoce el formato de la imagen. Usa JPG, PNG, WEBP o GIF.',
-      );
+      final hint = allowedTypes.any((t) => t.startsWith('video/'))
+          ? 'Usa JPG, PNG, WEBP, GIF, MP4, WEBM o MOV.'
+          : 'Usa JPG, PNG, WEBP o GIF.';
+      throw MediaUploadException('No se reconoce el formato del archivo. ' + hint);
+    }
+    if (!allowedTypes.contains(byBytes)) {
+      throw MediaUploadException('El formato ' + byBytes.split('/').last + ' no está permitido para este campo.');
     }
     if (byPath.isNotEmpty && byPath != byBytes) {
       if (byPath == 'image/gif') {
@@ -111,10 +137,14 @@ class MediaUploadService {
           'Guárdalo de nuevo como GIF animado y vuelve a subirlo.',
         );
       }
-      throw MediaUploadException(
-        'La extensión (${byPath.split('/').last}) no coincide con el contenido '
-        'de la imagen (${byBytes.split('/').last}).',
-      );
+      final pathIsVideo = byPath.startsWith('video/');
+      final bytesIsVideo = byBytes.startsWith('video/');
+      if (!(pathIsVideo && bytesIsVideo)) {
+        throw MediaUploadException(
+          'La extensión (' + byPath.split('/').last + ') no coincide con el contenido '
+          'del archivo (' + byBytes.split('/').last + ').',
+        );
+      }
     }
     return byBytes;
   }
@@ -144,25 +174,20 @@ class MediaUploadService {
     required String filePath,
     required String objectName,
     int maxBytes = 6 * 1024 * 1024,
+    Set<String>? allowedMimeTypes,
   }) async {
+    final allowed = allowedMimeTypes ?? allowedImageMimeTypes;
     final file = File(filePath);
     if (!await file.exists()) {
-      throw const MediaUploadException('No se encontró la imagen seleccionada.');
+      throw const MediaUploadException('No se encontró el archivo seleccionado.');
     }
     final length = await file.length();
     if (length == 0 || length > maxBytes) {
       final limit = (maxBytes / (1024 * 1024)).toStringAsFixed(0);
-      throw MediaUploadException(
-        'La imagen debe pesar menos de $limit MB.',
-      );
+      throw MediaUploadException('El archivo debe pesar menos de $limit MB.');
     }
     final bytes = await file.readAsBytes();
-    final mimeType = resolveMimeType(filePath: filePath, bytes: bytes);
-    if (!allowedMimeTypes.contains(mimeType)) {
-      throw const MediaUploadException(
-        'Usa una imagen JPG, PNG, WEBP o GIF.',
-      );
-    }
+    final mimeType = resolveMimeType(filePath: filePath, bytes: bytes, allowed: allowed);
 
     String token;
     try {

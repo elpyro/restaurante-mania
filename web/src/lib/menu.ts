@@ -1,5 +1,12 @@
 import { cache } from "react";
 import { getDemoState } from "./demo-store";
+import {
+  genericCategories,
+  genericIngredientStocks,
+  genericMenuItems,
+  genericRecipes,
+} from "./generic-template";
+import { getRestaurantConfig } from "./restaurant-config";
 import { demoIngredientStocks, demoRecipes, seedCategories, seedMenuItems } from "./seed";
 import { slugify } from "./format";
 import {
@@ -9,7 +16,7 @@ import {
   setDocument,
   tenantPath,
 } from "./firebase/rest";
-import { DEFAULT_TENANT_ID, isDemoTenant } from "./tenants";
+import { DEFAULT_TENANT_ID, isDemoTenant, isTemplateTenant } from "./tenants";
 import type { Category, MenuItem, MenuItemStatus, RecipeIngredient } from "./types";
 
 const VALID_STATUS: MenuItemStatus[] = ["available", "unavailable", "limited"];
@@ -118,15 +125,41 @@ export interface MenuData {
   source: "firestore" | "demo";
 }
 
-function seedMenu(tenantId = DEFAULT_TENANT_ID): MenuData {
-  const demo = isDemoTenant(tenantId)
-    ? getDemoState(tenantId)
-    : {
-        categories: seedCategories,
-        items: seedMenuItems,
-        stocks: demoIngredientStocks,
-        recipes: demoRecipes,
-      };
+async function seedMenu(tenantId = DEFAULT_TENANT_ID): Promise<MenuData> {
+  let demo: {
+    categories: Category[];
+    items: MenuItem[];
+    stocks: Record<string, number>;
+    recipes: Record<string, RecipeIngredient[]>;
+  };
+  if (isTemplateTenant(tenantId)) {
+    // Un tenant recién creado sin catálogo propio usa la plantilla. Si ya
+    // tiene configuración guardada (casos históricos como taquitos-mexicanos)
+    // conserva el catálogo de siempre para no cambiar su comportamiento.
+    const snapshot = await getRestaurantConfig(tenantId);
+    demo = snapshot.configured
+      ? {
+          categories: seedCategories,
+          items: seedMenuItems,
+          stocks: demoIngredientStocks,
+          recipes: demoRecipes,
+        }
+      : {
+          categories: genericCategories,
+          items: genericMenuItems,
+          stocks: genericIngredientStocks,
+          recipes: genericRecipes,
+        };
+  } else if (isDemoTenant(tenantId)) {
+    demo = getDemoState(tenantId);
+  } else {
+    demo = {
+      categories: seedCategories,
+      items: seedMenuItems,
+      stocks: demoIngredientStocks,
+      recipes: demoRecipes,
+    };
+  }
   const stocks = new Map(Object.entries(demo.stocks));
   const items = demo.items.map((item) => {
     const recipe = item.recipe ?? demo.recipes[item.id] ?? [];
@@ -152,7 +185,7 @@ function seedMenu(tenantId = DEFAULT_TENANT_ID): MenuData {
 
 async function loadMenu(tenantId = DEFAULT_TENANT_ID): Promise<MenuData> {
   if (!isFirestoreConfigured()) {
-    return seedMenu(tenantId);
+    return await seedMenu(tenantId);
   }
   try {
     const [categories, ingredientDocs] = await Promise.all([
@@ -175,7 +208,7 @@ async function loadMenu(tenantId = DEFAULT_TENANT_ID): Promise<MenuData> {
       (doc) => mapMenuItem(doc, categories, stocks),
       0,
     );
-    if (categories.length === 0 || items.length === 0) return seedMenu(tenantId);
+    if (categories.length === 0 || items.length === 0) return await seedMenu(tenantId);
     categories.sort((a, b) => a.order - b.order);
     const categoryOrder = new Map(
       categories.map((category, index) => [category.id, index]),
@@ -189,7 +222,7 @@ async function loadMenu(tenantId = DEFAULT_TENANT_ID): Promise<MenuData> {
     return { categories, items, source: "firestore" };
   } catch (error) {
     console.warn("[menu] Firestore no disponible, usando datos demo:", error);
-    return seedMenu(tenantId);
+    return await seedMenu(tenantId);
   }
 }
 
