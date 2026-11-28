@@ -45,6 +45,7 @@ describe("configuración del restaurante", () => {
       city: "Bogotá",
       currency: "usd",
       showOrderTypeOptions: false,
+      tableCount: 8,
       deliveryOptions: { pickup: false, delivery: true },
       paymentMethods: ["nequi"],
       paymentMethodLabels: { nequi: "Nequi" },
@@ -59,6 +60,7 @@ describe("configuración del restaurante", () => {
       countryCode: "+1",
       currency: "USD",
       showOrderTypeOptions: false,
+      tableCount: 8,
       deliveryOptions: { pickup: false, delivery: true },
       paymentMethods: ["nequi"],
     });
@@ -124,6 +126,12 @@ describe("configuración del restaurante", () => {
 
   it("rechaza zonas, días y horarios inválidos", () => {
     expect(() => sanitizeConfigPatch({ timeZone: "Marte/Base" })).toThrow(
+      ConfigValidationError,
+    );
+    expect(() => sanitizeConfigPatch({ tableCount: -1 })).toThrow(
+      ConfigValidationError,
+    );
+    expect(() => sanitizeConfigPatch({ tableCount: 201 })).toThrow(
       ConfigValidationError,
     );
     expect(() => sanitizeConfigPatch({ openingDays: [] })).toThrow(

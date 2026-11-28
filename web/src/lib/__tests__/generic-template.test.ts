@@ -23,7 +23,7 @@ import {
   genericMenuItems,
   genericRecipes,
 } from "@/lib/generic-template";
-import { getMenu } from "@/lib/menu";
+import { getMenu, visibleMenuCategories } from "@/lib/menu";
 import { isFixedTenant, isTemplateTenant } from "@/lib/tenants";
 
 afterEach(() => {
@@ -47,7 +47,17 @@ describe("plantilla genérica de restaurantes nuevos", () => {
     expect(text).not.toContain("bandeja paisa");
     expect(text).not.toContain(" Restaurante Manía");
     expect(genericMenuItems).toHaveLength(2);
-    expect(genericCategories).toHaveLength(1);
+    expect(
+      genericMenuItems.filter((item) => item.featured).map((item) => item.id),
+    ).toEqual(["item-ensalada-fresca", "item-cafe-con-leche"]);
+    expect(genericCategories).toHaveLength(11);
+    expect(Object.keys(genericIngredientStocks).sort()).toEqual([
+      "ing-cafe",
+      "ing-leche",
+      "ing-lechuga",
+      "ing-tomates",
+    ]);
+    expect(genericIngredientStocks["ing-cafe"]).toBe(40);
   });
 
   it("reconoce solo como plantilla los tenants creados por el usuario", () => {
@@ -74,12 +84,18 @@ describe("plantilla genérica de restaurantes nuevos", () => {
       "Comida lista para compartir, todos los días.",
     );
     expect(config.config.aiSearch.description).toContain("pedidos en línea");
+    // Las categorías sin platos siguen existiendo para administrar el menú,
+    // pero no se publican en la web.
     expect(menu.categories.map((category) => category.id)).toEqual([
-      "cat-generales",
+      "cat-ensaladas",
+      "cat-bebidas",
     ]);
+    expect(
+      menu.items.map((item) => item.imageUrl).filter(Boolean),
+    ).toHaveLength(2);
     expect(menu.items.map((item) => item.id).sort()).toEqual([
+      "item-cafe-con-leche",
       "item-ensalada-fresca",
-      "item-plato-del-dia",
     ]);
     expect(menu.items.every((item) => item.status === "available")).toBe(true);
   });
@@ -104,8 +120,24 @@ describe("plantilla genérica de restaurantes nuevos", () => {
     expect(config.configured).toBe(true);
     expect(config.config.name).toBe("Taquitos históricos");
     expect(menu.items.some((item) => item.id === "item-empanadas")).toBe(true);
-    expect(menu.items.some((item) => item.id === "item-plato-del-dia")).toBe(
+    expect(menu.items.some((item) => item.id === "item-cafe-con-leche")).toBe(
       false,
     );
+  });
+
+  it("oculta categorías vacías y las que tienen orden cero", () => {
+    const visible = visibleMenuCategories(genericCategories, genericMenuItems);
+    expect(visible.map((category) => category.id)).toEqual([
+      "cat-ensaladas",
+      "cat-bebidas",
+    ]);
+    expect(
+      visibleMenuCategories(
+        [{ ...genericCategories[0], order: 0 }],
+        genericMenuItems.filter(
+          (item) => item.categoryId === genericCategories[0].id,
+        ),
+      ),
+    ).toEqual([]);
   });
 });

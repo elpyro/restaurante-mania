@@ -271,6 +271,10 @@ void main() {
     );
     addTearDown(repository.dispose);
     repository.loginAs(UserRole.cashier);
+    await repository.updateSettings(
+      repository.settings.copyWith(tableCount: 10),
+      publishToWeb: false,
+    );
 
     final stockBefore = repository.ingredientById('pollo')!.stock;
     final order = await repository.createOrder(
@@ -292,6 +296,27 @@ void main() {
     expect(repository.ingredientById('pollo')!.stock, stockBefore - 180);
     expect(repository.tableByNumber(6)?.status, TableStatus.libre);
     expect(repository.tableByNumber(6)?.currentOrderId, isNull);
+  });
+
+  test('rechaza pedidos de mesa fuera del máximo configurado', () async {
+    final repository = await RestaurantRepository.load(
+      watchConnectivity: false,
+    );
+    addTearDown(repository.dispose);
+    repository.loginAs(UserRole.cashier);
+    await repository.updateSettings(
+      repository.settings.copyWith(tableCount: 4),
+      publishToWeb: false,
+    );
+
+    await expectLater(
+      repository.createOrder(
+        lines: cart(),
+        type: OrderType.table,
+        tableNumber: 5,
+      ),
+      throwsA(isA<ArgumentError>()),
+    );
   });
 
   test('actualiza disponibilidad del menú y persiste', () async {
@@ -343,15 +368,15 @@ void main() {
     addTearDown(repository.dispose);
 
     expect(repository.orders, isNotEmpty);
-    expect(repository.occupiedTables, 2);
-    expect(repository.freeTables, 8);
+    expect(repository.occupiedTables, 0);
+    expect(repository.freeTables, 10);
     // `todaySales` depende de la hora local: cerca de medianoche los pedidos
     // semilla de las últimas horas caen en el día anterior. Comprobamos el
     // total de la última semana para que la métrica no dependa del reloj.
     expect(
-      repository.salesByDay(
-        days: 7,
-      ).fold<double>(0, (sum, day) => sum + day.total),
+      repository
+          .salesByDay(days: 7)
+          .fold<double>(0, (sum, day) => sum + day.total),
       greaterThan(0),
     );
     expect(repository.pendingPayments, greaterThan(0));
@@ -398,43 +423,49 @@ void main() {
     );
   });
 
-  test('un insumo de receta sin documento bloquea el plato y el pedido', () async {
-    final items = SeedData.menuItemsWithRecipes().toList();
-    final ingredients =
-        SeedData.ingredients.where((ingredient) => ingredient.id != 'cafe').toList();
-    SharedPreferences.setMockInitialValues({
-      'rm_menu_items_v1': jsonEncode(items.map((item) => item.toJson()).toList()),
-      'rm_ingredients_v1': jsonEncode(
-        ingredients.map((ingredient) => ingredient.toJson()).toList(),
-      ),
-    });
+  test(
+    'un insumo de receta sin documento bloquea el plato y el pedido',
+    () async {
+      final items = SeedData.menuItemsWithRecipes().toList();
+      final ingredients = SeedData.ingredients
+          .where((ingredient) => ingredient.id != 'cafe')
+          .toList();
+      SharedPreferences.setMockInitialValues({
+        'rm_menu_items_v1': jsonEncode(
+          items.map((item) => item.toJson()).toList(),
+        ),
+        'rm_ingredients_v1': jsonEncode(
+          ingredients.map((ingredient) => ingredient.toJson()).toList(),
+        ),
+      });
 
-    final repository = await RestaurantRepository.load(
-      watchConnectivity: false,
-    );
-    addTearDown(repository.dispose);
+      final repository = await RestaurantRepository.load(
+        watchConnectivity: false,
+      );
+      addTearDown(repository.dispose);
 
-    final cafe = repository.menuItemById('item-cafe')!;
-    expect(repository.ingredientById('cafe'), isNull);
-    expect(repository.isMenuItemOutOfStockByIngredients(cafe), isTrue);
-    expect(
-      repository.createOrder(
-        lines: const [
-          CartLine(
-            menuItemId: 'item-cafe',
-            name: 'Café',
-            price: 6900,
-            quantity: 1,
-            emoji: '☕',
-          ),
-        ],
-        customerName: 'Ana Pérez',
-        customerPhone: '300 123 4567',
-        type: OrderType.pickup,
-      ),
-      throwsArgumentError,
-    );
-  });
+      final cafe = repository.menuItemById('item-cafe')!;
+      expect(repository.ingredientById('cafe'), isNull);
+      expect(repository.isMenuItemOutOfStockByIngredients(cafe), isTrue);
+      expect(
+        repository.createOrder(
+          lines: const [
+            CartLine(
+              menuItemId: 'item-cafe',
+              name: 'Café',
+              price: 6900,
+              quantity: 1,
+              emoji: '☕',
+            ),
+          ],
+          customerName: 'Ana Pérez',
+          customerPhone: '300 123 4567',
+          type: OrderType.pickup,
+        ),
+        throwsArgumentError,
+      );
+    },
+  );
 
   test('agotar por insumos encola el estado como derivado del stock', () async {
     final repository = await RestaurantRepository.load(
@@ -680,21 +711,25 @@ void main() {
     await repository.markOrderPaid(order.id);
 
     final now = DateTime.now();
-    final start = DateTime(now.year, now.month, now.day)
-        .subtract(const Duration(days: 29));
+    final start = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).subtract(const Duration(days: 29));
     final end = DateTime(now.year, now.month, now.day, 23, 59, 59);
 
     expect(repository.salesByDay(days: 30).length, 30);
     expect(repository.salesInRange(start: start, end: end).length, 30);
     expect(
-      repository.salesInRange(
-        start: start,
-        end: end,
-        bucket: SalesBucket.month,
-      ).length,
+      repository
+          .salesInRange(start: start, end: end, bucket: SalesBucket.month)
+          .length,
       greaterThanOrEqualTo(1),
     );
-    expect(repository.paidOrdersInRange(start, end).any((o) => o.id == order.id), isTrue);
+    expect(
+      repository.paidOrdersInRange(start, end).any((o) => o.id == order.id),
+      isTrue,
+    );
     expect(repository.currentShiftOrders.any((o) => o.id == order.id), isTrue);
   });
 
@@ -724,7 +759,10 @@ void main() {
     expect(closed.closedByName, 'Andrés Mejía');
     expect(closed.expectedCash, order.total);
     expect(closed.difference, 50000 - order.total);
-    expect(repository.closedShifts.map((shift) => shift.id), contains(closed.id));
+    expect(
+      repository.closedShifts.map((shift) => shift.id),
+      contains(closed.id),
+    );
     expect(repository.activeShift.id, isNot(closed.id));
     expect(repository.activeShift.isOpen, isTrue);
     expect(repository.currentShiftOrders, isEmpty);

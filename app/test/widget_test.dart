@@ -50,7 +50,7 @@ void main() {
     expect(find.text('Pedidos'), findsWidgets);
     expect(find.text('Ventas últimos 7 días'), findsNothing);
     expect(find.text('Mesas ocupadas'), findsOneWidget);
-    expect(find.text('2/10'), findsOneWidget);
+    expect(find.text('0/10'), findsOneWidget);
     expect(find.byType(NavigationDestination), findsNWidgets(4));
   });
 
@@ -156,10 +156,7 @@ void main() {
     expect(find.text('Ir a ingredientes'), findsOneWidget);
 
     // El switch no debió cambiar el estado del plato.
-    expect(
-      repository.menuItemById('item-cafe')!.manualUnavailable,
-      isFalse,
-    );
+    expect(repository.menuItemById('item-cafe')!.manualUnavailable, isFalse);
 
     await tester.tap(find.text('Ir a ingredientes'));
     await tester.pumpAndSettle();

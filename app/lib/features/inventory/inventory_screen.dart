@@ -41,8 +41,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
     final repository = context.watch<RestaurantRepository>();
     final role = repository.role ?? UserRole.admin;
     final canEdit = role.canManageMenu;
-    final outOfStockCount =
-        repository.ingredients.where((i) => i.stock <= 0).length;
+    final outOfStockCount = repository.ingredients
+        .where((i) => i.stock <= 0)
+        .length;
     final lowStockCount = repository.lowStockIngredients.length;
     final query = _query.trim().toLowerCase();
     final items = repository.ingredients.where((ingredient) {
@@ -57,7 +58,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }).toList();
 
     return Scaffold(
-      backgroundColor: Colors.transparent,
       appBar: widget.showAppBar
           ? AppBar(
               title: const Text('Inventario'),
@@ -112,21 +112,25 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   value: '$lowStockCount',
                   color: AppTheme.warning,
                   selected: _filter == _InventoryFilter.low,
-                  onTap: () => setState(() => _filter =
-                      _filter == _InventoryFilter.low
-                          ? _InventoryFilter.all
-                          : _InventoryFilter.low),
+                  onTap: () => setState(
+                    () => _filter = _filter == _InventoryFilter.low
+                        ? _InventoryFilter.all
+                        : _InventoryFilter.low,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 _SummaryCard(
                   label: 'Sin stock',
                   value: '$outOfStockCount',
-                  color: outOfStockCount > 0 ? AppTheme.danger : AppTheme.success,
+                  color: outOfStockCount > 0
+                      ? AppTheme.danger
+                      : AppTheme.success,
                   selected: _filter == _InventoryFilter.out,
-                  onTap: () => setState(() => _filter =
-                      _filter == _InventoryFilter.out
-                          ? _InventoryFilter.all
-                          : _InventoryFilter.out),
+                  onTap: () => setState(
+                    () => _filter = _filter == _InventoryFilter.out
+                        ? _InventoryFilter.all
+                        : _InventoryFilter.out,
+                  ),
                 ),
               ],
             ),
@@ -174,11 +178,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
                             repository,
                             ingredient: ingredient,
                           ),
-                          onRestock: () => _openRestock(
-                            context,
-                            repository,
-                            ingredient,
-                          ),
+                          onRestock: () =>
+                              _openRestock(context, repository, ingredient),
                           onDelete: () async {
                             final confirmed = await showDialog<bool>(
                               context: context,
@@ -387,8 +388,8 @@ class _IngredientTileState extends State<_IngredientTile> {
     final progressColor = ingredient.isLow
         ? AppTheme.danger
         : ratio < 0.5
-            ? AppTheme.warning
-            : AppTheme.success;
+        ? AppTheme.warning
+        : AppTheme.success;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
@@ -416,7 +417,11 @@ class _IngredientTileState extends State<_IngredientTile> {
               ),
               child: Row(
                 children: const [
-                  Icon(Icons.check_circle_rounded, size: 16, color: Colors.white),
+                  Icon(
+                    Icons.check_circle_rounded,
+                    size: 16,
+                    color: Colors.white,
+                  ),
                   SizedBox(width: 6),
                   Text(
                     '¡Surtido!',
@@ -495,10 +500,7 @@ class _IngredientTileState extends State<_IngredientTile> {
               ),
               Text(
                 'Mínimo: ${ingredient.minStockLabel}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Color(0xFFA8A29E),
-                ),
+                style: const TextStyle(fontSize: 11, color: Color(0xFFA8A29E)),
               ),
               if (ingredient.cost > 0)
                 Text(
@@ -606,8 +608,9 @@ class _RestockDialogState extends State<_RestockDialog> {
             TextField(
               controller: _controller,
               autofocus: true,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               textInputAction: TextInputAction.done,
               onChanged: (_) => setState(() => _error = null),
               onSubmitted: (_) => _confirm(),
@@ -631,10 +634,7 @@ class _RestockDialogState extends State<_RestockDialog> {
             ],
             const SizedBox(height: 12),
             Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 10,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: AppTheme.success.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(12),
@@ -746,7 +746,9 @@ class _IngredientEditorDialogState extends State<_IngredientEditorDialog> {
   void _save() {
     final name = _name.text.trim();
     final stock = double.tryParse(_stock.text.replaceAll(',', '.').trim());
-    final minStock = double.tryParse(_minStock.text.replaceAll(',', '.').trim());
+    final minStock = double.tryParse(
+      _minStock.text.replaceAll(',', '.').trim(),
+    );
     final cost = double.tryParse(_cost.text.replaceAll(',', '.').trim());
     if (name.length < 2) {
       setState(() => _error = 'Escribe el nombre del insumo.');
@@ -774,9 +776,7 @@ class _IngredientEditorDialogState extends State<_IngredientEditorDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(
-        widget.ingredient == null ? 'Nuevo insumo' : 'Editar insumo',
-      ),
+      title: Text(widget.ingredient == null ? 'Nuevo insumo' : 'Editar insumo'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -812,24 +812,25 @@ class _IngredientEditorDialogState extends State<_IngredientEditorDialog> {
             const SizedBox(height: 10),
             TextField(
               controller: _stock,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Stock actual *',
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
               ),
+              decoration: const InputDecoration(labelText: 'Stock actual *'),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: _minStock,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(labelText: 'Stock mínimo *'),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: _cost,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(
                 labelText: 'Costo unitario (opcional)',
               ),

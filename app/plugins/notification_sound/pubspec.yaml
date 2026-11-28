@@ -1,0 +1,19 @@
+name: notification_sound
+description: Reproduce el sonido de alertas del POS directamente desde la app en Android.
+version: 0.0.1
+publish_to: none
+
+environment:
+  sdk: ^3.10.0
+  flutter: ">=3.38.1"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.example.app.notificationsound
+        pluginClass: NotificationSoundPlugin

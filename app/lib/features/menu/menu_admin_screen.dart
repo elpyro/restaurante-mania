@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/data/repository.dart';
@@ -206,10 +205,9 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
     );
   }
 
-  static String _formatAmount(double value) =>
-      value == value.roundToDouble()
-          ? value.toStringAsFixed(0)
-          : value.toStringAsFixed(2);
+  static String _formatAmount(double value) => value == value.roundToDouble()
+      ? value.toStringAsFixed(0)
+      : value.toStringAsFixed(2);
 
   @override
   Widget build(BuildContext context) {
@@ -219,16 +217,17 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
     final query = _searchController.text.trim().toLowerCase();
     final items = repository.menuItems.where((item) {
       final categoryOk = _categoryId == 'all' || item.categoryId == _categoryId;
-      final searchOk = query.isEmpty ||
+      final searchOk =
+          query.isEmpty ||
           item.name.toLowerCase().contains(query) ||
           item.description.toLowerCase().contains(query);
       return categoryOk && searchOk;
     }).toList();
-    final available =
-        repository.menuItems.where((item) => item.isAvailable).length;
+    final available = repository.menuItems
+        .where((item) => item.isAvailable)
+        .length;
 
     return Scaffold(
-      backgroundColor: Colors.transparent,
       appBar: widget.showAppBar
           ? AppBar(
               title: const Text('Menú'),
@@ -330,16 +329,17 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
                     itemBuilder: (context, index) {
                       final item = items[index];
                       final category = repository.categoryById(item.categoryId);
-                      final outByIngredients =
-                          repository.isMenuItemOutOfStockByIngredients(item);
-                      final effectivelyAvailable =
-                          repository.isMenuItemEffectivelyAvailable(item);
-                      final statusColor =
-                          effectivelyAvailable ? AppTheme.success : AppTheme.danger;
+                      final outByIngredients = repository
+                          .isMenuItemOutOfStockByIngredients(item);
+                      final effectivelyAvailable = repository
+                          .isMenuItemEffectivelyAvailable(item);
+                      final statusColor = effectivelyAvailable
+                          ? AppTheme.success
+                          : AppTheme.danger;
                       final statusLabel =
                           outByIngredients && !item.manualUnavailable
-                              ? 'Agotado (sin insumos)'
-                              : item.status.label;
+                          ? 'Agotado (sin insumos)'
+                          : item.status.label;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Container(
@@ -347,9 +347,7 @@ class _MenuAdminScreenState extends State<MenuAdminScreen> {
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: const Color(0xFFEDEAE6),
-                            ),
+                            border: Border.all(color: const Color(0xFFEDEAE6)),
                           ),
                           child: Row(
                             children: [
@@ -573,7 +571,8 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
     _allergens = TextEditingController(
       text: widget.item?.allergens.join(', ') ?? '',
     );
-    _categoryId = widget.item?.categoryId ??
+    _categoryId =
+        widget.item?.categoryId ??
         (widget.categories.isEmpty ? '' : widget.categories.first.id);
     _recipe = List<RecipeIngredient>.from(widget.item?.recipe ?? const []);
   }
@@ -617,7 +616,10 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
   Future<void> _pickImage() async {
     try {
       final picker = ImagePicker();
-      final file = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+      final file = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+      );
       if (file == null) return;
       final url = await _uploadMedia(file, isVideo: false);
       if (!mounted) return;
@@ -640,19 +642,22 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
       setState(() => _videoUrl.text = url);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo cargar el video: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('No se pudo cargar el video: $e')));
     }
   }
 
   Future<String> _uploadMedia(XFile file, {required bool isVideo}) async {
     final repository = context.read<RestaurantRepository>();
-    final service = MediaUploadService(authService: repository.authServiceForMedia);
+    final service = MediaUploadService(
+      authService: repository.authServiceForMedia,
+    );
     final ext = p.extension(file.path).replaceFirst('.', '').toLowerCase();
     final safeExt = ext.isEmpty ? (isVideo ? 'mp4' : 'jpg') : ext;
     final kind = isVideo ? 'videos' : 'images';
-    final name = 'tenants/${repository.tenantId}/menu/$kind/${DateTime.now().millisecondsSinceEpoch}.$safeExt';
+    final name =
+        'tenants/${repository.tenantId}/menu/$kind/${DateTime.now().millisecondsSinceEpoch}.$safeExt';
     return service.uploadFile(
       filePath: file.path,
       objectName: name,
@@ -661,17 +666,6 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
           ? MediaUploadService.allowedVideoMimeTypes
           : MediaUploadService.allowedImageMimeTypes,
     );
-  }
-
-  Future<String> _copyToAppDir(XFile file, String subdir) async {
-    final base = await getApplicationDocumentsDirectory();
-    final dir = Directory(p.join(base.path, 'media', subdir));
-    if (!await dir.exists()) await dir.create(recursive: true);
-    final ext = p.extension(file.path).isEmpty ? '' : p.extension(file.path);
-    final name = '${DateTime.now().millisecondsSinceEpoch}$ext';
-    final dest = p.join(dir.path, name);
-    await File(file.path).copy(dest);
-    return dest;
   }
 
   void _save() {
@@ -733,7 +727,10 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [AppTheme.brand.withValues(alpha: 0.14), AppTheme.brand.withValues(alpha: 0.03)],
+            colors: [
+              AppTheme.brand.withValues(alpha: 0.14),
+              AppTheme.brand.withValues(alpha: 0.03),
+            ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -742,18 +739,40 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
         child: Row(
           children: [
             Container(
-              width: 42, height: 42,
-              decoration: BoxDecoration(color: AppTheme.brand, borderRadius: BorderRadius.circular(12)),
-              child: Icon(isNew ? Icons.add_rounded : Icons.edit_rounded, color: Colors.white),
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: AppTheme.brand,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                isNew ? Icons.add_rounded : Icons.edit_rounded,
+                color: Colors.white,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(isNew ? 'Nuevo producto' : 'Editar producto', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppTheme.ink)),
+                  Text(
+                    isNew ? 'Nuevo producto' : 'Editar producto',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.ink,
+                    ),
+                  ),
                   const SizedBox(height: 2),
-                  Text(isNew ? 'Agrega un plato al menú' : 'Actualiza la información del plato', style: const TextStyle(fontSize: 12, color: Color(0xFF78716C))),
+                  Text(
+                    isNew
+                        ? 'Agrega un plato al menú'
+                        : 'Actualiza la información del plato',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF78716C),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -781,7 +800,7 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
               controller: _price,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
-                labelText: 'Precio (COP) *',
+                labelText: 'Precio *',
                 prefixText: '\$ ',
               ),
             ),
@@ -866,8 +885,7 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
                 return ChoiceChip(
                   label: Text('${category.emoji} ${category.name}'),
                   selected: _categoryId == category.id,
-                  onSelected: (_) =>
-                      setState(() => _categoryId = category.id),
+                  onSelected: (_) => setState(() => _categoryId = category.id),
                   showCheckmark: false,
                 );
               }).toList(),
@@ -885,9 +903,7 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
             TextField(
               controller: _recipeSteps,
               maxLines: 4,
-              decoration: const InputDecoration(
-                hintText: '1. ...\n2. ...',
-              ),
+              decoration: const InputDecoration(hintText: '1. ...\n2. ...'),
             ),
             const SizedBox(height: 10),
             Row(
@@ -967,10 +983,7 @@ class _MenuEditorDialogState extends State<_MenuEditorDialog> {
 }
 
 class _RecipeLineDraft {
-  const _RecipeLineDraft({
-    required this.ingredientId,
-    required this.quantity,
-  });
+  const _RecipeLineDraft({required this.ingredientId, required this.quantity});
 
   final String ingredientId;
   final double quantity;
@@ -1029,8 +1042,7 @@ class _RecipeLineDialogState extends State<_RecipeLineDialog> {
           const SizedBox(height: 10),
           TextField(
             controller: _quantityController,
-            keyboardType:
-                const TextInputType.numberWithOptions(decimal: true),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
             decoration: const InputDecoration(
               labelText: 'Cantidad por porción',
             ),
@@ -1048,9 +1060,9 @@ class _RecipeLineDialogState extends State<_RecipeLineDialog> {
               _quantityController.text.replaceAll(',', '.').trim(),
             );
             if (qty == null || qty <= 0) return;
-            Navigator.of(context).pop(
-              _RecipeLineDraft(ingredientId: _ingredientId, quantity: qty),
-            );
+            Navigator.of(
+              context,
+            ).pop(_RecipeLineDraft(ingredientId: _ingredientId, quantity: qty));
           },
           child: const Text('Agregar'),
         ),

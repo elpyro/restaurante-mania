@@ -72,10 +72,29 @@ describe("validación de pedidos", () => {
     }
   });
 
-  it("acepta mesa válida", () => {
-    const result = validateOrderInput({ ...base, type: "table", tableNumber: 4 });
+  it("acepta mesa válida dentro del máximo configurado", () => {
+    const policy = { ...DEFAULT_ORDER_POLICY, tableCount: 6 };
+    const result = validateOrderInput(
+      { ...base, type: "table", tableNumber: 4 },
+      policy,
+    );
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.tableNumber).toBe(4);
+  });
+
+  it("rechaza mesas fuera del máximo configurado y sin mesas", () => {
+    const policy = { ...DEFAULT_ORDER_POLICY, tableCount: 6 };
+    const beyond = validateOrderInput(
+      { ...base, type: "table", tableNumber: 7 },
+      policy,
+    );
+    expect(beyond.ok).toBe(false);
+    if (!beyond.ok) expect(beyond.errors.join(" ")).toContain("1 y 6");
+    const withoutTables = validateOrderInput(
+      { ...base, type: "table", tableNumber: 1 },
+      DEFAULT_ORDER_POLICY,
+    );
+    expect(withoutTables.ok).toBe(false);
   });
 
   it("rechaza carrito vacío y cantidades fuera de rango", () => {

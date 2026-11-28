@@ -11,7 +11,10 @@ import {
   setDocument,
 } from "./firebase/rest";
 import { getMenu } from "./menu";
-import { getRestaurantConfig } from "./restaurant-config";
+import {
+  getRestaurantConfig,
+  MAX_TABLE_COUNT,
+} from "./restaurant-config";
 import { demoIngredientStocks } from "./seed";
 import {
   DEFAULT_TENANT_ID,
@@ -34,12 +37,14 @@ const PAYMENT_METHODS: PaymentMethod[] = ["cash", "card", "nequi", "daviplata"];
 /** Política publicada desde la APK; por defecto todo está disponible. */
 export interface OrderPolicy {
   showOrderTypeOptions: boolean;
+  tableCount: number;
   deliveryOptions: Record<OrderType, boolean>;
   paymentMethods: PaymentMethod[];
 }
 
 export const DEFAULT_ORDER_POLICY: OrderPolicy = {
   showOrderTypeOptions: true,
+  tableCount: 0,
   deliveryOptions: { pickup: true, delivery: true, table: true },
   paymentMethods: [...PAYMENT_METHODS],
 };
@@ -49,6 +54,7 @@ export function restaurantOrderPolicy(
 ): OrderPolicy {
   return {
     showOrderTypeOptions: config.showOrderTypeOptions,
+    tableCount: config.tableCount,
     deliveryOptions: config.deliveryOptions,
     paymentMethods: config.paymentMethods,
   };
@@ -139,7 +145,10 @@ export function validateOrderInput(
 
   if (!ORDER_TYPES.includes(type)) {
     errors.push("El tipo de pedido no es válido.");
-  } else if (!policy.deliveryOptions[type]) {
+  } else if (
+    !policy.deliveryOptions[type] ||
+    (type === "table" && policy.tableCount < 1)
+  ) {
     errors.push("Ese tipo de pedido no está disponible en este momento.");
   }
 
@@ -172,8 +181,9 @@ export function validateOrderInput(
   let tableNumber: number | null = null;
   if (type === "table") {
     const parsed = Number(body.tableNumber);
-    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
-      errors.push("El número de mesa debe estar entre 1 y 100.");
+    const maxTables = Math.min(MAX_TABLE_COUNT, policy.tableCount);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > maxTables) {
+      errors.push(`El número de mesa debe estar entre 1 y ${maxTables}.`);
     } else {
       tableNumber = parsed;
     }
@@ -268,6 +278,8 @@ function mapOrderDoc(doc: {
           imageUrl: String(entry.imageUrl ?? ""),
         }))
     : [];
+  // El autor del último cambio viaja en el documento para que Functions pueda
+  // excluir sus dispositivos de las notificaciones push.
   return {
     id: String(d.id ?? doc.id),
     code: String(d.code ?? ""),
@@ -298,7 +310,14 @@ function mapOrderDoc(doc: {
       : {}),
     ...(typeof d.paidBy === "string" ? { paidBy: d.paidBy } : {}),
     ...(typeof d.paidByName === "string" ? { paidByName: d.paidByName } : {}),
-  };
+    ...(typeof d.lastChangedBy === "string"
+      ? { lastChangedBy: d.lastChangedBy }
+      : {}),
+    ...(typeof d.updatedBy === "string" ? { updatedBy: d.updatedBy } : {}),
+    ...(typeof d.updatedByName === "string"
+      ? { updatedByName: d.updatedByName }
+      : {}),
+  } as Order;
 }
 
 const DATA_DIR = path.join(process.cwd(), ".data");
@@ -738,6 +757,9 @@ export async function updateOrder(
     status?: OrderStatus;
     paymentStatus?: PaymentStatus;
     inventoryDeducted?: boolean;
+    lastChangedBy?: string;
+    updatedBy?: string;
+    updatedByName?: string;
   } & OrderPaymentPatch,
   tenantId = DEFAULT_TENANT_ID,
 ): Promise<Order | null> {
@@ -753,7 +775,7 @@ export async function updateOrder(
   if (!current) return null;
 
   const wasDeducted = current.inventoryDeducted === true;
-  const next: Order = { ...current };
+  const next = { ...current } as Order & Record<string, unknown>;
   if (patch.status) {
     if (!ORDER_STATUSES.includes(patch.status)) {
       throw new OrderValidationError(["Estado de pedido inválido."]);
@@ -790,6 +812,14 @@ export async function updateOrder(
     next.paidByName ??= current.source === "web" ? "Web pública" : "Sistema";
   }
   next.updatedAt = new Date().toISOString();
+  // La APK envía al autor con cada cambio; se guarda para que el trigger de
+  // Firestore sepa a qué dispositivos excluir del aviso.
+  const changedBy = patch.lastChangedBy?.trim() || patch.updatedBy?.trim();
+  if (changedBy) {
+    next.lastChangedBy = changedBy;
+    next.updatedBy = patch.updatedBy?.trim() || changedBy;
+  }
+  if (patch.updatedByName?.trim()) next.updatedByName = patch.updatedByName.trim();
 
   // `pending` no descuenta insumos. El descuento se hace una sola vez al
   // avanzar a cualquier estado superior y se repone al cancelar/reabrir.

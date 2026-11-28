@@ -22,6 +22,21 @@ import type { Category, MenuItem, MenuItemStatus, RecipeIngredient } from "./typ
 const VALID_STATUS: MenuItemStatus[] = ["available", "unavailable", "limited"];
 const WRITABLE_STATUS: MenuItemStatus[] = ["available", "unavailable"];
 
+/**
+ * Solo publica categorías con platos asociados y orden positivo. Las
+ * categorías vacías se conservan en Firestore para que el POS pueda asignarlas,
+ * pero no deben aparecer en la web ni en el menú de pedidos.
+ */
+export function visibleMenuCategories(
+  categories: Category[],
+  items: MenuItem[],
+): Category[] {
+  const usedCategoryIds = new Set(items.map((item) => item.categoryId));
+  return categories.filter(
+    (category) => category.order > 0 && usedCategoryIds.has(category.id),
+  );
+}
+
 function asString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
@@ -176,9 +191,13 @@ async function seedMenu(tenantId = DEFAULT_TENANT_ID): Promise<MenuData> {
             : item.status,
     };
   });
+  const sortedItems = items.sort((a, b) => a.name.localeCompare(b.name));
   return {
-    categories: [...demo.categories].sort((a, b) => a.order - b.order),
-    items: items.sort((a, b) => a.name.localeCompare(b.name)),
+    categories: visibleMenuCategories(
+      [...demo.categories].sort((a, b) => a.order - b.order),
+      sortedItems,
+    ),
+    items: sortedItems,
     source: "demo",
   };
 }
@@ -219,7 +238,11 @@ async function loadMenu(tenantId = DEFAULT_TENANT_ID): Promise<MenuData> {
         (categoryOrder.get(b.categoryId) ?? 99);
       return byCategory !== 0 ? byCategory : a.name.localeCompare(b.name);
     });
-    return { categories, items, source: "firestore" };
+    return {
+      categories: visibleMenuCategories(categories, items),
+      items,
+      source: "firestore",
+    };
   } catch (error) {
     console.warn("[menu] Firestore no disponible, usando datos demo:", error);
     return await seedMenu(tenantId);

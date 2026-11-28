@@ -21,9 +21,10 @@ import '../models/restaurant_table.dart';
 import '../models/role.dart';
 import '../models/web_visit.dart';
 import '../services/auth_service.dart';
-import 'api_transport.dart';
 import '../services/connectivity_service.dart';
 import '../services/media_upload_service.dart';
+import '../services/notification_service.dart';
+import 'api_transport.dart';
 import '../utils/formatters.dart';
 import 'seed_data.dart';
 import 'tenant.dart';
@@ -100,7 +101,12 @@ List<Ingredient> mergeServerIngredients(
 /// (en la demo se marca como sincronizada; el adaptador de Firestore puede
 /// conectarse en [syncPendingOrders]).
 class TenantMembership {
-  const TenantMembership({required this.tenantId, required this.role, this.name = '', this.email = ''});
+  const TenantMembership({
+    required this.tenantId,
+    required this.role,
+    this.name = '',
+    this.email = '',
+  });
   final String tenantId;
   final String role;
   final String name;
@@ -146,9 +152,12 @@ class RestaurantRepository extends ChangeNotifier {
     required bool webSyncEnabled,
     required ApiTransport api,
     required String deviceId,
+    NotificationPreferences? notificationPreferences,
   }) : _prefs = prefs,
-        _api = api,
-        _deviceId = deviceId,
+       _api = api,
+       _deviceId = deviceId,
+       _notificationPreferences =
+           notificationPreferences ?? const NotificationPreferences(),
        tenantId = tenantId,
        _connectivity = connectivity,
        _ownsConnectivity = ownsConnectivity,
@@ -284,6 +293,16 @@ class RestaurantRepository extends ChangeNotifier {
   // tenant (si no, las lecturas siguen apuntando al tenant anterior).
   ApiTransport _api;
   final String _deviceId;
+  NotificationPreferences _notificationPreferences;
+  // Evita avisar sobre datos antiguos en la primera descarga del arranque.
+  bool _ordersPrimed = false;
+  bool _ingredientsPrimed = false;
+  bool _shiftsPrimed = false;
+
+  /// Notificación tocada por el usuario; `AppShell` la consume para navegar.
+  final ValueNotifier<NotificationTarget?> notificationTarget =
+      ValueNotifier<NotificationTarget?>(null);
+
   Future<void>? _syncFuture;
   Timer? _webPollTimer;
 
@@ -291,7 +310,8 @@ class RestaurantRepository extends ChangeNotifier {
   /// antes de resolver el tenant guardado. Sin esto, un restaurante nuevo se
   /// normalizaría a `mania` al reiniciar la app.
   static Future<void> _loadTenantRegistry(AuthService auth) async {
-    if (!_directFirestoreByDefault || AuthService.firebaseApiKey.isEmpty) return;
+    if (!_directFirestoreByDefault || AuthService.firebaseApiKey.isEmpty)
+      return;
     try {
       final transport = FirestoreTransport.fromEnvironment(
         auth: auth,
@@ -333,11 +353,13 @@ class RestaurantRepository extends ChangeNotifier {
     ApiTransport? transport,
   }) async {
     final rawPrefs = await SharedPreferences.getInstance();
+    final notificationPreferences = await NotificationPreferences.load();
     final registryAuth = authService ?? AuthService();
     await _loadTenantRegistry(registryAuth);
     var deviceId = rawPrefs.getString(_kDeviceId)?.trim() ?? '';
     if (deviceId.isEmpty) {
-      deviceId = 'dev-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-'
+      deviceId =
+          'dev-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-'
           '${Random.secure().nextInt(0x7fffffff).toRadixString(36)}';
       await rawPrefs.setString(_kDeviceId, deviceId);
     }
@@ -354,7 +376,8 @@ class RestaurantRepository extends ChangeNotifier {
       prefs.getString(_kServerUrl) ?? defaultServerUrl,
     );
     final auth = authService ?? AuthService();
-    final api = transport ??
+    final api =
+        transport ??
         (_directFirestoreByDefault && AuthService.firebaseApiKey.isNotEmpty
             ? FirestoreTransport.fromEnvironment(
                 auth: auth,
@@ -380,10 +403,12 @@ class RestaurantRepository extends ChangeNotifier {
         );
         if (response.ok) {
           final decoded = jsonDecode(response.body);
-          final config =
-              decoded is Map<String, dynamic> ? decoded['config'] : null;
+          final config = decoded is Map<String, dynamic>
+              ? decoded['config']
+              : null;
           final name = config is Map<String, dynamic> ? config['name'] : null;
-          hasExistingServerConfig = name is String &&
+          hasExistingServerConfig =
+              name is String &&
               name.trim().isNotEmpty &&
               name.trim() != SeedData.genericSettings.name;
         }
@@ -411,12 +436,14 @@ class RestaurantRepository extends ChangeNotifier {
     final seedItems = useGenericSeed
         ? SeedData.genericMenuItems()
         : seedDemo || useHistoricalSeed
-            ? SeedData.menuItemsFor(activeTenantId)
-            : const <MenuItem>[];
+        ? SeedData.menuItemsFor(activeTenantId)
+        : const <MenuItem>[];
     final migratedItems = _migrateRecipeIngredientIds(storedItems);
     final items = storedItems.isEmpty
         ? seedItems
-        : (seedDemo ? _hydrateSeedExtras(migratedItems, seedItems) : migratedItems);
+        : (seedDemo
+              ? _hydrateSeedExtras(migratedItems, seedItems)
+              : migratedItems);
     final storedIngredients = _readList<Ingredient>(
       prefs,
       _kIngredients,
@@ -429,18 +456,30 @@ class RestaurantRepository extends ChangeNotifier {
       _kInventoryLosses,
       InventoryLoss.fromJson,
     )..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    final tables = _readList<RestaurantTable>(
+    final tablesFromPrefs = _readList<RestaurantTable>(
       prefs,
       _kTables,
       RestaurantTable.fromJson,
     );
+    // Una mesa que quedó marcada como ocupada pero no tiene un pedido activo
+    // es estado obsoleto de una versión anterior: se devuelve a libre para que
+    // el POS siempre arranque con mesas coherentes.
+    final activeOrderIds = orders.map((order) => order.id).toSet();
+    var tablesNormalized = false;
+    final tables = tablesFromPrefs.map((table) {
+      if (table.status == TableStatus.libre) return table;
+      final orderId = table.currentOrderId?.trim() ?? '';
+      if (orderId.isNotEmpty && activeOrderIds.contains(orderId)) return table;
+      tablesNormalized = true;
+      return table.copyWith(status: TableStatus.libre, clearOrder: true);
+    }).toList();
     final settingsRaw = prefs.getString(_kSettings);
     final settings = settingsRaw == null
         ? (useGenericSeed
-            ? SeedData.genericSettings
-            : seedDemo || useHistoricalSeed
-                ? SeedData.settings
-                : RestaurantSettings.defaults)
+              ? SeedData.genericSettings
+              : seedDemo || useHistoricalSeed
+              ? SeedData.settings
+              : RestaurantSettings.defaults)
         : RestaurantSettings.fromJson(
             jsonDecode(settingsRaw) as Map<String, dynamic>,
           );
@@ -451,10 +490,10 @@ class RestaurantRepository extends ChangeNotifier {
     final storedUsers = _readList(prefs, _kUsers, AppUser.fromJson);
     final users = storedUsers.isEmpty
         ? (useGenericSeed || useHistoricalSeed
-            ? <AppUser>[]
-            : seedDemo
-                ? [...SeedData.users]
-                : <AppUser>[])
+              ? <AppUser>[]
+              : seedDemo
+              ? [...SeedData.users]
+              : <AppUser>[])
         : storedUsers;
     final lastSyncRaw = prefs.getString(_kLastSync);
     final lastSync = lastSyncRaw == null
@@ -467,18 +506,17 @@ class RestaurantRepository extends ChangeNotifier {
     final activeShiftRaw = prefs.getString(_kActiveCashShift);
     final activeShift = activeShiftRaw == null
         ? _newCashShift(DateTime.now(), user: currentUser)
-        : CashShift.fromJson(jsonDecode(activeShiftRaw) as Map<String, dynamic>);
-    final closedShifts = _readList(
-      prefs,
-      _kCashShifts,
-      CashShift.fromJson,
-    )..sort((a, b) => b.openedAt.compareTo(a.openedAt));
+        : CashShift.fromJson(
+            jsonDecode(activeShiftRaw) as Map<String, dynamic>,
+          );
+    final closedShifts = _readList(prefs, _kCashShifts, CashShift.fromJson)
+      ..sort((a, b) => b.openedAt.compareTo(a.openedAt));
     final pendingCashShiftClosures = _readPendingCashShiftClosures(prefs);
     final appearanceRaw = prefs.getString(_kAppearance);
     final appearance = appearanceRaw == null
         ? (useGenericSeed
-            ? RestaurantAppearance.generic
-            : RestaurantAppearance.defaults)
+              ? RestaurantAppearance.generic
+              : RestaurantAppearance.defaults)
         : RestaurantAppearance.fromStoredJson(appearanceRaw);
     final pendingConfig = RestaurantAppearance.tryFromStoredJson(
       prefs.getString(_kPendingRestaurantConfig),
@@ -512,36 +550,36 @@ class RestaurantRepository extends ChangeNotifier {
       ownsConnectivity: connectivity == null,
       categories: categories.isEmpty
           ? (useGenericSeed
-              ? [...SeedData.genericCategories]
-              : seedDemo || useHistoricalSeed
-                  ? [...SeedData.categories]
-                  : <Category>[])
+                ? [...SeedData.genericCategories]
+                : seedDemo || useHistoricalSeed
+                ? [...SeedData.categories]
+                : <Category>[])
           : categories,
       items: items,
       ingredients: ingredients.isEmpty
           ? (useGenericSeed
-              ? [...SeedData.genericIngredients]
-              : seedDemo || useHistoricalSeed
-                  ? SeedData.ingredientsFor(activeTenantId)
-                  : <Ingredient>[])
+                ? [...SeedData.genericIngredients]
+                : seedDemo || useHistoricalSeed
+                ? SeedData.ingredientsFor(activeTenantId)
+                : <Ingredient>[])
           : ingredients,
       orders: _hydrateOrderExtras(
         orders.isEmpty
             ? (useGenericSeed
-                ? <Order>[]
-                : seedDemo || useHistoricalSeed
-                    ? SeedData.ordersFor(activeTenantId)
-                    : <Order>[])
+                  ? <Order>[]
+                  : seedDemo || useHistoricalSeed
+                  ? SeedData.ordersFor(activeTenantId)
+                  : <Order>[])
             : orders,
         seedItems,
       )..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
       inventoryLosses: inventoryLosses,
       tables: tables.isEmpty
-          ? (useGenericSeed
-              ? <RestaurantTable>[]
-              : seedDemo || useHistoricalSeed
-                  ? SeedData.tables()
-                  : <RestaurantTable>[])
+          ? (useGenericSeed || useHistoricalSeed
+                ? <RestaurantTable>[]
+                : seedDemo
+                ? SeedData.tables()
+                : <RestaurantTable>[])
           : tables,
       customers: customers,
       webVisits: webVisits,
@@ -565,6 +603,7 @@ class RestaurantRepository extends ChangeNotifier {
       webSyncEnabled: watchConnectivity,
       api: api,
       deviceId: deviceId,
+      notificationPreferences: notificationPreferences,
     );
 
     repository._rebuildCustomersFromOrders(persist: customers.isEmpty);
@@ -579,7 +618,7 @@ class RestaurantRepository extends ChangeNotifier {
       await repository._persistIngredients();
     }
     if (orders.isEmpty) await repository._persistOrders();
-    if (tables.isEmpty) await repository._persistTables();
+    if (tables.isEmpty || tablesNormalized) await repository._persistTables();
     if (storedUsers.isEmpty) await repository._persistUsers();
     if (customers.isEmpty) await repository._persistCustomers();
     if (activeShiftRaw == null) await repository._persistActiveShift();
@@ -663,6 +702,9 @@ class RestaurantRepository extends ChangeNotifier {
     _flushingCashShifts = false;
     _flushingRestaurantConfig = false;
     _pullingRestaurantConfig = false;
+    _ordersPrimed = other._ordersPrimed;
+    _ingredientsPrimed = other._ingredientsPrimed;
+    _shiftsPrimed = other._shiftsPrimed;
     _syncFuture = null;
   }
 
@@ -760,15 +802,17 @@ class RestaurantRepository extends ChangeNotifier {
       return order.copyWith(
         items: items,
         auditLog: audit,
-        paidAt: order.paidAt ??
+        paidAt:
+            order.paidAt ??
             (order.paymentStatus == PaymentStatus.paid
                 ? order.updatedAt
                 : null),
-        paidByName: order.paidByName ??
+        paidByName:
+            order.paidByName ??
             (order.paymentStatus == PaymentStatus.paid
                 ? (order.source == 'web'
-                    ? 'Web pública'
-                    : order.updatedByName ?? order.createdByName)
+                      ? 'Web pública'
+                      : order.updatedByName ?? order.createdByName)
                 : null),
       );
     }).toList();
@@ -797,14 +841,14 @@ class RestaurantRepository extends ChangeNotifier {
     String? id,
     AppUser? user,
   }) => CashShift(
-        id: id ?? 'shift-${openedAt.microsecondsSinceEpoch}',
-        label:
-            'Turno ${twoDigits(openedAt.day)}/${twoDigits(openedAt.month)} '
-            '${twoDigits(openedAt.hour)}:${twoDigits(openedAt.minute)}',
-        openedAt: openedAt,
-        openedBy: user?.id,
-        openedByName: user?.name ?? 'Sistema',
-      );
+    id: id ?? 'shift-${openedAt.microsecondsSinceEpoch}',
+    label:
+        'Turno ${twoDigits(openedAt.day)}/${twoDigits(openedAt.month)} '
+        '${twoDigits(openedAt.hour)}:${twoDigits(openedAt.minute)}',
+    openedAt: openedAt,
+    openedBy: user?.id,
+    openedByName: user?.name ?? 'Sistema',
+  );
 
   static Map<String, Map<String, dynamic>> _readPendingCashShiftClosures(
     TenantPreferences prefs,
@@ -934,9 +978,7 @@ class RestaurantRepository extends ChangeNotifier {
     }
   }
 
-  static Map<String, bool> _readPendingFeaturedItems(
-    TenantPreferences prefs,
-  ) {
+  static Map<String, bool> _readPendingFeaturedItems(TenantPreferences prefs) {
     final raw = prefs.getString(_kPendingFeaturedItems);
     if (raw == null || raw.isEmpty) return {};
     try {
@@ -1139,7 +1181,8 @@ class RestaurantRepository extends ChangeNotifier {
       await _authService.signIn(normalizedEmail, password);
     } on AuthException catch (error) {
       final code = error.code;
-      final couldBeNewAccount = code == 'EMAIL_NOT_FOUND' ||
+      final couldBeNewAccount =
+          code == 'EMAIL_NOT_FOUND' ||
           code == 'INVALID_LOGIN_CREDENTIALS' ||
           code == 'INVALID_PASSWORD';
       if (!couldBeNewAccount) rethrow;
@@ -1171,10 +1214,7 @@ class RestaurantRepository extends ChangeNotifier {
     var available = false;
     for (var attempt = 1; attempt <= 20; attempt++) {
       final candidate = attempt == 1 ? baseId : '$baseId-$attempt';
-      final response = await transport.send(
-        'GET',
-        '/api/tenants/$candidate',
-      );
+      final response = await transport.send('GET', '/api/tenants/$candidate');
       final existing = response.json?['tenant'];
       if (!response.ok || existing is! Map || existing.isEmpty) {
         chosenId = candidate;
@@ -1192,8 +1232,9 @@ class RestaurantRepository extends ChangeNotifier {
     final digitsOnly = chosenId.replaceAll(RegExp(r'[^a-z0-9]'), '');
     final prefix = digitsOnly.isEmpty
         ? 'RM'
-        : digitsOnly.substring(0, digitsOnly.length < 3 ? digitsOnly.length : 3)
-            .toUpperCase();
+        : digitsOnly
+              .substring(0, digitsOnly.length < 3 ? digitsOnly.length : 3)
+              .toUpperCase();
     final whatsapp = RestaurantSettings.compactNumber(countryCode, phone);
     final hours = RestaurantSettings.scheduleHours(
       days: RestaurantSettings.defaultOpeningDays,
@@ -1201,24 +1242,31 @@ class RestaurantRepository extends ChangeNotifier {
       closeTime: closeTime,
     );
 
-    await transport.send('PATCH', '/api/tenants/$chosenId', body: {
-      'id': chosenId,
-      'name': name,
-      'label': name,
-      'description': 'Instancia creada desde la APK.',
-      'preset': 'custom',
-      'emoji': '🍽️',
-      'orderPrefix': prefix,
-      'currency': 'COP',
-      'city': '',
-      'address': '',
-      'countryCode': countryCode,
-      'phone': phone,
-      'whatsapp': whatsapp,
-      'hours': hours,
-      'createdAt': now,
-      'updatedAt': now,
-    });
+    await transport.send(
+      'PATCH',
+      '/api/tenants/$chosenId',
+      body: {
+        'id': chosenId,
+        'name': name,
+        'label': name,
+        'description': 'Instancia creada desde la APK.',
+        // Dueño bootstrap: permite crear el primer usuario admin antes de que
+        // exista un perfil en `tenants/{id}/users` (reglas de Firestore).
+        'ownerUid': uid,
+        'preset': 'custom',
+        'emoji': '🍽️',
+        'orderPrefix': prefix,
+        'currency': 'COP',
+        'city': '',
+        'address': '',
+        'countryCode': countryCode,
+        'phone': phone,
+        'whatsapp': whatsapp,
+        'hours': hours,
+        'createdAt': now,
+        'updatedAt': now,
+      },
+    );
 
     final tenantTransport = FirestoreTransport(
       auth: _authService,
@@ -1251,7 +1299,7 @@ class RestaurantRepository extends ChangeNotifier {
       );
     }
 
-    // Catálogo mínimo de la plantilla: una categoría, dos platillos nuevos y
+    // Catálogo mínimo de la plantilla: las categorías fijas, dos platillos y
     // sus insumos con receta. La web y el POS leen los mismos documentos.
     Future<void> writeTemplateDoc({
       required String path,
@@ -1260,9 +1308,7 @@ class RestaurantRepository extends ChangeNotifier {
     }) async {
       final response = await tenantTransport.send('PATCH', path, body: body);
       if (!response.ok) {
-        throw StateError(
-          'No se pudo guardar $label (${response.statusCode}).',
-        );
+        throw StateError('No se pudo guardar $label (${response.statusCode}).');
       }
     }
 
@@ -1315,7 +1361,8 @@ class RestaurantRepository extends ChangeNotifier {
     Map<String, dynamic> current = {};
     if (existingAllUser.ok) {
       final data = existingAllUser.json?['allUser'];
-      if (data is Map<String, dynamic>) current = Map<String, dynamic>.from(data);
+      if (data is Map<String, dynamic>)
+        current = Map<String, dynamic>.from(data);
     }
     final memberships = <Map<String, dynamic>>[];
     final rawMemberships = current['memberships'];
@@ -1343,7 +1390,9 @@ class RestaurantRepository extends ChangeNotifier {
       }
     }
     final lastDevice = current['deviceId']?.toString().trim();
-    if (lastDevice != null && lastDevice.isNotEmpty && !deviceIds.contains(lastDevice)) {
+    if (lastDevice != null &&
+        lastDevice.isNotEmpty &&
+        !deviceIds.contains(lastDevice)) {
       deviceIds.add(lastDevice);
     }
     if (!deviceIds.contains(_deviceId)) deviceIds.add(_deviceId);
@@ -1378,6 +1427,14 @@ class RestaurantRepository extends ChangeNotifier {
     _firebaseSignedIn = true;
     _needsFirebaseReLogin = false;
     if (tenantId != chosenId) await switchTenant(chosenId);
+
+    // La configuración recién escrita es la fuente de verdad: la aplica antes
+    // de abrir el POS para que las mesas se creen libres y exactamente en la
+    // cantidad indicada al dar de alta el restaurante.
+    _settings = settings;
+    await _prefs.setString(_kSettings, jsonEncode(settings.toJson()));
+    await _applyTableCount();
+
     final admin = AppUser(
       id: uid,
       name: name,
@@ -1395,7 +1452,9 @@ class RestaurantRepository extends ChangeNotifier {
     return chosenId;
   }
 
-  Future<List<TenantMembership>> _resolveAllUserMemberships(String email) async {
+  Future<List<TenantMembership>> _resolveAllUserMemberships(
+    String email,
+  ) async {
     if (!useDirectFirestore || !_webSyncEnabled || !isOnline) return const [];
     try {
       final docId = email.trim().toLowerCase();
@@ -1411,12 +1470,14 @@ class RestaurantRepository extends ChangeNotifier {
         final tenantId = m['tenantId']?.toString() ?? '';
         final role = m['role']?.toString() ?? '';
         if (tenantId.isEmpty || role.isEmpty) continue;
-        out.add(TenantMembership(
-          tenantId: tenantId,
-          role: role,
-          name: m['name']?.toString() ?? '',
-          email: m['email']?.toString() ?? email,
-        ));
+        out.add(
+          TenantMembership(
+            tenantId: tenantId,
+            role: role,
+            name: m['name']?.toString() ?? '',
+            email: m['email']?.toString() ?? email,
+          ),
+        );
       }
       return out;
     } catch (_) {
@@ -1456,7 +1517,47 @@ class RestaurantRepository extends ChangeNotifier {
     return null;
   }
 
+  /// Quita el token de este dispositivo del índice global al cerrar sesión.
+  /// Se llama antes de borrar el idToken para que la escritura siga autorizada.
+  Future<void> _unregisterPushToken(String email) async {
+    if (!useDirectFirestore || !_webSyncEnabled || !isOnline) return;
+    try {
+      final normalized = email.trim().toLowerCase();
+      final existing = await _request('GET', '/api/all-users/$normalized');
+      if (!existing.ok) return;
+      final data = existing.json?['allUser'];
+      if (data is! Map<String, dynamic>) return;
+      final tokens = <String, String>{};
+      final raw = data['fcmTokens'];
+      if (raw is Map) {
+        raw.forEach((key, value) {
+          final device = key?.toString().trim() ?? '';
+          final token = value?.toString().trim() ?? '';
+          if (device.isNotEmpty &&
+              device != _deviceId &&
+              token.isNotEmpty) {
+            tokens[device] = token;
+          }
+        });
+      }
+      await _request(
+        'PATCH',
+        '/api/all-users/$normalized',
+        body: {
+          'fcmTokens': tokens,
+          'updatedAt': DateTime.now().toIso8601String(),
+        },
+      );
+    } catch (_) {
+      // Best-effort: el logout nunca depende de la red.
+    }
+  }
+
   Future<void> logout() async {
+    final email = _currentUser?.email;
+    if (email != null) await _unregisterPushToken(email);
+    await NotificationService.instance.cancelAll();
+    await NotificationService.instance.deleteToken();
     _currentUser = null;
     await _prefs.remove(_kSession);
     _firebaseSignedIn = false;
@@ -1563,15 +1664,15 @@ class RestaurantRepository extends ChangeNotifier {
   /// a través de la web. El cambio ya quedó guardado en el dispositivo: sin
   /// sesión Firebase o sin conexión se conserva localmente y se reenvía en la
   /// siguiente operación.
-  Future<void> _pushUserToServer(AppUser user, {required bool delete, String? oldEmail}) async {
+  Future<void> _pushUserToServer(
+    AppUser user, {
+    required bool delete,
+    String? oldEmail,
+  }) async {
     if (!_webSyncEnabled || !isOnline) return;
     if (!useDirectFirestore && _serverUrl.isEmpty) return;
     final response = delete
-        ? await _request(
-            'DELETE',
-            '/api/users',
-            query: {'id': user.id},
-          )
+        ? await _request('DELETE', '/api/users', query: {'id': user.id})
         : await _request(
             'POST',
             '/api/users',
@@ -1587,7 +1688,11 @@ class RestaurantRepository extends ChangeNotifier {
 
   /// Mantiene `all_user/{email}` en la raíz de Firestore como índice global
   /// de usuarios por tenant/rol para resolver el login sin dropdown de tenant.
-  Future<void> _syncAllUserEntry(AppUser user, {required bool delete, String? oldEmail}) async {
+  Future<void> _syncAllUserEntry(
+    AppUser user, {
+    required bool delete,
+    String? oldEmail,
+  }) async {
     if (!_webSyncEnabled || !isOnline) return;
     if (!useDirectFirestore && _serverUrl.isEmpty) return;
     final email = user.email.trim().toLowerCase();
@@ -1612,7 +1717,8 @@ class RestaurantRepository extends ChangeNotifier {
       Map<String, dynamic> current = {};
       if (existing.ok) {
         final data = existing.json?['allUser'];
-        if (data is Map<String, dynamic>) current = Map<String, dynamic>.from(data);
+        if (data is Map<String, dynamic>)
+          current = Map<String, dynamic>.from(data);
       }
 
       final rawMemberships = current['memberships'];
@@ -1634,18 +1740,25 @@ class RestaurantRepository extends ChangeNotifier {
         'email': email,
       });
 
-      await _request('PATCH', '/api/all-users/$docId', body: {
-        'email': email,
-        'name': user.name,
-        'memberships': memberships,
-        'updatedAt': DateTime.now().toIso8601String(),
-      });
+      await _request(
+        'PATCH',
+        '/api/all-users/$docId',
+        body: {
+          'email': email,
+          'name': user.name,
+          'memberships': memberships,
+          'updatedAt': DateTime.now().toIso8601String(),
+        },
+      );
     } catch (_) {
       // Best-effort: no bloquear el flujo principal por el índice global.
     }
   }
 
-  Future<void> _syncAllUserEntryRemoveTenant(String email, String tenant) async {
+  Future<void> _syncAllUserEntryRemoveTenant(
+    String email,
+    String tenant,
+  ) async {
     final docId = email.trim().toLowerCase();
     try {
       final existing = await _request('GET', '/api/all-users/$docId');
@@ -1666,12 +1779,16 @@ class RestaurantRepository extends ChangeNotifier {
       if (memberships.isEmpty) {
         await _request('DELETE', '/api/all-users/$docId');
       } else {
-        await _request('PATCH', '/api/all-users/$docId', body: {
-          'email': email,
-          'name': data['name']?.toString() ?? '',
-          'memberships': memberships,
-          'updatedAt': DateTime.now().toIso8601String(),
-        });
+        await _request(
+          'PATCH',
+          '/api/all-users/$docId',
+          body: {
+            'email': email,
+            'name': data['name']?.toString() ?? '',
+            'memberships': memberships,
+            'updatedAt': DateTime.now().toIso8601String(),
+          },
+        );
       }
     } catch (_) {}
   }
@@ -1815,7 +1932,8 @@ class RestaurantRepository extends ChangeNotifier {
         // Regla Firestore `isValidOrder`: la orden debe NACER en `pending`.
         // Un pedido offline avanzado antes de sincronizar se crea en `pending`
         // y después se hace PATCH con el estado real (staff `preservesIdentity`).
-        final wasAdvanced = order.status != OrderStatus.pending ||
+        final wasAdvanced =
+            order.status != OrderStatus.pending ||
             order.paymentStatus != PaymentStatus.pending;
         final payload = order.toJson();
         payload['source'] = 'app';
@@ -1984,6 +2102,9 @@ class RestaurantRepository extends ChangeNotifier {
           ? decoded['orders']
           : null;
       if (rawList is! List) return 0;
+      final notifyChanges = _ordersPrimed;
+      _ordersPrimed = true;
+      final readyToNotify = <Order>[];
 
       final existingIds = _orders.map((order) => order.id).toSet();
       final imported = <Order>[];
@@ -2056,6 +2177,11 @@ class RestaurantRepository extends ChangeNotifier {
         final statusChanged =
             local.status != remote.status ||
             local.paymentStatus != remote.paymentStatus;
+        if (notifyChanges &&
+            local.status != OrderStatus.ready &&
+            remote.status == OrderStatus.ready) {
+          readyToNotify.add(remote);
+        }
         // La web también puede cambiar quién cobró después de marcar el pago.
         // Sin esto, la app se queda con el cobrador genérico «Web pública».
         final payerChanged =
@@ -2134,6 +2260,32 @@ class RestaurantRepository extends ChangeNotifier {
       await _rebuildCustomersFromOrders(persist: false);
       await _persistOrders();
       await _persistCustomers();
+
+      // Avisos locales de respaldo cuando FCM no está disponible (modo web/QA).
+      if (notifyChanges) {
+        for (final order in imported) {
+          unawaited(
+            NotificationService.instance.showLocal(
+              type: AppNotificationType.newOrder,
+              tenantId: tenantId,
+              title: 'Pedido nuevo ${order.code}',
+              body: '${order.customerName} · \$${order.total.toStringAsFixed(0)}',
+              orderId: order.id,
+            ),
+          );
+        }
+        for (final order in readyToNotify) {
+          unawaited(
+            NotificationService.instance.showLocal(
+              type: AppNotificationType.orderReady,
+              tenantId: tenantId,
+              title: 'Pedido listo ${order.code}',
+              body: '${order.customerName} · ${order.type.label}',
+              orderId: order.id,
+            ),
+          );
+        }
+      }
       for (final id in webReconcileIds) {
         final synced = _orders.where((order) => order.id == id).toList();
         if (synced.isEmpty) continue;
@@ -2161,6 +2313,11 @@ class RestaurantRepository extends ChangeNotifier {
         'paidBy': order.paidBy,
         'paidByName': order.paidByName ?? order.updatedByName,
       },
+      // El autor viaja con el cambio: Functions excluye sus dispositivos del
+      // push para que no reciba su propia notificación.
+      'lastChangedBy': order.updatedBy,
+      'updatedBy': order.updatedBy,
+      'updatedByName': order.updatedByName,
       // Pagos divididos y fecha de actualización (conservan datos en merge
       // parcial; `preservesIdentity` no toca code/customerName/createdAt).
       if (useDirectFirestore) ...{
@@ -2184,8 +2341,9 @@ class RestaurantRepository extends ChangeNotifier {
           if (index >= 0 &&
               _orders[index].source == 'web' &&
               _orders[index].inventoryDeducted != deducted) {
-            _orders[index] =
-                _orders[index].copyWith(inventoryDeducted: deducted);
+            _orders[index] = _orders[index].copyWith(
+              inventoryDeducted: deducted,
+            );
             await _persistOrders();
             notifyListeners();
           }
@@ -2443,11 +2601,11 @@ class RestaurantRepository extends ChangeNotifier {
         : null;
     _serverMenuCatalogIds = rawList is List
         ? rawList
-            .whereType<Map<String, dynamic>>()
-            .map((raw) => raw['id'] as String?)
-            .whereType<String>()
-            .where((id) => id.isNotEmpty)
-            .toSet()
+              .whereType<Map<String, dynamic>>()
+              .map((raw) => raw['id'] as String?)
+              .whereType<String>()
+              .where((id) => id.isNotEmpty)
+              .toSet()
         : <String>{};
     _serverMenuCatalogLoaded = true;
     if (rawList is! List || rawList.isEmpty) return 0;
@@ -2460,7 +2618,8 @@ class RestaurantRepository extends ChangeNotifier {
       final localIndex = _items.indexWhere((item) => item.id == id);
       final local = localIndex >= 0 ? _items[localIndex] : null;
       final json = Map<String, dynamic>.from(raw)
-        ..['manualUnavailable'] = raw['manualUnavailable'] == true ||
+        ..['manualUnavailable'] =
+            raw['manualUnavailable'] == true ||
             raw['manualStatus'] == 'unavailable';
       var item = MenuItem.fromJson(json);
       if (local != null && _dirtyMenuItemIds.contains(id)) {
@@ -2500,13 +2659,16 @@ class RestaurantRepository extends ChangeNotifier {
     final response = await _request('GET', '/api/menu/categories');
     if (!response.ok) return 0;
     final decoded = jsonDecode(response.body);
-    final rawList = decoded is Map<String, dynamic> ? decoded['categories'] : null;
+    final rawList = decoded is Map<String, dynamic>
+        ? decoded['categories']
+        : null;
     if (rawList is! List || rawList.isEmpty) return 0;
-    final next = rawList
-        .whereType<Map<String, dynamic>>()
-        .map(Category.fromJson)
-        .toList()
-      ..sort((a, b) => a.order.compareTo(b.order));
+    final next =
+        rawList
+            .whereType<Map<String, dynamic>>()
+            .map(Category.fromJson)
+            .toList()
+          ..sort((a, b) => a.order.compareTo(b.order));
     if (next.isEmpty) return 0;
     if (listEquals(
       _categories.map((category) => category.toJson()).toList(),
@@ -2581,6 +2743,8 @@ class RestaurantRepository extends ChangeNotifier {
       'unit': ingredient.unit.symbol,
       'stock': ingredient.stock,
       'minStock': ingredient.minStock,
+      // Functions excluye al autor del aviso de stock bajo / sin stock.
+      'updatedBy': _currentUser?.id,
     };
     unawaited(_persistPendingIngredientStocks());
     if (_webSyncEnabled) unawaited(_flushPendingIngredientPatches());
@@ -2831,12 +2995,12 @@ class RestaurantRepository extends ChangeNotifier {
         ),
       ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-      final changed = merged.length != _inventoryLosses.length ||
+      final changed =
+          merged.length != _inventoryLosses.length ||
           _inventoryLosses.asMap().entries.any(
-                (entry) =>
-                    entry.key >= merged.length ||
-                    entry.value != merged[entry.key],
-              );
+            (entry) =>
+                entry.key >= merged.length || entry.value != merged[entry.key],
+          );
       if (!changed) return false;
       _inventoryLosses = merged;
       await _persistInventoryLosses();
@@ -2919,6 +3083,16 @@ class RestaurantRepository extends ChangeNotifier {
       }
       final rawList = decoded['ingredients'];
       if (rawList is! List) return 0;
+      final notifyChanges = _ingredientsPrimed;
+      _ingredientsPrimed = true;
+      final wasLow = <String>{
+        for (final ingredient in _ingredients.where((item) => item.isLow))
+          ingredient.id,
+      };
+      final wasOut = <String>{
+        for (final ingredient in _ingredients.where((item) => item.stock <= 0))
+          ingredient.id,
+      };
 
       final remote = <Ingredient>[];
       for (final raw in rawList) {
@@ -2958,6 +3132,37 @@ class RestaurantRepository extends ChangeNotifier {
       if (changes > 0) await _persistIngredients();
       if (statusChanges > 0) await _persistItems();
       if (changes > 0 || statusChanges > 0) notifyListeners();
+      if (notifyChanges) {
+        // El agotamiento manda: no duplicamos el aviso de stock bajo del mismo
+        // cambio. Un cruce posterior de stock bajo sí se avisa por separado.
+        for (final ingredient in merged.where((item) => item.stock <= 0)) {
+          if (wasOut.contains(ingredient.id)) continue;
+          unawaited(
+            NotificationService.instance.showLocal(
+              type: AppNotificationType.outOfStock,
+              tenantId: tenantId,
+              title: 'Sin stock: ${ingredient.name}',
+              body: 'Agotado · mínimo ${ingredient.minStockLabel}',
+              orderId: ingredient.id,
+            ),
+          );
+        }
+        for (final ingredient
+            in merged.where((item) => item.isLow && item.stock > 0)) {
+          if (wasLow.contains(ingredient.id)) continue;
+          unawaited(
+            NotificationService.instance.showLocal(
+              type: AppNotificationType.lowStock,
+              tenantId: tenantId,
+              title: 'Stock bajo: ${ingredient.name}',
+              body:
+                  'Quedan ${ingredient.stockLabel} · mínimo '
+                  '${ingredient.minStockLabel}',
+              orderId: ingredient.id,
+            ),
+          );
+        }
+      }
       return changes;
     } catch (_) {
       return 0;
@@ -3382,6 +3587,13 @@ class RestaurantRepository extends ChangeNotifier {
       if (tableNumber == null) {
         throw ArgumentError('Selecciona la mesa del pedido.');
       }
+      final maxTables = _settings.tableCount;
+      if (maxTables < 1) {
+        throw ArgumentError('Este restaurante no tiene mesas configuradas.');
+      }
+      if (tableNumber < 1 || tableNumber > maxTables) {
+        throw ArgumentError('Selecciona una mesa entre 1 y $maxTables.');
+      }
     } else {
       if (trimmedName.length < 2) {
         throw ArgumentError('Escribe el nombre del cliente.');
@@ -3397,7 +3609,9 @@ class RestaurantRepository extends ChangeNotifier {
     // Límites idénticos a `isValidOrder` en firestore.rules (si la APK
     // publica directo a Firestore, el servidor rechaza lo que supere).
     if (trimmedName.length > 80) {
-      throw ArgumentError('El nombre del cliente no puede pasar de 80 caracteres.');
+      throw ArgumentError(
+        'El nombre del cliente no puede pasar de 80 caracteres.',
+      );
     }
     if (trimmedPhone.length > 20) {
       throw ArgumentError('El teléfono no puede pasar de 20 caracteres.');
@@ -3746,6 +3960,13 @@ class RestaurantRepository extends ChangeNotifier {
       if (tableNumber == null) {
         throw ArgumentError('Selecciona la mesa del pedido.');
       }
+      final maxTables = _settings.tableCount;
+      if (maxTables < 1) {
+        throw ArgumentError('Este restaurante no tiene mesas configuradas.');
+      }
+      if (tableNumber < 1 || tableNumber > maxTables) {
+        throw ArgumentError('Selecciona una mesa entre 1 y $maxTables.');
+      }
     } else {
       if (trimmedName.length < 2) {
         throw ArgumentError('Escribe el nombre del cliente.');
@@ -3761,7 +3982,9 @@ class RestaurantRepository extends ChangeNotifier {
     // Límites idénticos a `isValidOrder` en firestore.rules (si la APK
     // publica directo a Firestore, el servidor rechaza lo que supere).
     if (trimmedName.length > 80) {
-      throw ArgumentError('El nombre del cliente no puede pasar de 80 caracteres.');
+      throw ArgumentError(
+        'El nombre del cliente no puede pasar de 80 caracteres.',
+      );
     }
     if (trimmedPhone.length > 20) {
       throw ArgumentError('El teléfono no puede pasar de 20 caracteres.');
@@ -3868,7 +4091,8 @@ class RestaurantRepository extends ChangeNotifier {
       auditLog: audit,
     );
 
-    if (updated.inventoryDeducted && (existing.source != 'web' || useDirectFirestore)) {
+    if (updated.inventoryDeducted &&
+        (existing.source != 'web' || useDirectFirestore)) {
       await _deductInventory(updated);
       audit.add(
         _audit('Inventario descontado', detail: 'Descuento tras editar pedido'),
@@ -3980,7 +4204,8 @@ class RestaurantRepository extends ChangeNotifier {
       _audit('Productos agregados', detail: addedNames.join(', ')),
     ];
     var inventoryDeducted = order.inventoryDeducted;
-    if (order.inventoryDeducted && (order.source != 'web' || useDirectFirestore)) {
+    if (order.inventoryDeducted &&
+        (order.source != 'web' || useDirectFirestore)) {
       // Descontar solo los insumos de las líneas agregadas. En web-API los
       // pedidos web los descuenta la web; en Firestore directo la APK.
       final deltaOrder = Order(
@@ -4117,7 +4342,8 @@ class RestaurantRepository extends ChangeNotifier {
       }
       next.add(table);
     }
-    final changed = next.length != _tables.length ||
+    final changed =
+        next.length != _tables.length ||
         next.any((table) => !_tables.contains(table));
     _tables = next;
     if (changed) await _persistTables();
@@ -4216,12 +4442,49 @@ class RestaurantRepository extends ChangeNotifier {
   /// Id estable de este dispositivo (persistido fuera del prefijo de tenant).
   String get deviceId => _deviceId;
 
+  NotificationPreferences get notificationPreferences => _notificationPreferences;
+
+  /// Silencia todos los avisos o solo los tipos indicados. Se guarda en el
+  /// dispositivo (no por tenant) y se aplica también en el isolate de FCM.
+  Future<void> updateNotificationPreferences(
+    NotificationPreferences preferences,
+  ) async {
+    _notificationPreferences = preferences;
+    await NotificationService.instance.setPreferences(preferences);
+    notifyListeners();
+  }
+
+  /// Abre el destino asociado a una notificación tocada. Si el aviso pertenece
+  /// a otra instancia, cambia de tenant antes de navegar.
+  Future<void> handleNotificationTap(Map<String, dynamic> data) async {
+    final tenantId = data['tenantId']?.toString().trim() ?? '';
+    if (tenantId.isNotEmpty &&
+        tenantId != this.tenantId &&
+        isValidTenantId(tenantId)) {
+      try {
+        await switchTenant(tenantId);
+      } catch (_) {
+        return;
+      }
+    }
+    final type =
+        AppNotificationType.fromValue(data['type']?.toString()) ??
+        AppNotificationType.newOrder;
+    notificationTarget.value = NotificationTarget(
+      type: type,
+      orderFilter: type.orderFilter,
+      orderId: data['orderId']?.toString(),
+    );
+  }
+
   /// Registra el dispositivo en `all_user/{email}` para notificaciones push.
   /// Mantiene `deviceId` (último) y `deviceIds` (historial) sin borrar los que
   /// ya había, y respeta las memberships existentes.
   Future<void> registerDeviceId({String? email}) async {
     if (!useDirectFirestore || !_webSyncEnabled || !isOnline) return;
-    final normalized = (email ?? _currentUser?.email ?? '').trim().toLowerCase();
+    final normalized = (email ?? _currentUser?.email ?? '')
+        .trim()
+        .toLowerCase();
     if (normalized.isEmpty) return;
     try {
       final existing = await _request('GET', '/api/all-users/$normalized');
@@ -4237,15 +4500,38 @@ class RestaurantRepository extends ChangeNotifier {
         }
       }
       final lastDevice = data['deviceId']?.toString().trim();
-      if (lastDevice != null && lastDevice.isNotEmpty && !ids.contains(lastDevice)) {
+      if (lastDevice != null &&
+          lastDevice.isNotEmpty &&
+          !ids.contains(lastDevice)) {
         ids.add(lastDevice);
       }
       if (!ids.contains(_deviceId)) ids.add(_deviceId);
-      await _request('PATCH', '/api/all-users/$normalized', body: {
-        'deviceId': _deviceId,
-        'deviceIds': ids,
-        'updatedAt': DateTime.now().toIso8601String(),
-      });
+
+      // Token FCM de este dispositivo. Se conservan los de los demás para que
+      // un login en otro teléfono no deje al anterior sin notificaciones.
+      final tokens = <String, String>{};
+      final rawTokens = data['fcmTokens'];
+      if (rawTokens is Map) {
+        rawTokens.forEach((key, value) {
+          final device = key?.toString().trim() ?? '';
+          final token = value?.toString().trim() ?? '';
+          if (device.isNotEmpty && token.isNotEmpty) tokens[device] = token;
+        });
+      }
+      final token = await NotificationService.instance.getToken();
+      if (token != null && token.isNotEmpty) {
+        tokens[_deviceId] = token;
+      }
+      await _request(
+        'PATCH',
+        '/api/all-users/$normalized',
+        body: {
+          'deviceId': _deviceId,
+          'deviceIds': ids,
+          'fcmTokens': tokens,
+          'updatedAt': DateTime.now().toIso8601String(),
+        },
+      );
     } catch (_) {
       // Best-effort: el registro de push no debe bloquear el login.
     }
@@ -4257,10 +4543,13 @@ class RestaurantRepository extends ChangeNotifier {
     final api = _api;
     return api is FirestoreTransport ? api.projectId : '';
   }
+
   /// `firestore` (directo a Firestore REST) o `web` (API Next.js).
   String get apiTransportName => useDirectFirestore ? 'firestore' : 'web';
+
   /// Clave de API pública compilada (nunca el service account).
   bool get hasFirebaseApiKey => AuthService.firebaseApiKey.isNotEmpty;
+
   /// Rol actual o `null` si no hay sesión.
   UserRole? get currentRole => _currentUser?.role;
 
@@ -4310,10 +4599,7 @@ class RestaurantRepository extends ChangeNotifier {
     final response = await _request(
       'PATCH',
       '/api/restaurant/config',
-      body: {
-        ...appearance.toJson(),
-        ...?settingsPatch,
-      },
+      body: {...appearance.toJson(), ...?settingsPatch},
     );
     return response.statusCode;
   }
@@ -4372,8 +4658,10 @@ class RestaurantRepository extends ChangeNotifier {
       final rawConfig = decoded['config'];
       if (rawConfig is! Map<String, dynamic>) return false;
       final remote = RestaurantAppearance.fromJson(rawConfig);
-      final remoteSettings =
-          RestaurantSettings.fromWebConfig(rawConfig, _settings);
+      final remoteSettings = RestaurantSettings.fromWebConfig(
+        rawConfig,
+        _settings,
+      );
       final appearanceChanged = remote != _restaurantAppearance;
       final settingsChanged = remoteSettings != _settings;
       if (_pendingRestaurantConfig != null || _pendingConfigPatch != null) {
@@ -4450,14 +4738,12 @@ class RestaurantRepository extends ChangeNotifier {
       )
       .toList();
 
-  List<Order> paidOrdersInRange(DateTime start, DateTime end) => paidOrders
-      .where((order) {
-        final paidAt = order.paidAtOrFallback;
-        return !paidAt.isBefore(start) && !paidAt.isAfter(end);
-      })
-      .toList()
-        ..sort((a, b) =>
-            b.paidAtOrFallback.compareTo(a.paidAtOrFallback));
+  List<Order> paidOrdersInRange(DateTime start, DateTime end) =>
+      paidOrders.where((order) {
+          final paidAt = order.paidAtOrFallback;
+          return !paidAt.isBefore(start) && !paidAt.isAfter(end);
+        }).toList()
+        ..sort((a, b) => b.paidAtOrFallback.compareTo(a.paidAtOrFallback));
 
   List<Order> paidOrdersForShift(CashShift shift) {
     final end = shift.closedAt ?? DateTime.now();
@@ -4468,19 +4754,27 @@ class RestaurantRepository extends ChangeNotifier {
   }
 
   DateTime _bucketStart(DateTime value, SalesBucket bucket) => switch (bucket) {
-        SalesBucket.hour => DateTime(value.year, value.month, value.day, value.hour),
-        SalesBucket.day => DateTime(value.year, value.month, value.day),
-        SalesBucket.week => DateTime(value.year, value.month, value.day)
-            .subtract(Duration(days: value.weekday - 1)),
-        SalesBucket.month => DateTime(value.year, value.month),
-      };
+    SalesBucket.hour => DateTime(
+      value.year,
+      value.month,
+      value.day,
+      value.hour,
+    ),
+    SalesBucket.day => DateTime(value.year, value.month, value.day),
+    SalesBucket.week => DateTime(
+      value.year,
+      value.month,
+      value.day,
+    ).subtract(Duration(days: value.weekday - 1)),
+    SalesBucket.month => DateTime(value.year, value.month),
+  };
 
   DateTime _nextBucket(DateTime value, SalesBucket bucket) => switch (bucket) {
-        SalesBucket.hour => value.add(const Duration(hours: 1)),
-        SalesBucket.day => value.add(const Duration(days: 1)),
-        SalesBucket.week => value.add(const Duration(days: 7)),
-        SalesBucket.month => DateTime(value.year, value.month + 1),
-      };
+    SalesBucket.hour => value.add(const Duration(hours: 1)),
+    SalesBucket.day => value.add(const Duration(days: 1)),
+    SalesBucket.week => value.add(const Duration(days: 7)),
+    SalesBucket.month => DateTime(value.year, value.month + 1),
+  };
 
   /// Totales de ventas cobradas en [start]..[end], agrupados por [bucket].
   /// Usa `paidAt` (con fallback) en vez de la fecha de creación del pedido.
@@ -4497,8 +4791,10 @@ class RestaurantRepository extends ChangeNotifier {
       final next = _nextBucket(cursor, bucket);
       final bucketEnd = next.isAfter(end) ? end : next;
       final effectiveStart = index == 0 ? start : cursor;
-      final total = paidOrdersInRange(effectiveStart, bucketEnd)
-          .fold<double>(0, (sum, order) => sum + order.total);
+      final total = paidOrdersInRange(
+        effectiveStart,
+        bucketEnd,
+      ).fold<double>(0, (sum, order) => sum + order.total);
       result.add(DailySales(day: cursor, total: total));
       cursor = next;
       index++;
@@ -4520,15 +4816,15 @@ class RestaurantRepository extends ChangeNotifier {
 
   List<DailySales> salesByDay({int days = 7}) {
     final now = DateTime.now();
-    final start = DateTime(now.year, now.month, now.day)
-        .subtract(Duration(days: days - 1));
+    final start = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).subtract(Duration(days: days - 1));
     return salesInRange(start: start, end: now, bucket: SalesBucket.day);
   }
 
-  List<ProductSales> topProducts({
-    int limit = 5,
-    Iterable<Order>? orders,
-  }) {
+  List<ProductSales> topProducts({int limit = 5, Iterable<Order>? orders}) {
     final Map<String, ({int quantity, double total})> accumulator = {};
     for (final order in orders ?? _orders) {
       if (order.status == OrderStatus.cancelled) continue;
@@ -4608,9 +4904,7 @@ class RestaurantRepository extends ChangeNotifier {
     return list;
   }
 
-  Map<PaymentMethod, double> salesByPaymentMethodFor(
-    Iterable<Order> orders,
-  ) {
+  Map<PaymentMethod, double> salesByPaymentMethodFor(Iterable<Order> orders) {
     final result = <PaymentMethod, double>{};
     for (final order in orders) {
       if (order.paymentStatus != PaymentStatus.paid ||
@@ -4690,10 +4984,8 @@ class RestaurantRepository extends ChangeNotifier {
     try {
       final snapshot = Map<String, Map<String, dynamic>>.fromEntries(
         _pendingCashShiftClosures.entries.map(
-          (entry) => MapEntry(
-            entry.key,
-            Map<String, dynamic>.from(entry.value),
-          ),
+          (entry) =>
+              MapEntry(entry.key, Map<String, dynamic>.from(entry.value)),
         ),
       );
       for (final entry in snapshot.entries) {
@@ -4761,6 +5053,9 @@ class RestaurantRepository extends ChangeNotifier {
       if (!response.ok) return;
       final decoded = jsonDecode(response.body);
       if (decoded is! Map<String, dynamic>) return;
+      final notifyChanges = _shiftsPrimed;
+      _shiftsPrimed = true;
+      final knownClosedIds = _closedShifts.map((shift) => shift.id).toSet();
       var changed = false;
 
       String? remoteCurrentId;
@@ -4811,6 +5106,26 @@ class RestaurantRepository extends ChangeNotifier {
         await _persistCashShifts();
         await _persistActiveShift();
         notifyListeners();
+      }
+      if (notifyChanges && remoteShifts is List<dynamic>) {
+        for (final raw in remoteShifts.whereType<Map<String, dynamic>>()) {
+          final parsed = CashShift.fromJson(raw);
+          if (parsed.id.isEmpty ||
+              parsed.status != 'closed' ||
+              knownClosedIds.contains(parsed.id)) {
+            continue;
+          }
+          unawaited(
+            NotificationService.instance.showLocal(
+              type: AppNotificationType.shiftClosed,
+              tenantId: tenantId,
+              title: 'Turno cerrado',
+              body: 'Cierre \$${parsed.total.toStringAsFixed(0)} · '
+                  '${parsed.orderCount} pedido(s)',
+              orderId: parsed.id,
+            ),
+          );
+        }
       }
     } catch (_) {
       // El estado local sigue siendo válido; se reintenta en el próximo pull.
@@ -4863,7 +5178,8 @@ class RestaurantRepository extends ChangeNotifier {
     _items = seedDemo ? SeedData.menuItemsWithRecipes() : <MenuItem>[];
     _ingredients = seedDemo ? [...SeedData.ingredients] : <Ingredient>[];
     _orders = seedDemo
-        ? (SeedData.orders()..sort((a, b) => b.createdAt.compareTo(a.createdAt)))
+        ? (SeedData.orders()
+            ..sort((a, b) => b.createdAt.compareTo(a.createdAt)))
         : <Order>[];
     _inventoryLosses = [];
     _tables = seedDemo ? SeedData.tables() : <RestaurantTable>[];
@@ -5010,7 +5326,10 @@ class RestaurantRepository extends ChangeNotifier {
   }
 
   Future<void> _persistActiveShift() async {
-    await _prefs.setString(_kActiveCashShift, jsonEncode(_activeShift.toJson()));
+    await _prefs.setString(
+      _kActiveCashShift,
+      jsonEncode(_activeShift.toJson()),
+    );
   }
 
   Future<void> _persistCashShifts() async {
@@ -5246,6 +5565,7 @@ class RestaurantRepository extends ChangeNotifier {
     _webPollTimer?.cancel();
     _connectivity.online.removeListener(_onConnectivityChanged);
     if (_ownsConnectivity) _connectivity.dispose();
+    notificationTarget.dispose();
     super.dispose();
   }
 }

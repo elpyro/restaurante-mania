@@ -69,10 +69,16 @@ export async function PATCH(
         stock,
         minStock: minStock ?? 0,
         updatedAt: now,
+        ...(typeof input.updatedBy === "string" && input.updatedBy.trim()
+          ? { updatedBy: input.updatedBy.trim() }
+          : {}),
       });
     } else {
       const patch: Record<string, unknown> = { stock, updatedAt: now };
       if (minStock !== null) patch.minStock = minStock;
+      if (typeof input.updatedBy === "string" && input.updatedBy.trim()) {
+        patch.updatedBy = input.updatedBy.trim();
+      }
       await setDocument(
         tenantPath(tenantId, "ingredients"),
         documentId,

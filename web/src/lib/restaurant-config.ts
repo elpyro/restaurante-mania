@@ -125,6 +125,8 @@ export interface RestaurantConfig {
   ctaDescription: string;
   currency: string;
   showOrderTypeOptions: boolean;
+  /** Máximo de mesas configurado en la APK; `0` = sin mesas. */
+  tableCount: number;
   deliveryOptions: Record<DeliveryOption, boolean>;
   paymentMethods: PaymentMethod[];
   paymentMethodLabels: PaymentMethodLabels;
@@ -156,6 +158,9 @@ export const DELIVERY_OPTIONS: DeliveryOption[] = [
   "delivery",
   "table",
 ];
+
+/** Debe coincidir con `RestaurantSettings.maxTableCount` en la APK. */
+export const MAX_TABLE_COUNT = 200;
 
 export const PAYMENT_METHODS: PaymentMethod[] = [
   "cash",
@@ -229,6 +234,7 @@ export const DEFAULT_RESTAURANT_CONFIG: RestaurantConfig = {
     "Abrimos todos los días de Lun–Sáb 11:30–20:30. Haz tu pedido en línea o escríbenos por WhatsApp.",
   currency: siteConfig.currency,
   showOrderTypeOptions: true,
+  tableCount: 0,
   deliveryOptions: { pickup: true, delivery: true, table: true },
   paymentMethods: [...PAYMENT_METHODS],
   paymentMethodLabels: {},
@@ -264,6 +270,7 @@ export const GENERIC_RESTAURANT_CONFIG: RestaurantConfig = {
     "Elige tus platillos, confirma tu pedido y nosotros nos encargamos del resto.",
   currency: "USD",
   showOrderTypeOptions: true,
+  tableCount: 0,
   deliveryOptions: { pickup: true, delivery: true, table: true },
   paymentMethods: ["cash", "card"],
   paymentMethodLabels: { cash: "Efectivo", card: "Tarjeta" },
@@ -788,6 +795,16 @@ function normalizeAppearance(
   };
 }
 
+function normalizeTableCount(value: unknown, fallback: RestaurantConfig): number {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return Math.min(MAX_TABLE_COUNT, Math.max(0, value));
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return Math.min(MAX_TABLE_COUNT, Math.max(0, Number(value.trim())));
+  }
+  return fallback.tableCount;
+}
+
 function normalizeDeliveryOptions(
   value: unknown,
   fallback: RestaurantConfig,
@@ -952,6 +969,7 @@ function normalizeConfig(
       typeof raw.showOrderTypeOptions === "boolean"
         ? raw.showOrderTypeOptions
         : fallback.showOrderTypeOptions,
+    tableCount: normalizeTableCount(raw.tableCount, fallback),
     deliveryOptions: normalizeDeliveryOptions(raw.deliveryOptions, fallback),
     paymentMethods: normalizePaymentMethods(raw.paymentMethods, fallback),
     paymentMethodLabels: normalizePaymentMethodLabels(raw.paymentMethodLabels),
@@ -1070,6 +1088,7 @@ const TEXT_LIMITS: Record<
     | "paymentMethods"
     | "paymentMethodLabels"
     | "showOrderTypeOptions"
+    | "tableCount"
     | "aiSearch"
     | "isOpen"
     | "timeZone"
@@ -1218,6 +1237,20 @@ export function sanitizeConfigPatch(body: unknown): RestaurantConfigPatch {
       errors.push("showOrderTypeOptions debe ser verdadero o falso.");
     } else {
       patch.showOrderTypeOptions = raw.showOrderTypeOptions;
+    }
+  }
+
+  if ("tableCount" in raw) {
+    const value = raw.tableCount;
+    if (
+      typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < 0 ||
+      value > MAX_TABLE_COUNT
+    ) {
+      errors.push(`tableCount debe ser un entero entre 0 y ${MAX_TABLE_COUNT}.`);
+    } else {
+      patch.tableCount = value;
     }
   }
 

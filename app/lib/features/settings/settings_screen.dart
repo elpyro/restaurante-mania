@@ -23,7 +23,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _city;
   late final TextEditingController _currency;
   late final TextEditingController _tableCount;
-  late final TextEditingController _serverUrl;
   late final TextEditingController _aiDescription;
   late final TextEditingController _aiKeywords;
   late final TextEditingController _aiServiceArea;
@@ -34,7 +33,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late Map<String, bool> _deliveryOptions;
   late List<String> _paymentMethods;
   String? _error;
-  String? _serverMessage;
 
   @override
   void initState() {
@@ -54,16 +52,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _city = TextEditingController(text: settings.city);
     _currency = TextEditingController(text: settings.currency);
     _tableCount = TextEditingController(text: '${settings.tableCount}');
-    _serverUrl = TextEditingController(text: repository.serverUrl);
     _aiDescription = TextEditingController(text: settings.aiDescription);
     _aiKeywords = TextEditingController(text: settings.aiKeywords);
     _aiServiceArea = TextEditingController(text: settings.aiServiceArea);
     _aiHighlights = TextEditingController(text: settings.aiHighlights);
     _paymentLabels = {
       for (final method in RestaurantSettings.availablePaymentMethods)
-        method: TextEditingController(
-          text: settings.paymentLabel(method),
-        ),
+        method: TextEditingController(text: settings.paymentLabel(method)),
     };
     _isOpen = settings.isOpen;
     _showOrderTypeOptions = settings.showOrderTypeOptions;
@@ -80,7 +75,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _city.dispose();
     _currency.dispose();
     _tableCount.dispose();
-    _serverUrl.dispose();
     _aiDescription.dispose();
     _aiKeywords.dispose();
     _aiServiceArea.dispose();
@@ -103,7 +97,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
     if (!RegExp(r'^\+\d{1,4}$').hasMatch(_countryCode.text.trim())) {
-      setState(() => _error = 'El indicativo debe empezar con +, por ejemplo +57.');
+      setState(
+        () => _error = 'El indicativo debe empezar con +, por ejemplo +57.',
+      );
       return;
     }
     if (_phone.text.replaceAll(RegExp(r'\D'), '').length < 7) {
@@ -115,15 +111,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
     if (!RegExp(r'^[A-Za-z]{3}$').hasMatch(_currency.text.trim())) {
-      setState(() => _error = 'La moneda debe tener 3 letras, por ejemplo COP.');
+      setState(
+        () => _error = 'La moneda debe tener 3 letras, por ejemplo COP.',
+      );
       return;
     }
     final parsedTableCount = int.tryParse(_tableCount.text.trim());
     if (parsedTableCount == null ||
         parsedTableCount < 0 ||
         parsedTableCount > RestaurantSettings.maxTableCount) {
-      setState(() => _error = 'Cantidad de mesas: escribe un número entre 0 y '
-          '${RestaurantSettings.maxTableCount}.');
+      setState(
+        () => _error =
+            'Cantidad de mesas: escribe un número entre 0 y '
+            '${RestaurantSettings.maxTableCount}.',
+      );
       return;
     }
     if (_paymentMethods.isEmpty) {
@@ -234,7 +235,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 Text(
                   '${_schedule.hoursLabel} · ${_schedule.timeZone}',
-                  style: const TextStyle(fontSize: 11, color: Color(0xFF78716C)),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF78716C),
+                  ),
                 ),
               ],
             ),
@@ -382,7 +386,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       controller: _paymentLabels[method],
                       enabled: enabled,
                       decoration: InputDecoration(
-                        labelText: RestaurantSettings.defaultPaymentLabels[method],
+                        labelText:
+                            RestaurantSettings.defaultPaymentLabels[method],
                         hintText: 'Nombre visible en la web',
                       ),
                     ),
@@ -450,79 +455,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onPressed: () => _save(repository),
             icon: const Icon(Icons.save_outlined, size: 18),
             label: const Text('Guardar datos de IA'),
-          ),
-          const _SectionLabel('Conexión · diagnóstico'),
-          _connectionDiagnostics(repository),
-          const SizedBox(height: 12),
-          const _SectionLabel('Servidor web (pedidos en línea)'),
-          TextField(
-            controller: _serverUrl,
-            decoration: const InputDecoration(
-              labelText: 'URL del servidor web',
-              hintText: 'https://tu-dominio-web.netlify.app',
-              helperText:
-                  'Solo para el transporte web/QA. En producción la APK habla directo con Firestore.',
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.tonalIcon(
-                  onPressed: () async {
-                    await repository.updateServerUrl(_serverUrl.text);
-                    setState(() => _serverMessage = 'Servidor guardado.');
-                  },
-                  icon: const Icon(Icons.save_outlined, size: 18),
-                  label: const Text('Guardar URL'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () async {
-                    await repository.updateServerUrl(_serverUrl.text);
-                    final ok = await repository.testServerConnection();
-                    setState(() {
-                      _serverMessage = ok
-                          ? 'Conexión correcta con la web.'
-                          : 'No se pudo conectar. Revisa la URL o la red.';
-                    });
-                  },
-                  icon: const Icon(Icons.wifi_tethering_rounded, size: 18),
-                  label: const Text('Probar'),
-                ),
-              ),
-            ],
-          ),
-          if (_serverMessage != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              _serverMessage!,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF57534E),
-              ),
-            ),
-          ],
-          const SizedBox(height: 6),
-          OutlinedButton.icon(
-            onPressed: () async {
-              final count = await repository.pullServerOrders();
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    count == 0
-                        ? 'No hay pedidos nuevos de la web.'
-                        : 'Se importaron $count pedido(s) de la web.',
-                  ),
-                ),
-              );
-            },
-            icon: const Icon(Icons.download_rounded, size: 18),
-            label: const Text('Importar pedidos web ahora'),
           ),
           _syncCard(repository),
           const _SectionLabel('Zona de riesgo'),
@@ -604,60 +536,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (pendingOrders > 0) parts.add('$pendingOrders pedido(s)');
     if (pendingConfig > 0) parts.add('configuración de la web');
     return '${parts.join(' y ')} pendientes';
-  }
-
-  Widget _connectionDiagnostics(RestaurantRepository repository) {
-    final project = repository.firebaseProjectId.isEmpty
-        ? 'no disponible'
-        : repository.firebaseProjectId;
-    final session = repository.hasFirebaseSession
-        ? 'iniciada (${repository.currentRole?.name ?? 'sin rol'})'
-        : 'sin sesión';
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFEDEAE6)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _diagnosticRow('Proyecto Firebase', project),
-          _diagnosticRow('Transporte', repository.apiTransportName),
-          _diagnosticRow('Instancia', repository.tenantId),
-          _diagnosticRow('Sesión', session),
-          _diagnosticRow(
-            'Clave pública',
-            repository.hasFirebaseApiKey ? 'configurada' : 'no configurada',
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _diagnosticRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(fontSize: 12, color: Color(0xFF78716C)),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.right,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _syncCard(RestaurantRepository repository) {

@@ -30,8 +30,8 @@ import {
 import type { Order, OrderType, PaymentMethod } from "@/lib/types";
 
 const typeOptions: Array<{ value: OrderType; label: string; icon: LucideIcon }> = [
-  { value: "pickup", label: "Para recoger", icon: ShoppingBag },
   { value: "delivery", label: "Domicilio", icon: Truck },
+  { value: "pickup", label: "Para recoger", icon: ShoppingBag },
   { value: "table", label: "En mesa", icon: UtensilsCrossed },
 ];
 
@@ -70,7 +70,7 @@ export function CheckoutForm() {
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
-  const [type, setType] = useState<OrderType>("pickup");
+  const [type, setType] = useState<OrderType>("delivery");
   const [tableNumber, setTableNumber] = useState("1");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
   const [notes, setNotes] = useState("");
@@ -98,11 +98,21 @@ export function CheckoutForm() {
         const next = data.config;
         setConfig(next);
         const enabledTypes = typeOptions.filter(
-          (option) => next.deliveryOptions[option.value],
+          (option) =>
+            next.deliveryOptions[option.value] &&
+            (option.value !== "table" || next.tableCount > 0),
         );
-        const firstType = enabledTypes[0]?.value ?? "pickup";
+        // Domicilio es la modalidad predeterminada en la web; si el restaurante
+        // la desactivó, se usa la primera modalidad disponible.
+        const preferredType = enabledTypes.some(
+          (option) => option.value === "delivery",
+        )
+          ? "delivery"
+          : enabledTypes[0]?.value ?? "pickup";
         setType((current) =>
-          next.deliveryOptions[current] ? current : firstType,
+          enabledTypes.some((option) => option.value === current)
+            ? current
+            : preferredType,
         );
         const firstPayment = next.paymentMethods[0] ?? "cash";
         setPaymentMethod((current) =>
@@ -223,7 +233,9 @@ export function CheckoutForm() {
   }, [ready, lines, applyInsufficientItems]);
 
   const enabledTypeOptions = typeOptions.filter(
-    (option) => config.deliveryOptions[option.value],
+    (option) =>
+      config.deliveryOptions[option.value] &&
+      (option.value !== "table" || config.tableCount > 0),
   );
   const visibleTypeOptions = config.showOrderTypeOptions
     ? enabledTypeOptions
@@ -280,8 +292,14 @@ export function CheckoutForm() {
     }
     if (type === "table") {
       const table = Number(tableNumber);
-      if (!Number.isInteger(table) || table < 1 || table > 100) {
-        found.push("El número de mesa debe estar entre 1 y 100.");
+      if (
+        !Number.isInteger(table) ||
+        table < 1 ||
+        table > Math.max(1, config.tableCount)
+      ) {
+        found.push(
+          `El número de mesa debe estar entre 1 y ${Math.max(1, config.tableCount)}.`,
+        );
       }
     }
     return found;
@@ -486,7 +504,7 @@ export function CheckoutForm() {
               <input
                 type="number"
                 min={1}
-                max={100}
+                max={Math.max(1, config.tableCount)}
                 value={tableNumber}
                 onChange={(event) => setTableNumber(event.target.value)}
                 className="field"

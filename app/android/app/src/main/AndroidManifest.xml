@@ -1,10 +1,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Android 13+: permiso en tiempo de ejecución para notificaciones. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Restaurante Manía"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">
+        <!-- Crea el canal rm_pos_alerts con sonido y CONTENT_TYPE_SONIFICATION
+             antes de que se publique cualquier notificación (incluye el isolate
+             de segundo plano de FCM). -->
+        <provider
+            android:name=".NotificationChannelInitializer"
+            android:authorities="${applicationId}.notificationchannelinit"
+            android:exported="false"
+            android:initOrder="100" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

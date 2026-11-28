@@ -6,6 +6,9 @@
 
 export const TAX_RATE = 0;
 
+/** Debe coincidir con `RestaurantSettings.maxTableCount` en la APK. */
+export const MAX_TABLE_NUMBER = 200;
+
 export type OrderStatus =
   | "pending"
   | "confirmed"
@@ -212,7 +215,7 @@ export function isValidTableNumber(value: unknown): value is number {
     typeof value === "number" &&
     Number.isInteger(value) &&
     value >= 1 &&
-    value <= 100
+    value <= MAX_TABLE_NUMBER
   );
 }
 

@@ -5,11 +5,28 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/data/repository.dart';
+import '../../core/models/category.dart';
 import '../../core/models/menu_item.dart';
 import '../../core/models/order.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/common.dart';
+
+/// Categorías visibles al tomar pedidos: las que tienen platos disponibles y
+/// un orden positivo. Las vacías siguen sirviendo para organizar el catálogo
+/// en el administrador, pero no se ofrecen al mesero.
+List<Category> categoriesForOrderMenu(
+  Iterable<Category> categories,
+  Iterable<MenuItem> availableItems,
+) {
+  return categories
+      .where(
+        (category) =>
+            category.order > 0 &&
+            availableItems.any((item) => item.categoryId == category.id),
+      )
+      .toList();
+}
 
 class NewOrderScreen extends StatefulWidget {
   const NewOrderScreen({
@@ -62,11 +79,9 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
     super.dispose();
   }
 
-  int get _count =>
-      _cart.values.fold(0, (sum, line) => sum + line.quantity);
+  int get _count => _cart.values.fold(0, (sum, line) => sum + line.quantity);
 
-  double get _total =>
-      _cart.values.fold(0, (sum, line) => sum + line.total);
+  double get _total => _cart.values.fold(0, (sum, line) => sum + line.total);
 
   bool _add(MenuItem item) {
     final repository = context.read<RestaurantRepository>();
@@ -160,8 +175,8 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
           widget.orderToEdit != null
               ? 'Pedido ${order.code} actualizado.'
               : order.synced
-                  ? 'Pedido ${order.code} creado correctamente.'
-                  : 'Pedido ${order.code} guardado offline. Se sincronizará al volver la conexión.',
+              ? 'Pedido ${order.code} creado correctamente.'
+              : 'Pedido ${order.code} guardado offline. Se sincronizará al volver la conexión.',
         ),
       ),
     );
@@ -171,9 +186,20 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
   Widget build(BuildContext context) {
     final repository = context.watch<RestaurantRepository>();
     final query = _searchController.text.trim().toLowerCase();
-    final items = repository.availableMenuItems.where((item) {
-      final categoryOk = _categoryId == 'all' || item.categoryId == _categoryId;
-      final searchOk = query.isEmpty ||
+    final availableItems = repository.availableMenuItems;
+    final categories = categoriesForOrderMenu(
+      repository.categories,
+      availableItems,
+    );
+    final selectedCategory =
+        categories.any((category) => category.id == _categoryId)
+        ? _categoryId
+        : 'all';
+    final items = availableItems.where((item) {
+      final categoryOk =
+          selectedCategory == 'all' || item.categoryId == selectedCategory;
+      final searchOk =
+          query.isEmpty ||
           item.name.toLowerCase().contains(query) ||
           item.description.toLowerCase().contains(query);
       return categoryOk && searchOk;
@@ -181,7 +207,9 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.orderToEdit == null ? 'Nuevo pedido' : 'Editar pedido'),
+        title: Text(
+          widget.orderToEdit == null ? 'Nuevo pedido' : 'Editar pedido',
+        ),
       ),
       body: Column(
         children: [
@@ -204,13 +232,13 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
               children: [
                 _CategoryChip(
                   label: 'Todo',
-                  selected: _categoryId == 'all',
+                  selected: selectedCategory == 'all',
                   onTap: () => setState(() => _categoryId = 'all'),
                 ),
-                ...repository.categories.map(
+                ...categories.map(
                   (category) => _CategoryChip(
                     label: '${category.emoji} ${category.name}',
-                    selected: _categoryId == category.id,
+                    selected: selectedCategory == category.id,
                     onTap: () => setState(() => _categoryId = category.id),
                   ),
                 ),
@@ -229,12 +257,13 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
                   )
                 : GridView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 10,
-                      crossAxisSpacing: 10,
-                      childAspectRatio: 0.78,
-                    ),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 10,
+                          crossAxisSpacing: 10,
+                          childAspectRatio: 0.78,
+                        ),
                     itemCount: items.length,
                     itemBuilder: (context, index) {
                       final item = items[index];
@@ -284,7 +313,9 @@ class _NewOrderScreenState extends State<NewOrderScreen> {
               const Spacer(),
               FilledButton(
                 onPressed: _cart.isEmpty ? null : _openCheckout,
-                child: Text(widget.orderToEdit == null ? 'Continuar' : 'Revisar cambios'),
+                child: Text(
+                  widget.orderToEdit == null ? 'Continuar' : 'Revisar cambios',
+                ),
               ),
             ],
           ),
@@ -324,12 +355,21 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
   final _notesController = TextEditingController();
   late OrderType _type;
   late int _tableNumber;
+  late int _maxTableCount;
+  late List<OrderType> _availableTypes;
   String? _error;
   bool _submitting = false;
 
   @override
   void initState() {
     super.initState();
+    final settings = context.read<RestaurantRepository>().settings;
+    _maxTableCount = settings.tableCount;
+    _availableTypes = OrderType.values.where((type) {
+      final enabled = settings.deliveryOptions[type.name] ?? true;
+      return type != OrderType.table || (_maxTableCount > 0 && enabled);
+    }).toList();
+    if (_availableTypes.isEmpty) _availableTypes = const [OrderType.delivery];
     final order = widget.orderToEdit;
     if (order != null) {
       _nameController.text = order.customerName;
@@ -342,10 +382,10 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
       _nameController.text = widget.initialCustomerName ?? '';
       _phoneController.text = widget.initialCustomerPhone ?? '';
       _addressController.text = widget.initialDeliveryAddress ?? '';
-      _type = widget.initialType ??
-          (widget.initialTableNumber != null
-              ? OrderType.table
-              : OrderType.pickup);
+      final preferred = widget.initialType ?? OrderType.table;
+      _type = _availableTypes.contains(preferred)
+          ? preferred
+          : _availableTypes.first;
       _tableNumber = widget.initialTableNumber ?? 1;
     }
   }
@@ -359,8 +399,7 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
     super.dispose();
   }
 
-  double get _total =>
-      widget.lines.fold(0, (sum, line) => sum + line.total);
+  double get _total => widget.lines.fold(0, (sum, line) => sum + line.total);
 
   Future<void> _confirm() async {
     final name = _nameController.text.trim();
@@ -383,6 +422,18 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
       }
       if (phone.isNotEmpty && digits.length < 7) {
         setState(() => _error = 'Escribe un teléfono válido.');
+        return;
+      }
+    }
+    if (_type == OrderType.table) {
+      if (_maxTableCount < 1) {
+        setState(() => _error = 'Este restaurante no tiene mesas configuradas.');
+        return;
+      }
+      if (_tableNumber < 1 || _tableNumber > _maxTableCount) {
+        setState(
+          () => _error = 'Selecciona una mesa entre 1 y $_maxTableCount.',
+        );
         return;
       }
     }
@@ -414,7 +465,8 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
       }
       // Si hay un pedido en preparación para la misma mesa, ofrecer fusionar
       if (_type == OrderType.table) {
-        final preparing = repository.preparingOrdersForTable(_tableNumber)
+        final preparing = repository
+            .preparingOrdersForTable(_tableNumber)
             .where((o) => o.id != editing?.id)
             .toList();
         if (preparing.isNotEmpty) {
@@ -491,7 +543,9 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
               children: [
                 Expanded(
                   child: Text(
-                    widget.orderToEdit == null ? 'Confirmar pedido' : 'Guardar cambios',
+                    widget.orderToEdit == null
+                        ? 'Confirmar pedido'
+                        : 'Guardar cambios',
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w800,
@@ -540,7 +594,7 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
                 Wrap(
                   spacing: 6,
                   runSpacing: 6,
-                  children: OrderType.values.map((type) {
+                  children: _availableTypes.map((type) {
                     return ChoiceChip(
                       label: Text(type.label),
                       selected: _type == type,
@@ -563,7 +617,7 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
                   Wrap(
                     spacing: 6,
                     runSpacing: 6,
-                    children: List.generate(10, (index) {
+                    children: List.generate(_maxTableCount, (index) {
                       final number = index + 1;
                       return ChoiceChip(
                         label: Text('$number'),
@@ -692,8 +746,12 @@ class _CheckoutSheetState extends State<_CheckoutSheet> {
                       : const Icon(Icons.check_rounded, size: 18),
                   label: Text(
                     _submitting
-                        ? (widget.orderToEdit == null ? 'Creando pedido...' : 'Guardando cambios...')
-                        : (widget.orderToEdit == null ? 'Crear pedido' : 'Guardar cambios'),
+                        ? (widget.orderToEdit == null
+                              ? 'Creando pedido...'
+                              : 'Guardando cambios...')
+                        : (widget.orderToEdit == null
+                              ? 'Crear pedido'
+                              : 'Guardar cambios'),
                   ),
                 ),
               ),
@@ -805,8 +863,9 @@ class _MenuItemGridCard extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   ClipRRect(
-                    borderRadius:
-                        const BorderRadius.vertical(top: Radius.circular(17)),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(17),
+                    ),
                     child: _DetailImage(item: item, emojiFontSize: 44),
                   ),
                   Positioned(
@@ -820,8 +879,11 @@ class _MenuItemGridCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(999),
                         child: const Padding(
                           padding: EdgeInsets.all(6),
-                          child: Icon(Icons.info_outline_rounded,
-                              size: 16, color: AppTheme.ink),
+                          child: Icon(
+                            Icons.info_outline_rounded,
+                            size: 16,
+                            color: AppTheme.ink,
+                          ),
                         ),
                       ),
                     ),
@@ -832,7 +894,9 @@ class _MenuItemGridCard extends StatelessWidget {
                       left: 6,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
                         decoration: BoxDecoration(
                           color: AppTheme.brand,
                           borderRadius: BorderRadius.circular(999),
@@ -891,7 +955,10 @@ class _MenuItemGridCard extends StatelessWidget {
                   else
                     Row(
                       children: [
-                        _MiniButton(icon: Icons.remove_rounded, onTap: onRemove),
+                        _MiniButton(
+                          icon: Icons.remove_rounded,
+                          onTap: onRemove,
+                        ),
                         Expanded(
                           child: Text(
                             '$quantity',
@@ -1000,12 +1067,18 @@ class _MenuItemDetailSheetState extends State<_MenuItemDetailSheet> {
                       left: 12,
                       top: 12,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.black.withValues(alpha: 0.55),
                           borderRadius: BorderRadius.circular(999),
                         ),
-                        child: Text(item.emoji, style: const TextStyle(fontSize: 18)),
+                        child: Text(
+                          item.emoji,
+                          style: const TextStyle(fontSize: 18),
+                        ),
                       ),
                     ),
                     if (_qty > 0)
@@ -1013,9 +1086,22 @@ class _MenuItemDetailSheetState extends State<_MenuItemDetailSheet> {
                         right: 12,
                         top: 12,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(color: AppTheme.brand, borderRadius: BorderRadius.circular(999)),
-                          child: Text('$_qty en carrito', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12)),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppTheme.brand,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '$_qty en carrito',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                            ),
+                          ),
                         ),
                       ),
                   ],
@@ -1025,13 +1111,34 @@ class _MenuItemDetailSheetState extends State<_MenuItemDetailSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      child: Text(item.name, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: AppTheme.ink, height: 1.15)),
+                      child: Text(
+                        item.name,
+                        style: const TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w900,
+                          color: AppTheme.ink,
+                          height: 1.15,
+                        ),
+                      ),
                     ),
                     const SizedBox(width: 12),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      decoration: BoxDecoration(color: AppTheme.brand.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(14)),
-                      child: Text(formatCop(item.price), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: AppTheme.brandDark)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppTheme.brand.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Text(
+                        formatCop(item.price),
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                          color: AppTheme.brandDark,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -1040,37 +1147,103 @@ class _MenuItemDetailSheetState extends State<_MenuItemDetailSheet> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    if (item.prepMinutes > 0) _InfoChip(icon: Icons.schedule_rounded, label: '${item.prepMinutes} min'),
-                    if (item.calories > 0) _InfoChip(icon: Icons.local_fire_department_rounded, label: '${item.calories} kcal'),
-                    _InfoChip(icon: Icons.restaurant_menu_rounded, label: item.categorySlug.isEmpty ? 'Menú' : item.categorySlug),
+                    if (item.prepMinutes > 0)
+                      _InfoChip(
+                        icon: Icons.schedule_rounded,
+                        label: '${item.prepMinutes} min',
+                      ),
+                    if (item.calories > 0)
+                      _InfoChip(
+                        icon: Icons.local_fire_department_rounded,
+                        label: '${item.calories} kcal',
+                      ),
+                    _InfoChip(
+                      icon: Icons.restaurant_menu_rounded,
+                      label: item.categorySlug.isEmpty
+                          ? 'Menú'
+                          : item.categorySlug,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                Text(item.description, style: const TextStyle(fontSize: 14, color: Color(0xFF57534E), height: 1.55)),
+                Text(
+                  item.description,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF57534E),
+                    height: 1.55,
+                  ),
+                ),
                 if (item.ingredients.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  const _SectionTitle(icon: Icons.eco_rounded, title: 'Ingredientes'),
+                  const _SectionTitle(
+                    icon: Icons.eco_rounded,
+                    title: 'Ingredientes',
+                  ),
                   const SizedBox(height: 8),
                   Wrap(
-                    spacing: 8, runSpacing: 8,
-                    children: item.ingredients.map((i) => Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                      decoration: BoxDecoration(color: const Color(0xFFF5F5F4), borderRadius: BorderRadius.circular(999), border: Border.all(color: const Color(0xFFE7E5E4))),
-                      child: Text(i, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF57534E))),
-                    )).toList(),
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: item.ingredients
+                        .map(
+                          (i) => Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 7,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF5F5F4),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: const Color(0xFFE7E5E4),
+                              ),
+                            ),
+                            child: Text(
+                              i,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF57534E),
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
                   ),
                 ],
                 if (item.allergens.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  const _SectionTitle(icon: Icons.warning_amber_rounded, title: 'Alérgenos', color: AppTheme.warning),
+                  const _SectionTitle(
+                    icon: Icons.warning_amber_rounded,
+                    title: 'Alérgenos',
+                    color: AppTheme.warning,
+                  ),
                   const SizedBox(height: 8),
                   Wrap(
-                    spacing: 8, runSpacing: 8,
-                    children: item.allergens.map((a) => Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                      decoration: BoxDecoration(color: AppTheme.warning.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(999)),
-                      child: Text(a, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF92400E))),
-                    )).toList(),
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: item.allergens
+                        .map(
+                          (a) => Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 7,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppTheme.warning.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              a,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF92400E),
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
                   ),
                 ],
                 if (hasVideo) ...[
@@ -1079,28 +1252,68 @@ class _MenuItemDetailSheetState extends State<_MenuItemDetailSheet> {
                     onPressed: _openVideo,
                     icon: const Icon(Icons.play_circle_outline_rounded),
                     label: const Text('Ver video del plato'),
-                    style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(50), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(50),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
                   ),
                 ],
                 const SizedBox(height: 20),
                 Container(
                   padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(color: const Color(0xFFFAFAF9), borderRadius: BorderRadius.circular(20), border: Border.all(color: const Color(0xFFEDEAE6))),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFAFAF9),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFFEDEAE6)),
+                  ),
                   child: Row(
                     children: [
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('Cantidad en pedido', style: TextStyle(fontSize: 12, color: Color(0xFF78716C))),
+                            const Text(
+                              'Cantidad en pedido',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF78716C),
+                              ),
+                            ),
                             const SizedBox(height: 2),
-                            Text(_qty > 0 ? formatCop(item.price * _qty) : formatCop(item.price), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppTheme.ink)),
+                            Text(
+                              _qty > 0
+                                  ? formatCop(item.price * _qty)
+                                  : formatCop(item.price),
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: AppTheme.ink,
+                              ),
+                            ),
                           ],
                         ),
                       ),
-                      _QtyButton(icon: Icons.remove_rounded, onTap: _qty > 0 ? _remove : null),
-                      Padding(padding: const EdgeInsets.symmetric(horizontal: 14), child: Text('$_qty', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900))),
-                      _QtyButton(icon: Icons.add_rounded, onTap: _add, filled: true),
+                      _QtyButton(
+                        icon: Icons.remove_rounded,
+                        onTap: _qty > 0 ? _remove : null,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        child: Text(
+                          '$_qty',
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      _QtyButton(
+                        icon: Icons.add_rounded,
+                        onTap: _add,
+                        filled: true,
+                      ),
                     ],
                   ),
                 ),
@@ -1121,33 +1334,63 @@ class _InfoChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(color: AppTheme.brand.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(999)),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 14, color: AppTheme.brandDark),
-        const SizedBox(width: 5),
-        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppTheme.brandDark)),
-      ]),
+      decoration: BoxDecoration(
+        color: AppTheme.brand.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppTheme.brandDark),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.brandDark,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
 class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.icon, required this.title, this.color = AppTheme.ink});
+  const _SectionTitle({
+    required this.icon,
+    required this.title,
+    this.color = AppTheme.ink,
+  });
   final IconData icon;
   final String title;
   final Color color;
   @override
   Widget build(BuildContext context) {
-    return Row(children: [
-      Icon(icon, size: 18, color: color),
-      const SizedBox(width: 6),
-      Text(title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: color)),
-    ]);
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 6),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w800,
+            color: color,
+          ),
+        ),
+      ],
+    );
   }
 }
 
 class _QtyButton extends StatelessWidget {
-  const _QtyButton({required this.icon, required this.onTap, this.filled = false});
+  const _QtyButton({
+    required this.icon,
+    required this.onTap,
+    this.filled = false,
+  });
   final IconData icon;
   final VoidCallback? onTap;
   final bool filled;
@@ -1155,16 +1398,29 @@ class _QtyButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: filled ? AppTheme.brand : Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: filled ? AppTheme.brand : const Color(0xFFD6D3D1))),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: filled ? AppTheme.brand : const Color(0xFFD6D3D1),
+        ),
+      ),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
-        child: SizedBox(width: 42, height: 42, child: Icon(icon, color: onTap == null ? const Color(0xFFA8A29E) : (filled ? Colors.white : AppTheme.ink))),
+        child: SizedBox(
+          width: 42,
+          height: 42,
+          child: Icon(
+            icon,
+            color: onTap == null
+                ? const Color(0xFFA8A29E)
+                : (filled ? Colors.white : AppTheme.ink),
+          ),
+        ),
       ),
     );
   }
 }
-
 
 class _DetailImage extends StatelessWidget {
   const _DetailImage({required this.item, required this.emojiFontSize});
@@ -1176,10 +1432,10 @@ class _DetailImage extends StatelessWidget {
   Widget build(BuildContext context) {
     final url = item.imageUrl.trim();
     Widget fallback() => Container(
-          color: const Color(0xFFFFF7ED),
-          alignment: Alignment.center,
-          child: Text(item.emoji, style: TextStyle(fontSize: emojiFontSize)),
-        );
+      color: const Color(0xFFFFF7ED),
+      alignment: Alignment.center,
+      child: Text(item.emoji, style: TextStyle(fontSize: emojiFontSize)),
+    );
     if (url.isEmpty) return fallback();
     if (url.startsWith('http://') || url.startsWith('https://')) {
       return Image.network(

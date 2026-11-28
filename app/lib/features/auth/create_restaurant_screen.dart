@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../core/data/repository.dart';
 import '../../core/models/restaurant_settings.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/device_time_zone.dart';
 import '../../core/theme/app_theme.dart';
 
 /// Alta autocontenida de una nueva instancia de restaurante.
@@ -38,17 +39,22 @@ class _CreateRestaurantScreenState extends State<CreateRestaurantScreen> {
   final _phone = TextEditingController();
 
   String _timeZone = RestaurantSettings.defaultTimeZone;
-  String _countryCode = '+57';
+  CountryDial _country = RestaurantSettings.defaultCountryDial;
   bool _obscure = true;
   bool _loading = false;
   String? _error;
-
-  static const _countryCodes = ['+57', '+52', '+54', '+51', '+56', '+34', '+1'];
 
   @override
   void initState() {
     super.initState();
     _email.text = widget.initialEmail;
+    unawaited(_loadDeviceTimeZone());
+  }
+
+  Future<void> _loadDeviceTimeZone() async {
+    final zone = await DeviceTimeZone.current();
+    if (!mounted) return;
+    setState(() => _timeZone = zone);
   }
 
   @override
@@ -72,15 +78,16 @@ class _CreateRestaurantScreenState extends State<CreateRestaurantScreen> {
     final repository = context.read<RestaurantRepository>();
     final messenger = ScaffoldMessenger.of(context);
     try {
+      final timeZone = await DeviceTimeZone.current();
       final tenantId = await repository.createRestaurant(
         email: _email.text.trim(),
         password: _password.text,
         restaurantName: _name.text.trim(),
-        timeZone: _timeZone,
+        timeZone: timeZone,
         openTime: _openTime.text.trim(),
         closeTime: _closeTime.text.trim(),
         tableCount: int.tryParse(_tableCount.text.trim()) ?? 0,
-        countryCode: _countryCode,
+        countryCode: _country.code,
         phone: _phone.text.trim(),
       );
       if (!mounted) return;
@@ -245,28 +252,19 @@ class _CreateRestaurantScreenState extends State<CreateRestaurantScreen> {
                             ),
                           ),
                           const SizedBox(height: 12),
-                          DropdownButtonFormField<String>(
-                            // ignore: deprecated_member_use
-                            value: _timeZone,
-                            isExpanded: true,
+                          InputDecorator(
                             decoration: const InputDecoration(
-                              labelText: 'Zona horaria',
+                              labelText: 'Zona horaria del celular',
                               prefixIcon: Icon(Icons.public_rounded),
+                              helperText: 'Se toma automáticamente del dispositivo.',
                             ),
-                            items: [
-                              for (final zone in RestaurantSettings.suggestionsTimeZone)
-                                DropdownMenuItem<String>(
-                                  value: zone,
-                                  child: Text(zone),
-                                ),
-                            ],
-                            onChanged: _loading
-                                ? null
-                                : (value) {
-                                    if (value != null) {
-                                      setState(() => _timeZone = value);
-                                    }
-                                  },
+                            child: Text(
+                              _timeZone,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                color: AppTheme.ink,
+                              ),
+                            ),
                           ),
                           const SizedBox(height: 12),
                           Row(
@@ -323,26 +321,31 @@ class _CreateRestaurantScreenState extends State<CreateRestaurantScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               SizedBox(
-                                width: 104,
-                                child: DropdownButtonFormField<String>(
+                                width: 180,
+                                child: DropdownButtonFormField<CountryDial>(
                                   // ignore: deprecated_member_use
-                                  value: _countryCode,
+                                  value: _country,
                                   isExpanded: true,
+                                  menuMaxHeight: 320,
                                   decoration: const InputDecoration(
-                                    labelText: 'País',
+                                    labelText: 'País e indicativo',
                                   ),
                                   items: [
-                                    for (final code in _countryCodes)
-                                      DropdownMenuItem<String>(
-                                        value: code,
-                                        child: Text(code),
+                                    for (final country
+                                        in RestaurantSettings.supportedCountries)
+                                      DropdownMenuItem<CountryDial>(
+                                        value: country,
+                                        child: Text(
+                                          country.label,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       ),
                                   ],
                                   onChanged: _loading
                                       ? null
                                       : (value) {
                                           if (value != null) {
-                                            setState(() => _countryCode = value);
+                                            setState(() => _country = value);
                                           }
                                         },
                                 ),

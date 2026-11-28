@@ -198,6 +198,19 @@ void main() {
       );
     });
 
+    test('el alta ofrece muchas zonas horarias y todos los indicativos', () {
+      expect(RestaurantSettings.suggestionsTimeZone.length, greaterThan(100));
+      expect(RestaurantSettings.supportedCountries.length, greaterThan(200));
+      expect(
+        RestaurantSettings.supportedCountries.map((country) => country.code),
+        containsAll(['+1', '+7', '+57', '+998']),
+      );
+      expect(RestaurantSettings.defaultCountryDial.code, '+57');
+      for (final zone in RestaurantSettings.suggestionsTimeZone) {
+        expect(RestaurantSettings.isValidTimeZone(zone), isTrue, reason: zone);
+      }
+    });
+
     test('publica y reconcilia zona horaria y horario de trabajo', () {
       const settings = RestaurantSettings(
         name: 'Casa Nueva',

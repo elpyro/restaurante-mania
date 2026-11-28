@@ -11,6 +11,7 @@ import '../appearance/appearance_screen.dart';
 import '../inventory/inventory_screen.dart';
 import '../inventory_losses/inventory_losses_screen.dart';
 import '../menu/menu_admin_screen.dart';
+import '../notifications/notifications_screen.dart';
 import '../reports/reports_screen.dart';
 import '../settings/settings_screen.dart';
 import '../users/users_screen.dart';
@@ -157,6 +158,18 @@ class MoreScreen extends StatelessWidget {
           subtitle: 'Restaurante, conexión y datos demo',
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+          ),
+        ),
+        _MenuTile(
+          icon: Icons.notifications_none_rounded,
+          label: 'Notificaciones',
+          subtitle: repository.notificationPreferences.silentAll
+              ? 'Todos los avisos silenciados'
+              : 'Push, tono e importancia por categoría',
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const NotificationsScreen(),
+            ),
           ),
         ),
         _MenuTile(

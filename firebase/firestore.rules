@@ -1,19 +1,245 @@
 rules_version = '2';
 
-// TEMPORAL (DEBUG): reglas abiertas para descartar permisos.
-// REVERTIR antes de producción real.
+// =============================================================================
+// Reglas de seguridad de Cloud Firestore — Restaurante Manía (multi-tenant)
+//
+// El catálogo es público de lectura; el resto de colecciones se gobierna por el
+// rol del usuario DENTRO de `tenants/{tenantId}/users/{uid}`. Las Functions usan
+// Admin SDK y no están sujetas a estas reglas.
+// =============================================================================
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Índice global de usuarios (colección raíz, junto a `tenants`).
-    // Se necesita lectura/anulación desde la APK para resolver el tenant en
-    // el login sin desplegable, y escritura al crear/editar/borrar usuarios.
-    match /all_user/{email} {
-      allow read, write: if true;
+
+    // -------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------
+
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    // TEMPORAL (DEBUG): el resto sigue abierto mientras se valida la sync.
+    function tenantPath(tenantId) {
+      return /databases/$(database)/documents/tenants/$(tenantId);
+    }
+
+    function tenantUserPath(tenantId, userId) {
+      return /databases/$(database)/documents/tenants/$(tenantId)/users/$(userId);
+    }
+
+    function tenantRole(tenantId) {
+      return isSignedIn() && exists(tenantUserPath(tenantId, request.auth.uid))
+        ? get(tenantUserPath(tenantId, request.auth.uid)).data.role
+        : null;
+    }
+
+    function hasTenantRole(tenantId, roles) {
+      return tenantRole(tenantId) in roles;
+    }
+
+    function isTenantAdmin(tenantId) {
+      return tenantRole(tenantId) == 'admin';
+    }
+
+    function isTenantStaff(tenantId) {
+      return hasTenantRole(tenantId, ['admin', 'cashier', 'waiter', 'cook']);
+    }
+
+    function isTenantOwner(tenantId) {
+      return isSignedIn()
+        && exists(tenantPath(tenantId))
+        && get(tenantPath(tenantId)).data is map
+        && 'ownerUid' in get(tenantPath(tenantId)).data
+        && get(tenantPath(tenantId)).data.ownerUid == request.auth.uid;
+    }
+
+    function canWriteTenant(tenantId) {
+      return isTenantAdmin(tenantId) || isTenantOwner(tenantId);
+    }
+
+    function isValidOrder() {
+      let data = request.resource.data;
+      return data is map
+        && data.keys().hasAll([
+          'code', 'customerName', 'customerPhone', 'type', 'items',
+          'subtotal', 'tax', 'total', 'status', 'paymentStatus',
+          'paymentMethod', 'createdAt'
+        ])
+        && data.customerName is string
+        && data.customerName.size() <= 80
+        && data.customerPhone is string
+        && data.customerPhone.size() <= 20
+        && (data.type != 'table'
+            ? (data.customerName.size() >= 2 && data.customerPhone.size() >= 7)
+            : true)
+        && data.type in ['pickup', 'delivery', 'table']
+        && data.items is list
+        && data.items.size() > 0
+        && data.items.size() <= 50
+        && data.subtotal is number
+        && data.subtotal >= 0
+        && data.tax is number
+        && data.tax >= 0
+        && data.total is number
+        && data.total == data.subtotal + data.tax
+        && data.status == 'pending'
+        && data.paymentStatus == 'pending'
+        && data.paymentMethod in ['cash', 'card', 'nequi', 'daviplata']
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 300))
+        && (!('deliveryAddress' in data)
+            || (data.deliveryAddress is string && data.deliveryAddress.size() <= 160))
+        && (data.type != 'delivery'
+            || ('deliveryAddress' in data
+                && data.deliveryAddress is string
+                && data.deliveryAddress.size() >= 5))
+        && (data.type != 'table'
+            || (data.tableNumber is int && data.tableNumber >= 1 && data.tableNumber <= 200));
+    }
+
+    function preservesOrderIdentity() {
+      return request.resource.data.code == resource.data.code
+        && request.resource.data.customerName == resource.data.customerName
+        && request.resource.data.createdAt == resource.data.createdAt;
+    }
+
+    // -------------------------------------------------------------------
+    // Índice global de usuarios (raíz)
+    // -------------------------------------------------------------------
+
+    match /all_user/{email} {
+      // Solo cuentas autenticadas. El documento siempre representa al correo
+      // de su ID; el dueño y los admins del tenant lo mantienen sincronizado.
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn()
+        && request.resource.data is map
+        && (!('email' in request.resource.data) || request.resource.data.email == email);
+      allow delete: if isSignedIn();
+    }
+
+    // -------------------------------------------------------------------
+    // Instancias
+    // -------------------------------------------------------------------
+
+    match /tenants/{tenantId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+        && request.resource.data is map
+        && 'ownerUid' in request.resource.data
+        && request.resource.data.ownerUid == request.auth.uid
+        && (!('id' in request.resource.data) || request.resource.data.id == tenantId);
+      allow update, delete: if isTenantAdmin(tenantId);
+
+      // Catálogo público: la web y los agentes de IA lo leen sin sesión.
+      match /categories/{categoryId} {
+        allow read: if true;
+        allow write: if canWriteTenant(tenantId);
+      }
+
+      match /menuItems/{itemId} {
+        allow read: if true;
+        allow write: if isTenantAdmin(tenantId) || isTenantOwner(tenantId);
+      }
+
+      match /ingredients/{ingredientId} {
+        allow read: if true;
+        allow create, delete: if isTenantAdmin(tenantId) || isTenantOwner(tenantId);
+        // Cocina también descuenta stock al registrar pérdidas.
+        allow update: if canWriteTenant(tenantId)
+          || hasTenantRole(tenantId, ['cook']);
+      }
+
+      match /restaurant/{docId} {
+        allow read: if true;
+        allow write: if canWriteTenant(tenantId);
+      }
+
+      match /tables/{tableId} {
+        allow read: if true;
+        allow write: if hasTenantRole(tenantId, ['admin', 'waiter', 'cashier'])
+          || isTenantOwner(tenantId);
+      }
+
+      // Perfiles: cada usuario lee el suyo; listar/gestionar es de administrador.
+      match /users/{userId} {
+        allow get: if isSignedIn()
+          && (userId == request.auth.uid || isTenantAdmin(tenantId));
+        allow list: if isTenantAdmin(tenantId);
+        allow create: if isTenantAdmin(tenantId)
+          || (isTenantOwner(tenantId)
+              && request.resource.data.uid == request.auth.uid
+              && request.resource.data.role == 'admin');
+        allow update, delete: if isTenantAdmin(tenantId);
+      }
+
+      match /orders/{orderId} {
+        allow get: if true;
+        allow list: if isTenantStaff(tenantId);
+        allow create: if hasTenantRole(tenantId, ['admin', 'cashier', 'waiter'])
+          && isValidOrder();
+        allow update: if isTenantStaff(tenantId) && preservesOrderIdentity();
+        allow delete: if isTenantAdmin(tenantId);
+      }
+
+      match /customers/{customerId} {
+        allow get, list: if isTenantStaff(tenantId);
+        allow create, update: if isTenantStaff(tenantId);
+        allow delete: if isTenantAdmin(tenantId);
+      }
+
+      match /webVisits/{visitId} {
+        allow get, list: if isTenantStaff(tenantId);
+        allow create: if request.resource.data.keys().hasOnly([
+          'id', 'visitorId', 'occurredAt', 'dayKey', 'registered',
+          'customerName', 'customerPhone', 'normalizedPhone',
+          'referenceLabel', 'referenceUrl', 'referrer'
+        ])
+        && request.resource.data.keys().hasAll([
+          'id', 'occurredAt', 'dayKey', 'registered', 'referenceLabel', 'referenceUrl'
+        ])
+        && request.resource.data.id is string
+        && request.resource.data.occurredAt is string
+        && request.resource.data.dayKey is string
+        && request.resource.data.registered is bool
+        && request.resource.data.referenceUrl is string
+        && request.resource.data.referenceLabel is string;
+        allow update: if isTenantStaff(tenantId);
+        allow delete: if isTenantAdmin(tenantId);
+      }
+
+      match /cashShifts/{shiftId} {
+        allow get, list: if isTenantStaff(tenantId);
+        allow create, update: if hasTenantRole(tenantId, ['admin', 'cashier']);
+        allow delete: if isTenantAdmin(tenantId);
+      }
+
+      match /inventoryLosses/{lossId} {
+        allow get, list: if isTenantAdmin(tenantId);
+        allow create, update: if hasTenantRole(tenantId, ['admin', 'cook']);
+        allow delete: if isTenantAdmin(tenantId);
+      }
+
+      // Solo Cloud Functions (Admin SDK) escribe estas colecciones derivadas.
+      match /stats/{docId} {
+        allow read: if isTenantStaff(tenantId);
+        allow write: if false;
+      }
+
+      match /reports/{docId} {
+        allow read: if isTenantStaff(tenantId);
+        allow write: if false;
+      }
+
+      match /_processedEvents/{eventId} {
+        allow read, write: if false;
+      }
+
+      match /_notificationEvents/{eventId} {
+        allow read, write: if false;
+      }
+    }
+
+    // Todo lo no declarado queda cerrado.
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

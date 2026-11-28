@@ -7,11 +7,13 @@ import {
 } from "firebase-functions/v2/https";
 import {
   onDocumentCreated,
+  onDocumentUpdated,
   onDocumentWritten,
 } from "firebase-functions/v2/firestore";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
 import { initializeApp } from "firebase-admin/app";
+import { getMessaging } from "firebase-admin/messaging";
 import {
   FieldValue,
   Timestamp,
@@ -31,6 +33,7 @@ import {
   isValidPhone,
   isValidQuantity,
   isValidTableNumber,
+  MAX_TABLE_NUMBER,
   type OrderStatus,
   type PricedLine,
   type RecipeLine,
@@ -155,6 +158,238 @@ async function loadMenuByIdForTransaction(
 }
 
 // =============================================================================
+// Notificaciones push
+//
+// Los mensajes son `data`-only: la APK decide si muestra y suena el aviso según
+// sus preferencias. Los destinatarios se resuelven por rol DENTRO del tenant y
+// se comprueba la membresía en `all_user` antes de usar cada token, para que un
+// dispositivo con varios tenants nunca reciba un evento ajeno.
+// =============================================================================
+
+type PushEventType =
+  | "new_order"
+  | "order_ready"
+  | "low_stock"
+  | "out_of_stock"
+  | "shift_closed";
+
+const PUSH_ROLES: Record<PushEventType, string[]> = {
+  new_order: ["admin", "cashier", "cook"],
+  order_ready: ["admin", "cashier", "waiter"],
+  low_stock: ["admin", "cook"],
+  out_of_stock: ["admin", "cook"],
+  shift_closed: ["admin", "cashier"],
+};
+
+interface PushTokenEntry {
+  token: string;
+  email: string;
+  deviceId: string;
+}
+
+/** Primer valor de texto no vacío entre los campos indicados. */
+function firstText(data: unknown, fields: string[]): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const source = data as Record<string, unknown>;
+  for (const field of fields) {
+    const value = source[field];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+async function pushTokensForEvent(
+  tenantId: string,
+  type: PushEventType,
+  excludeUid?: string,
+): Promise<PushTokenEntry[]> {
+  const users = await tenantCollection(tenantId, "users")
+    .where("role", "in", PUSH_ROLES[type])
+    .get();
+  const emails = new Set<string>();
+  const excludedEmails = new Set<string>();
+  const actor = excludeUid?.trim().toLowerCase();
+  for (const doc of users.docs) {
+    const data = doc.data() ?? {};
+    const emailValue = data.email;
+    const email =
+      typeof emailValue === "string" && emailValue.trim().length > 0
+        ? emailValue.trim().toLowerCase()
+        : undefined;
+    const isActor =
+      actor !== undefined &&
+      actor.length > 0 &&
+      (doc.id.toLowerCase() === actor ||
+        (typeof data.uid === "string" && data.uid.trim().toLowerCase() === actor) ||
+        email === actor);
+    if (isActor && email !== undefined) excludedEmails.add(email);
+    if (email !== undefined) emails.add(email);
+  }
+  // Quien originó el cambio no recibe el aviso en ninguno de sus dispositivos.
+  for (const email of excludedEmails) emails.delete(email);
+  if (emails.size === 0) return [];
+
+  const snapshots = await Promise.all(
+    [...emails].map((email) => db.collection("all_user").doc(email).get()),
+  );
+  const seen = new Set<string>();
+  const entries: PushTokenEntry[] = [];
+  for (const snapshot of snapshots) {
+    if (!snapshot.exists) continue;
+    const data = snapshot.data() ?? {};
+    const memberships = Array.isArray(data.memberships) ? data.memberships : [];
+    const belongs = memberships.some(
+      (membership) =>
+        membership &&
+        typeof membership === "object" &&
+        (membership as Record<string, unknown>).tenantId === tenantId,
+    );
+    if (!belongs) continue;
+    const tokens = data.fcmTokens;
+    if (!tokens || typeof tokens !== "object") continue;
+    for (const [deviceId, token] of Object.entries(
+      tokens as Record<string, unknown>,
+    )) {
+      if (typeof token !== "string" || token.trim().length === 0) continue;
+      if (seen.has(token)) continue;
+      seen.add(token);
+      entries.push({ token, email: snapshot.id, deviceId });
+    }
+  }
+  return entries;
+}
+
+/** Marca el evento como procesado una sola vez (idempotencia ante reentregas). */
+async function claimPushEvent(
+  tenantId: string,
+  eventId: string,
+): Promise<boolean> {
+  try {
+    await tenantDoc(tenantId, "_notificationEvents", eventId).create({
+      tenantId,
+      eventId,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    return true;
+  } catch (error) {
+    // ALREADY_EXISTS: el trigger se reejecutó para el mismo evento.
+    if ((error as { code?: number }).code === 6) return false;
+    throw error;
+  }
+}
+
+async function dropInvalidTokens(entries: PushTokenEntry[]): Promise<void> {
+  if (entries.length === 0) return;
+  const byEmail = new Map<string, string[]>();
+  for (const entry of entries) {
+    const ids = byEmail.get(entry.email) ?? [];
+    ids.push(entry.deviceId);
+    byEmail.set(entry.email, ids);
+  }
+  await Promise.all(
+    [...byEmail].map(async ([email, deviceIds]) => {
+      const ref = db.collection("all_user").doc(email);
+      await db.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists) return;
+        const current = snapshot.data()?.fcmTokens;
+        const tokens: Record<string, unknown> =
+          current && typeof current === "object"
+            ? { ...(current as Record<string, unknown>) }
+            : {};
+        for (const deviceId of deviceIds) delete tokens[deviceId];
+        transaction.update(ref, {
+          fcmTokens: tokens,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      });
+    }),
+  );
+}
+
+async function notifyTenant(input: {
+  tenantId: string;
+  type: PushEventType;
+  eventId: string;
+  title: string;
+  body: string;
+  orderId?: string;
+  excludeUid?: string;
+}): Promise<void> {
+  const claimed = await claimPushEvent(input.tenantId, input.eventId);
+  if (!claimed) return;
+
+  const recipients = await pushTokensForEvent(
+    input.tenantId,
+    input.type,
+    input.excludeUid,
+  );
+  if (recipients.length === 0) return;
+
+  const data: Record<string, string> = {
+    type: input.type,
+    tenantId: input.tenantId,
+    eventId: input.eventId,
+    title: input.title,
+    body: input.body,
+  };
+  if (input.orderId) data.orderId = input.orderId;
+
+  const result = await getMessaging().sendEach(
+    recipients.map((entry) => ({
+      token: entry.token,
+      data,
+      android: { priority: "high" as const },
+      apns: { payload: { aps: { contentAvailable: true } } },
+    })),
+  );
+  const invalid: PushTokenEntry[] = [];
+  result.responses.forEach((response, index) => {
+    const code = (response.error as { code?: string } | undefined)?.code ?? "";
+    if (
+      code.includes("invalid-registration-token") ||
+      code.includes("registration-token-not-registered")
+    ) {
+      invalid.push(recipients[index]);
+    }
+  });
+  if (invalid.length > 0) await dropInvalidTokens(invalid);
+
+  logger.info("Push enviado", {
+    tenantId: input.tenantId,
+    type: input.type,
+    eventId: input.eventId,
+    sent: result.successCount,
+    failed: result.failureCount,
+  });
+}
+
+function numericValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/** Identificador estable por escritura, para no repetir avisos al reequilibrar. */
+function eventMarker(snapshot: unknown, data: unknown): string {
+  const updateTime = (
+    snapshot as { updateTime?: { toMillis?: () => number } } | undefined
+  )?.updateTime;
+  if (updateTime && typeof updateTime.toMillis === "function") {
+    return String(updateTime.toMillis());
+  }
+  const updatedAt =
+    data && typeof data === "object"
+      ? (data as Record<string, unknown>).updatedAt
+      : undefined;
+  if (updatedAt instanceof Timestamp) return String(updatedAt.toMillis());
+  if (typeof updatedAt === "string" && updatedAt.trim().length > 0) {
+    return updatedAt.trim();
+  }
+  return "changed";
+}
+
+// =============================================================================
 // Tipos de entrada
 // =============================================================================
 
@@ -246,7 +481,7 @@ export const placeOrder = onCall(async (request: CallableRequest) => {
     errors.push("El método de pago no es válido.");
   }
   if (payload.type === "table" && !isValidTableNumber(payload.tableNumber)) {
-    errors.push("El número de mesa debe estar entre 1 y 100.");
+    errors.push(`El número de mesa debe estar entre 1 y ${MAX_TABLE_NUMBER}.`);
   }
   if (isDelivery) {
     if (deliveryAddress.length < 5 || deliveryAddress.length > 160) {
@@ -463,6 +698,8 @@ export const syncMenuStatusOnIngredientChange = onDocumentWritten(
   async (event) => {
     const tenantId = event.params.tenantId;
     const changedId = event.params.ingredientId;
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
     const menuSnapshot = await tenantCollection(tenantId, "menuItems").get();
     const affected = menuSnapshot.docs.filter((doc) =>
       readRecipe(doc.data()?.recipe).some(
@@ -517,6 +754,47 @@ export const syncMenuStatusOnIngredientChange = onDocumentWritten(
       ingredientId: changedId,
       updates,
     });
+
+    // Aviso solo al cruzar un umbral, no en cada escritura posterior. El
+    // agotamiento manda y sustituye al aviso de stock bajo del mismo cambio.
+    const beforeStock = numericValue(before?.stock);
+    const beforeMin = numericValue(before?.minStock);
+    const afterStock = numericValue(after?.stock);
+    const afterMin = numericValue(after?.minStock);
+    const wasLow =
+      before !== undefined && beforeMin > 0 && beforeStock <= beforeMin;
+    const isLow = after !== undefined && afterMin > 0 && afterStock <= afterMin;
+    const wasOut = before !== undefined && beforeStock <= 0;
+    const isOut = after !== undefined && afterStock <= 0;
+    const name =
+      typeof after?.name === "string" && after.name.length > 0
+        ? after.name
+        : changedId;
+    const unit = typeof after?.unit === "string" ? after.unit : "";
+    const actorUid = firstText(after, ["updatedBy", "lastChangedBy"]);
+    const marker = eventMarker(event.data?.after, after);
+
+    if (!wasOut && isOut) {
+      await notifyTenant({
+        tenantId,
+        type: "out_of_stock",
+        eventId: `out_of_stock:${tenantId}:${changedId}:${marker}`,
+        title: `Sin stock: ${name}`,
+        body: `Agotado · mínimo ${afterMin} ${unit}`.trim(),
+        orderId: changedId,
+        excludeUid: actorUid,
+      });
+    } else if (!wasLow && isLow) {
+      await notifyTenant({
+        tenantId,
+        type: "low_stock",
+        eventId: `low_stock:${tenantId}:${changedId}:${marker}`,
+        title: `Stock bajo: ${name}`,
+        body: `Quedan ${afterStock} ${unit} · mínimo ${afterMin} ${unit}`.trim(),
+        orderId: changedId,
+        excludeUid: actorUid,
+      });
+    }
   },
 );
 
@@ -573,6 +851,7 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
       status: target,
       updatedAt: FieldValue.serverTimestamp(),
       lastChangedBy: request.auth?.uid ?? null,
+      updatedBy: request.auth?.uid ?? null,
     };
 
     if (target === "delivered" || target === "sent") {
@@ -627,6 +906,7 @@ export const updateOrderStatus = onCall(async (request: CallableRequest) => {
         transaction.update(snap.ref, {
           stock: next < 0 ? 0 : next,
           updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: request.auth?.uid ?? null,
         });
       }
       patch.inventoryDeducted = shouldDeduct;
@@ -728,6 +1008,76 @@ export const onOrderCreated = onDocumentCreated(
       tenantId,
       day: key,
       orderId: event.params.orderId,
+    });
+
+    await notifyTenant({
+      tenantId,
+      type: "new_order",
+      eventId: `new_order:${tenantId}:${event.params.orderId}:${eventMarker(event.data, data)}`,
+      title: `Pedido nuevo ${typeof data.code === "string" ? data.code : event.params.orderId}`,
+      body: `${typeof data.customerName === "string" ? data.customerName : "Cliente"} · $${total.toFixed(0)}`,
+      orderId: event.params.orderId,
+      excludeUid: firstText(data, ["createdBy"]),
+    });
+  },
+);
+
+// =============================================================================
+// notifyOrderReady: aviso cuando un pedido pasa a "listo".
+// =============================================================================
+
+export const notifyOrderReady = onDocumentUpdated(
+  "tenants/{tenantId}/orders/{orderId}",
+  async (event) => {
+    if (!event.data) return;
+    const before = event.data.before.data();
+    const after = event.data.after.data();
+    if (before?.status === "ready" || after?.status !== "ready") return;
+
+    const tenantId = event.params.tenantId;
+    const orderId = event.params.orderId;
+    const code = typeof after.code === "string" ? after.code : orderId;
+    const customerName =
+      typeof after.customerName === "string" ? after.customerName : "Cliente";
+    const orderType =
+      typeof after.type === "string" ? after.type : "pickup";
+
+    await notifyTenant({
+      tenantId,
+      type: "order_ready",
+      eventId: `order_ready:${tenantId}:${orderId}:${eventMarker(event.data.after, after)}`,
+      title: `Pedido listo ${code}`,
+      body: `${customerName} · ${orderType}`,
+      orderId,
+      excludeUid: firstText(after, ["lastChangedBy", "updatedBy"]),
+    });
+  },
+);
+
+// =============================================================================
+// notifyShiftClosed: aviso al cerrar un turno de caja.
+// =============================================================================
+
+export const notifyShiftClosed = onDocumentWritten(
+  "tenants/{tenantId}/cashShifts/{shiftId}",
+  async (event) => {
+    if (!event.data) return;
+    const before = event.data.before.data();
+    const after = event.data.after.data();
+    if (!after || before?.status === "closed" || after.status !== "closed") {
+      return;
+    }
+
+    const tenantId = event.params.tenantId;
+    const shiftId = event.params.shiftId;
+    await notifyTenant({
+      tenantId,
+      type: "shift_closed",
+      eventId: `shift_closed:${tenantId}:${shiftId}:${eventMarker(event.data.after, after)}`,
+      title: "Turno cerrado",
+      body: `Cierre $${numericValue(after.total).toFixed(0)} · ${numericValue(after.orderCount)} pedido(s)`,
+      orderId: shiftId,
+      excludeUid: firstText(after, ["closedBy", "lastChangedBy"]),
     });
   },
 );

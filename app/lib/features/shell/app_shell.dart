@@ -6,10 +6,12 @@ import 'package:provider/provider.dart';
 import '../../core/data/repository.dart';
 import '../../core/models/app_tab.dart';
 import '../../core/models/role.dart';
+import '../../core/services/notification_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/common.dart';
 import '../crm/crm_screen.dart';
 import '../dashboard/dashboard_screen.dart';
+import '../inventory/inventory_screen.dart';
 import '../more/more_screen.dart';
 import '../orders/orders_screen.dart';
 import '../reports/reports_screen.dart';
@@ -25,6 +27,69 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _index = 0;
   String _ordersFilter = 'toCollect';
+  RestaurantRepository? _notificationRepository;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final repository = context.read<RestaurantRepository>();
+    if (identical(repository, _notificationRepository)) return;
+    _notificationRepository?.notificationTarget.removeListener(
+      _onNotificationTarget,
+    );
+    _notificationRepository = repository;
+    final target = repository.notificationTarget;
+    target.addListener(_onNotificationTarget);
+    final pending = target.value;
+    if (pending != null) {
+      target.value = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _applyNotificationTarget(pending);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _notificationRepository?.notificationTarget.removeListener(
+      _onNotificationTarget,
+    );
+    super.dispose();
+  }
+
+  void _onNotificationTarget() {
+    final repository = _notificationRepository;
+    if (repository == null) return;
+    final target = repository.notificationTarget.value;
+    if (target == null) return;
+    repository.notificationTarget.value = null;
+    _applyNotificationTarget(target);
+  }
+
+  void _applyNotificationTarget(NotificationTarget target) {
+    if (!mounted) return;
+    switch (target.type) {
+      case AppNotificationType.newOrder:
+      case AppNotificationType.orderReady:
+        _openOrders(target.orderFilter);
+      case AppNotificationType.lowStock:
+      case AppNotificationType.outOfStock:
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const InventoryScreen(showAppBar: true),
+          ),
+        );
+      case AppNotificationType.shiftClosed:
+        final hasReports = _destinationsFor(
+              context.read<RestaurantRepository>().role ?? UserRole.admin,
+            ).any((item) => item.tab == AppTab.reports);
+        if (hasReports) {
+          _navigate(AppTab.reports);
+        } else {
+          _navigate(AppTab.dashboard);
+        }
+    }
+  }
 
   void _navigate(AppTab tab) {
     final destinations = _destinationsFor(

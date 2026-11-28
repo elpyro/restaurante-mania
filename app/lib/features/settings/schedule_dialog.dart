@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models/restaurant_settings.dart';
+import '../../core/services/device_time_zone.dart';
 import '../../core/theme/app_theme.dart';
 
 /// Valor devuelto por [showScheduleDialog].
@@ -44,31 +45,34 @@ class _ScheduleDialog extends StatefulWidget {
 }
 
 class _ScheduleDialogState extends State<_ScheduleDialog> {
-  late final TextEditingController _timeZone;
   late final TextEditingController _openTime;
   late final TextEditingController _closeTime;
   late List<String> _days;
+  late String _timeZone;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _timeZone = TextEditingController(text: widget.current.timeZone);
+    _timeZone = widget.current.timeZone;
     _openTime = TextEditingController(text: widget.current.openTime);
     _closeTime = TextEditingController(text: widget.current.closeTime);
     _days = List<String>.from(widget.current.openingDays);
+    DeviceTimeZone.current().then((zone) {
+      if (!mounted) return;
+      setState(() => _timeZone = zone);
+    });
   }
 
   @override
   void dispose() {
-    _timeZone.dispose();
     _openTime.dispose();
     _closeTime.dispose();
     super.dispose();
   }
 
   void _save() {
-    final zone = _timeZone.text.trim();
+    final zone = _timeZone.trim();
     final open = _openTime.text.trim();
     final close = _closeTime.text.trim();
     String? error;
@@ -116,28 +120,18 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              TextField(
-                controller: _timeZone,
+              InputDecorator(
                 decoration: const InputDecoration(
-                  labelText: 'Zona horaria (IANA)',
-                  hintText: 'America/Bogota',
-                  helperText: 'Ejemplo: America/Mexico_City, Europe/Madrid, UTC',
+                  labelText: 'Zona horaria del celular',
+                  helperText: 'Se toma automáticamente del dispositivo.',
                 ),
-                onChanged: (_) => setState(() => _error = null),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 6,
-                children: [
-                  for (final zone in RestaurantSettings.suggestionsTimeZone)
-                    ActionChip(
-                      label: Text(zone),
-                      onPressed: () {
-                        _timeZone.text = zone;
-                        setState(() => _error = null);
-                      },
-                    ),
-                ],
+                child: Text(
+                  _timeZone,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    color: AppTheme.ink,
+                  ),
+                ),
               ),
               const SizedBox(height: 18),
               const Text('Días en que se reciben pedidos',

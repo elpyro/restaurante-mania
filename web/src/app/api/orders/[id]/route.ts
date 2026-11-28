@@ -46,6 +46,9 @@ export async function PATCH(
     paidAt?: string;
     paidBy?: string;
     paidByName?: string;
+    lastChangedBy?: string;
+    updatedBy?: string;
+    updatedByName?: string;
   } = {};
   if (typeof raw.status === "string") patch.status = raw.status as OrderStatus;
   if (typeof raw.paymentStatus === "string") {
@@ -57,13 +60,23 @@ export async function PATCH(
   if (typeof raw.paidAt === "string") patch.paidAt = raw.paidAt;
   if (typeof raw.paidBy === "string") patch.paidBy = raw.paidBy;
   if (typeof raw.paidByName === "string") patch.paidByName = raw.paidByName;
+  if (typeof raw.lastChangedBy === "string") {
+    patch.lastChangedBy = raw.lastChangedBy;
+  }
+  if (typeof raw.updatedBy === "string") patch.updatedBy = raw.updatedBy;
+  if (typeof raw.updatedByName === "string") {
+    patch.updatedByName = raw.updatedByName;
+  }
   if (
     !patch.status &&
     !patch.paymentStatus &&
     patch.inventoryDeducted === undefined &&
     !patch.paidAt &&
     !patch.paidBy &&
-    !patch.paidByName
+    !patch.paidByName &&
+    !patch.lastChangedBy &&
+    !patch.updatedBy &&
+    !patch.updatedByName
   ) {
     return NextResponse.json(
       { error: "No hay cambios para aplicar." },

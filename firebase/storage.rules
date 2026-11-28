@@ -1,11 +1,15 @@
 rules_version = '2';
 
-// TEMPORAL (DEBUG): reglas abiertas para descartar permisos.
-// REVERTIR antes de producción real.
+// Las imágenes globales de la plantilla son públicas: la web y la APK las
+// cargan por URL sin token. El resto de Storage requiere sesión iniciada.
 service firebase.storage {
   match /b/{bucket}/o {
+    match /imagenesglobales/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
     match /{allPaths=**} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
   }
 }

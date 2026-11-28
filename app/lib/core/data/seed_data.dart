@@ -17,7 +17,8 @@ class SeedData {
       id: 'cat-entrantes',
       name: 'Entrantes',
       slug: 'entrantes',
-      description: 'Para abrir el apetito con lo mejor de la cocina colombiana.',
+      description:
+          'Para abrir el apetito con lo mejor de la cocina colombiana.',
       order: 1,
       emoji: '🥟',
     ),
@@ -61,7 +62,8 @@ class SeedData {
       ingredients: ['Masa de maíz', 'Carne de res', 'Papa criolla', 'Hogao'],
       allergens: ['Gluten', 'Cebolla'],
       emoji: '🥟',
-      imageUrl: 'https://images.unsplash.com/photo-1601050690597-df0568f70950?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1601050690597-df0568f70950?w=800&q=80&auto=format&fit=crop',
       featured: true,
       prepMinutes: 12,
       calories: 420,
@@ -79,7 +81,8 @@ class SeedData {
       ingredients: ['Maíz blanco', 'Queso campesino', 'Mantequilla'],
       allergens: ['Lácteos'],
       emoji: '🫓',
-      imageUrl: 'https://images.unsplash.com/photo-1599789197514-47270cd526b4?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1599789197514-47270cd526b4?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 8,
       calories: 310,
@@ -97,7 +100,8 @@ class SeedData {
       ingredients: ['Plátano verde', 'Tomate', 'Cebolla', 'Queso'],
       allergens: ['Lácteos'],
       emoji: '🍌',
-      imageUrl: 'https://images.unsplash.com/photo-1528751086790-81a64658fc53?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1528751086790-81a64658fc53?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 10,
       calories: 380,
@@ -125,7 +129,8 @@ class SeedData {
       ],
       allergens: ['Cerdo', 'Huevo', 'Gluten'],
       emoji: '🍛',
-      imageUrl: 'https://images.unsplash.com/photo-1598515214211-89d3c73ae83b?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1598515214211-89d3c73ae83b?w=800&q=80&auto=format&fit=crop',
       featured: true,
       prepMinutes: 25,
       calories: 1250,
@@ -150,7 +155,8 @@ class SeedData {
       ],
       allergens: ['Lácteos'],
       emoji: '🍲',
-      imageUrl: 'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=800&q=80&auto=format&fit=crop',
       featured: true,
       prepMinutes: 22,
       calories: 720,
@@ -165,16 +171,11 @@ class SeedData {
       categoryId: 'cat-fuertes',
       categorySlug: 'platos-fuertes',
       status: MenuItemStatus.limited,
-      ingredients: [
-        'Camarón',
-        'Calamar',
-        'Pescado',
-        'Leche de coco',
-        'Arroz',
-      ],
+      ingredients: ['Camarón', 'Calamar', 'Pescado', 'Leche de coco', 'Arroz'],
       allergens: ['Mariscos', 'Pescado', 'Lácteos'],
       emoji: '🦐',
-      imageUrl: 'https://images.unsplash.com/photo-1559742811-822873691df8?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1559742811-822873691df8?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 28,
       calories: 680,
@@ -192,7 +193,8 @@ class SeedData {
       ingredients: ['Pechuga de pollo', 'Papa', 'Mantequilla', 'Lechuga'],
       allergens: ['Lácteos'],
       emoji: '🍗',
-      imageUrl: 'https://images.unsplash.com/photo-1532550907401-a500c9a57435?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1532550907401-a500c9a57435?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 20,
       calories: 540,
@@ -216,7 +218,8 @@ class SeedData {
       ],
       allergens: ['Gluten', 'Lácteos', 'Huevo'],
       emoji: '🍰',
-      imageUrl: 'https://images.unsplash.com/photo-1464349095431-e9a21285b5f3?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1464349095431-e9a21285b5f3?w=800&q=80&auto=format&fit=crop',
       featured: true,
       prepMinutes: 5,
       calories: 460,
@@ -233,7 +236,8 @@ class SeedData {
       ingredients: ['Leche', 'Huevo', 'Azúcar', 'Vainilla'],
       allergens: ['Lácteos', 'Huevo'],
       emoji: '🍮',
-      imageUrl: 'https://images.unsplash.com/photo-1551024506-0bccd828d307?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1551024506-0bccd828d307?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 5,
       calories: 320,
@@ -251,7 +255,8 @@ class SeedData {
       ingredients: ['Chocolate', 'Mantequilla', 'Huevo', 'Harina', 'Helado'],
       allergens: ['Gluten', 'Lácteos', 'Huevo'],
       emoji: '🍫',
-      imageUrl: 'https://images.unsplash.com/photo-1564355808539-22fda35bed7e?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1564355808539-22fda35bed7e?w=800&q=80&auto=format&fit=crop',
       featured: true,
       prepMinutes: 8,
       calories: 510,
@@ -269,7 +274,8 @@ class SeedData {
       ingredients: ['Limón', 'Leche de coco', 'Azúcar', 'Hielo'],
       allergens: ['Coco'],
       emoji: '🥥',
-      imageUrl: 'https://images.unsplash.com/photo-1534353473418-4cfa6c56fd38?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1534353473418-4cfa6c56fd38?w=800&q=80&auto=format&fit=crop',
       featured: true,
       prepMinutes: 4,
       calories: 210,
@@ -287,7 +293,8 @@ class SeedData {
       ingredients: ['Lulo', 'Agua', 'Azúcar'],
       allergens: [],
       emoji: '🍹',
-      imageUrl: 'https://images.unsplash.com/photo-1622597467836-f3285f2131b8?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1622597467836-f3285f2131b8?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 4,
       calories: 150,
@@ -305,7 +312,8 @@ class SeedData {
       ingredients: ['Café de Huila', 'Agua'],
       allergens: [],
       emoji: '☕',
-      imageUrl: 'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800&q=80&auto=format&fit=crop',
+      imageUrl:
+          'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800&q=80&auto=format&fit=crop',
       featured: false,
       prepMinutes: 3,
       calories: 5,
@@ -319,7 +327,14 @@ class SeedData {
     _ing('papa-criolla', 'Papa criolla', IngredientUnit.gramo, 7000, 1000, 4.5),
     _ing('hogao', 'Hogao', IngredientUnit.gramo, 3000, 500, 6),
     _ing('maiz-blanco', 'Maíz blanco', IngredientUnit.gramo, 4000, 500, 4),
-    _ing('queso-campesino', 'Queso campesino', IngredientUnit.gramo, 3500, 500, 12),
+    _ing(
+      'queso-campesino',
+      'Queso campesino',
+      IngredientUnit.gramo,
+      3500,
+      500,
+      12,
+    ),
     _ing('mantequilla', 'Mantequilla', IngredientUnit.gramo, 2000, 300, 14),
     _ing('platano-verde', 'Plátano verde', IngredientUnit.unidad, 60, 10, 800),
     _ing('tomate', 'Tomate', IngredientUnit.gramo, 3000, 400, 3),
@@ -341,13 +356,34 @@ class SeedData {
     _ing('calamar', 'Calamar', IngredientUnit.gramo, 1500, 300, 30),
     _ing('pescado', 'Pescado', IngredientUnit.gramo, 2500, 400, 22),
     _ing('leche-coco', 'Leche de coco', IngredientUnit.mililitro, 3000, 500, 9),
-    _ing('pechuga-pollo', 'Pechuga de pollo', IngredientUnit.gramo, 5000, 700, 13),
+    _ing(
+      'pechuga-pollo',
+      'Pechuga de pollo',
+      IngredientUnit.gramo,
+      5000,
+      700,
+      13,
+    ),
     _ing('papa', 'Papa', IngredientUnit.gramo, 6000, 800, 3.2),
     _ing('lechuga', 'Lechuga', IngredientUnit.unidad, 25, 5, 1500),
     _ing('harina', 'Harina', IngredientUnit.gramo, 5000, 800, 3),
     _ing('leche', 'Leche', IngredientUnit.mililitro, 5000, 800, 3.6),
-    _ing('leche-condensada', 'Leche condensada', IngredientUnit.mililitro, 1500, 250, 8),
-    _ing('leche-evaporada', 'Leche evaporada', IngredientUnit.mililitro, 1500, 250, 7.5),
+    _ing(
+      'leche-condensada',
+      'Leche condensada',
+      IngredientUnit.mililitro,
+      1500,
+      250,
+      8,
+    ),
+    _ing(
+      'leche-evaporada',
+      'Leche evaporada',
+      IngredientUnit.mililitro,
+      1500,
+      250,
+      7.5,
+    ),
     _ing('chocolate', 'Chocolate', IngredientUnit.gramo, 1800, 300, 28),
     _ing('helado', 'Helado', IngredientUnit.mililitro, 2000, 300, 12),
     _ing('limon', 'Limón', IngredientUnit.unidad, 60, 10, 400),
@@ -436,15 +472,8 @@ class SeedData {
       'azucar': 30.0,
       'hielo': 150.0,
     },
-    'item-jugo-lulo': {
-      'lulo': 3.0,
-      'agua': 200.0,
-      'azucar': 25.0,
-    },
-    'item-cafe': {
-      'cafe': 15.0,
-      'agua': 200.0,
-    },
+    'item-jugo-lulo': {'lulo': 3.0, 'agua': 200.0, 'azucar': 25.0},
+    'item-cafe': {'cafe': 15.0, 'agua': 200.0},
   };
 
   /// Receta de preparación visible para el rol cocinero.
@@ -659,127 +688,187 @@ class SeedData {
 
   static const genericCategories = <Category>[
     Category(
-      id: 'cat-generales',
-      name: 'Platos',
-      slug: 'platos',
-      description: 'Opciones preparadas al momento para todos los gustos.',
+      id: 'cat-entrantes',
+      name: 'Entradas',
+      slug: 'entradas',
+      description: 'Entradas y aperitivos',
       order: 1,
+      emoji: '🥗',
+    ),
+    Category(
+      id: 'cat-sopas',
+      name: 'Sopas',
+      slug: 'sopas',
+      description: 'Sopas y caldos',
+      order: 2,
+      emoji: '🍲',
+    ),
+    Category(
+      id: 'cat-platos-fuertes',
+      name: 'Platos fuertes',
+      slug: 'platos-fuertes',
+      description: 'Platos principales',
+      order: 3,
       emoji: '🍽️',
+    ),
+    Category(
+      id: 'cat-ensaladas',
+      name: 'Ensaladas',
+      slug: 'ensaladas',
+      description: 'Ensaladas frescas',
+      order: 4,
+      emoji: '🥗',
+    ),
+    Category(
+      id: 'cat-guarniciones',
+      name: 'Guarniciones',
+      slug: 'guarniciones',
+      description: 'Acompañamientos y guarniciones',
+      order: 5,
+      emoji: '🥔',
+    ),
+    Category(
+      id: 'cat-postres',
+      name: 'Postres',
+      slug: 'postres',
+      description: 'Postres y dulces',
+      order: 6,
+      emoji: '🍰',
+    ),
+    Category(
+      id: 'cat-bebidas',
+      name: 'Bebidas',
+      slug: 'bebidas',
+      description: 'Bebidas y refrescos',
+      order: 7,
+      emoji: '🥤',
+    ),
+    Category(
+      id: 'cat-licores',
+      name: 'Licores',
+      slug: 'licores',
+      description: 'Bebidas alcohólicas',
+      order: 8,
+      emoji: '🍷',
+    ),
+    Category(
+      id: 'cat-combos',
+      name: 'Combos y promociones',
+      slug: 'combos',
+      description: 'Combinaciones y ofertas',
+      order: 9,
+      emoji: '🎁',
+    ),
+    Category(
+      id: 'cat-menu-infantil',
+      name: 'Menú infantil',
+      slug: 'menu-infantil',
+      description: 'Opciones para niños',
+      order: 10,
+      emoji: '🧒',
+    ),
+    Category(
+      id: 'cat-opciones-dieteticas',
+      name: 'Opciones dietéticas',
+      slug: 'opciones-dieteticas',
+      description: 'Opciones especiales de dieta',
+      order: 11,
+      emoji: '🥬',
     ),
   ];
 
   static const genericIngredients = <Ingredient>[
     Ingredient(
-      id: 'ing-base-generico',
-      name: 'Ingrediente base',
+      id: 'ing-tomates',
+      name: 'Tomates',
       unit: IngredientUnit.gramo,
       stock: 5000,
       minStock: 500,
     ),
     Ingredient(
-      id: 'ing-vegetales-genericos',
-      name: 'Vegetales frescos',
+      id: 'ing-lechuga',
+      name: 'Lechuga',
       unit: IngredientUnit.gramo,
       stock: 5000,
       minStock: 500,
     ),
     Ingredient(
-      id: 'ing-acompanamiento-generico',
-      name: 'Acompañamiento',
+      id: 'ing-cafe',
+      name: 'Cafe',
       unit: IngredientUnit.gramo,
-      stock: 5000,
-      minStock: 500,
+      stock: 40,
+      minStock: 20,
     ),
     Ingredient(
-      id: 'ing-aderezo-suave',
-      name: 'Aderezo suave',
+      id: 'ing-leche',
+      name: 'Leche',
       unit: IngredientUnit.mililitro,
-      stock: 2000,
-      minStock: 200,
+      stock: 5000,
+      minStock: 500,
     ),
   ];
 
   static List<MenuItem> genericMenuItems() => <MenuItem>[
-        MenuItem(
-          id: 'item-plato-del-dia',
-          name: 'Plato del día',
-          slug: 'plato-del-dia',
-          description:
-              'Una preparación completa con ingredientes frescos, lista para disfrutar en cualquier momento.',
-          price: 15000,
-          categoryId: 'cat-generales',
-          categorySlug: 'platos',
-          status: MenuItemStatus.available,
-          ingredients: ['Ingrediente base', 'Vegetales frescos', 'Acompañamiento'],
-          allergens: const [],
-          emoji: '🍽️',
-          featured: true,
-          prepMinutes: 20,
-          calories: 550,
-          sku: 'SKU-PLATO-DIA',
-          recipeSteps:
-              'Prepara la base, añade los vegetales y sirve con el acompañamiento.',
-          recipe: const [
-            RecipeIngredient(ingredientId: 'ing-base-generico', quantity: 150),
-            RecipeIngredient(
-                ingredientId: 'ing-vegetales-genericos', quantity: 100),
-            RecipeIngredient(
-                ingredientId: 'ing-acompanamiento-generico', quantity: 120),
-          ],
-        ),
-        MenuItem(
-          id: 'item-ensalada-fresca',
-          name: 'Ensalada fresca',
-          slug: 'ensalada-fresca',
-          description:
-              'Vegetales frescos con un aderezo suave, preparados al momento.',
-          price: 12000,
-          categoryId: 'cat-generales',
-          categorySlug: 'platos',
-          status: MenuItemStatus.available,
-          ingredients: ['Vegetales frescos', 'Aderezo suave'],
-          allergens: const [],
-          emoji: '🥗',
-          featured: false,
-          prepMinutes: 10,
-          calories: 320,
-          sku: 'SKU-ENSALADA',
-          recipeSteps: 'Lava y corta los vegetales, mezcla con el aderezo y sirve.',
-          recipe: const [
-            RecipeIngredient(
-                ingredientId: 'ing-vegetales-genericos', quantity: 120),
-            RecipeIngredient(
-                ingredientId: 'ing-aderezo-suave', quantity: 30),
-          ],
-        ),
-      ];
+    MenuItem(
+      id: 'item-ensalada-fresca',
+      name: 'Ensalada fresca',
+      slug: 'ensalada-fresca',
+      description: 'Tomates y lechuga fresca preparados al momento.',
+      imageUrl:
+          'https://firebasestorage.googleapis.com/v0/b/restaurante-mania-e47a0.firebasestorage.app/o/imagenesglobales%2FGemini_Generated_Image_u3798u3798u3798u.png?alt=media',
+      price: 12000,
+      categoryId: 'cat-ensaladas',
+      categorySlug: 'ensaladas',
+      status: MenuItemStatus.available,
+      ingredients: ['Tomates', 'Lechuga'],
+      allergens: const [],
+      emoji: '🥗',
+      // Plaza de la plantilla inicial de un restaurante nuevo.
+      featured: true,
+      prepMinutes: 10,
+      calories: 320,
+      sku: 'SKU-ENSALADA',
+      recipeSteps: 'Lava y corta los tomates y la lechuga, mezcla y sirve.',
+      recipe: const [
+        RecipeIngredient(ingredientId: 'ing-tomates', quantity: 100),
+        RecipeIngredient(ingredientId: 'ing-lechuga', quantity: 120),
+      ],
+    ),
+    MenuItem(
+      id: 'item-cafe-con-leche',
+      name: 'Cafe con leche',
+      slug: 'cafe-con-leche',
+      description: 'Cafe caliente con leche.',
+      imageUrl:
+          'https://firebasestorage.googleapis.com/v0/b/restaurante-mania-e47a0.firebasestorage.app/o/imagenesglobales%2FGemini_Generated_Image_kfkrwkfkrwkfkrwk.png?alt=media',
+      price: 8500,
+      categoryId: 'cat-bebidas',
+      categorySlug: 'bebidas',
+      status: MenuItemStatus.available,
+      ingredients: ['Cafe', 'Leche'],
+      allergens: ['Leche'],
+      emoji: '☕',
+      // Plaza de la plantilla inicial de un restaurante nuevo.
+      featured: true,
+      prepMinutes: 5,
+      calories: 180,
+      sku: 'SKU-CAFE-LECHE',
+      recipeSteps: 'Prepara el cafe y añade la leche caliente.',
+      recipe: const [
+        RecipeIngredient(ingredientId: 'ing-cafe', quantity: 20),
+        RecipeIngredient(ingredientId: 'ing-leche', quantity: 150),
+      ],
+    ),
+  ];
 
   static List<RestaurantTable> tables() {
     return List.generate(10, (index) {
       final number = index + 1;
-      if (number == 3) {
-        return RestaurantTable(
-          id: 'table-3',
-          number: 3,
-          status: TableStatus.esperandoPedido,
-          capacity: 4,
-          currentOrderId: 'order-2',
-        );
-      }
-      if (number == 4) {
-        return RestaurantTable(
-          id: 'table-4',
-          number: 4,
-          status: TableStatus.pidiendoCuenta,
-          capacity: 2,
-          currentOrderId: 'order-3',
-        );
-      }
       return RestaurantTable(
         id: 'table-$number',
         number: number,
         status: TableStatus.libre,
-        capacity: number.isEven ? 4 : 2,
+        capacity: 4,
         currentOrderId: null,
       );
     });
@@ -824,31 +913,38 @@ class SeedData {
           action: 'Pedido creado',
           timestamp: createdAt,
           actorName: 'Sistema (demo)',
-          detail: '${type.label}${tableNumber != null ? ' · Mesa $tableNumber' : ''}',
+          detail:
+              '${type.label}${tableNumber != null ? ' · Mesa $tableNumber' : ''}',
         ),
       ];
       if (status != OrderStatus.pending) {
-        audit.add(OrderAuditEntry(
-          action: 'Estado actualizado',
-          timestamp: createdAt.add(const Duration(minutes: 2)),
-          actorName: 'Equipo de cocina',
-          detail: 'Pendiente → ${status.label}',
-        ));
+        audit.add(
+          OrderAuditEntry(
+            action: 'Estado actualizado',
+            timestamp: createdAt.add(const Duration(minutes: 2)),
+            actorName: 'Equipo de cocina',
+            detail: 'Pendiente → ${status.label}',
+          ),
+        );
       }
       if (paymentStatus == PaymentStatus.paid) {
-        audit.add(OrderAuditEntry(
-          action: 'Pago registrado',
-          timestamp: createdAt.add(const Duration(minutes: 12)),
-          actorName: 'Caja',
-          detail: '${paymentMethod.label} · ${formatCop(subtotal)}',
-        ));
+        audit.add(
+          OrderAuditEntry(
+            action: 'Pago registrado',
+            timestamp: createdAt.add(const Duration(minutes: 12)),
+            actorName: 'Caja',
+            detail: '${paymentMethod.label} · ${formatCop(subtotal)}',
+          ),
+        );
       }
       if (status == OrderStatus.cancelled) {
-        audit.add(OrderAuditEntry(
-          action: 'Pedido cancelado',
-          timestamp: createdAt.add(const Duration(minutes: 5)),
-          actorName: 'Sistema (demo)',
-        ));
+        audit.add(
+          OrderAuditEntry(
+            action: 'Pedido cancelado',
+            timestamp: createdAt.add(const Duration(minutes: 5)),
+            actorName: 'Sistema (demo)',
+          ),
+        );
       }
       return Order(
         id: id,
@@ -979,7 +1075,11 @@ class SeedData {
         customerPhone: '318 555 4433',
         type: OrderType.table,
         tableNumber: 2,
-        items: {'item-patacones': 2, 'item-limonada-coco': 2, 'item-tres-leches': 1},
+        items: {
+          'item-patacones': 2,
+          'item-limonada-coco': 2,
+          'item-tres-leches': 1,
+        },
         status: OrderStatus.delivered,
         paymentStatus: PaymentStatus.paid,
         paymentMethod: PaymentMethod.card,
