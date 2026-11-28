@@ -64,8 +64,13 @@ Resolución del tenant activo (primera señal que gana):
   **Software Manía** con WhatsApp `+57 312 586 6072`.
 - `tenant-server.ts` lee las cabeceras con `headers()` async (incluido
   `x-rm-landing` para distinguir `/`); `client-tenant.ts` prioriza la ruta y
-  añade el header en `fetch` del cliente. Header, Footer, `MenuBrowser` y
-  `MenuItemCard` prefijan sus enlaces con `withTenant`.
+  añade el header en `fetch` del cliente. Header, Footer, `MenuBrowser`,
+  `MenuItemCard`, favoritos, categorías e historial de pedidos prefijan sus
+  enlaces con `withTenant`.
+- Los enlaces de la portada neutra usan `<a>` (navegación completa) en lugar de
+  `<Link>`: los layouts comparten estado y no se vuelven a renderizar en
+  transiciones cliente, por lo que hacía falta recargar el documento para
+  montar el `CartProvider` y el layout del restaurante.
 - `src/lib/demo-store.ts` mantiene un estado por tenant **solo como fallback**
   cuando Firestore no está configurado. `menu.ts`, `orders.ts`,
   `cash-shifts.ts`, `restaurant-config.ts` y todas las rutas API resuelven el

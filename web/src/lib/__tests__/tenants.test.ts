@@ -99,6 +99,15 @@ describe("rutas públicas por restaurante", () => {
       "/menu/restaurante-taquitos-mexicanos/cart",
     );
     expect(withTenant("/", "fuego")).toBe("/menu/restaurante-fuego");
+    expect(withTenant("/menu/arepa", "quesillo")).toBe(
+      "/menu/restaurante-quesillo/menu/arepa",
+    );
+    expect(withTenant("/menu#postres", "quesillo")).toBe(
+      "/menu/restaurante-quesillo/menu#postres",
+    );
+    expect(withTenant("/order/123", "quesillo")).toBe(
+      "/menu/restaurante-quesillo/order/123",
+    );
   });
 
   it("resuelve el tenant desde la ruta pública", () => {

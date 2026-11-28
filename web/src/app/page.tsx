@@ -1,5 +1,4 @@
 import Image from "next/image";
-import Link from "next/link";
 import { ArrowRight, MessageCircle, Sparkles, UtensilsCrossed } from "lucide-react";
 
 import { RestaurantPicker } from "@/components/RestaurantPicker";
@@ -103,12 +102,13 @@ export default async function LandingPage() {
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-12 text-center sm:px-6">
-        <Link
+        {/* Navegación completa para cambiar del layout neutro al del tenant. */}
+        <a
           href="/menu"
           className="inline-flex items-center gap-2 text-sm font-semibold text-brand-strong hover:underline"
         >
           Ir directo a Restaurante Manía <ArrowRight size={15} aria-hidden />
-        </Link>
+        </a>
       </section>
     </main>
   );

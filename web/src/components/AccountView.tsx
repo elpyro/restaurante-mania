@@ -186,7 +186,7 @@ export function AccountView() {
                   <ShoppingBag size={12} className="mt-0.5 shrink-0" aria-hidden />
                   {order.items.map((i) => `${i.quantity}x ${i.name}`).join(", ")}
                 </p>
-                <Link href={`/order/${order.id}`} className="mt-3 inline-flex text-xs font-semibold text-brand-strong hover:text-brand-800">
+                <Link href={withTenant(`/order/${order.id}`, tenantId)} className="mt-3 inline-flex text-xs font-semibold text-brand-strong hover:text-brand-800">
                   Ver detalle <ArrowRight size={12} aria-hidden />
                 </Link>
               </li>

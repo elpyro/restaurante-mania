@@ -266,7 +266,7 @@ export default async function HomePage() {
             {favorites.map((item) => (
               <Link
                 key={item.id}
-                href={`/menu/${item.slug}`}
+                href={withTenant(`/menu/${item.slug}`, tenantId)}
                 className="group surface-card w-[15.5rem] shrink-0 snap-start overflow-hidden transition duration-300 hover:-translate-y-1 hover:shadow-glow sm:w-[17rem]"
               >
                 <div className="relative h-44 overflow-hidden bg-gradient-to-br from-brand-100 via-surface to-accent-soft">
@@ -352,7 +352,7 @@ export default async function HomePage() {
               return (
                 <Link
                   key={category.id}
-                  href={`/menu#${category.slug}`}
+                  href={withTenant(`/menu#${category.slug}`, tenantId)}
                   className="group rounded-3xl border border-line bg-surface p-5 transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-card"
                 >
                   <span className="text-4xl transition group-hover:scale-110">

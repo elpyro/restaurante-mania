@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import type { TenantDirectoryEntry } from "@/lib/tenant-directory";
@@ -9,10 +8,12 @@ export function RestaurantPicker({
 }: {
   tenants: TenantDirectoryEntry[];
 }) {
+  // Navegación completa: `/` usa un layout neutro sin CartProvider; al entrar
+  // a un restaurante debe ejecutarse el layout del tenant.
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {tenants.map((tenant) => (
-        <Link
+        <a
           key={tenant.id}
           href={withTenant("/", tenant.id)}
           className="group flex min-h-36 flex-col justify-between rounded-3xl border border-line bg-surface-raised/80 p-5 shadow-card transition duration-300 hover:-translate-y-1 hover:border-brand-300 hover:shadow-glow"
@@ -35,7 +36,7 @@ export function RestaurantPicker({
               {tenant.isDefault ? "Casa principal" : tenant.city || "Menú digital"}
             </span>
           </div>
-        </Link>
+        </a>
       ))}
     </div>
   );
