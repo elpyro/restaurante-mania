@@ -6,9 +6,14 @@ import {
   type Weekday,
 } from "./restaurant-config";
 import { absoluteUrl, siteConfig } from "./site";
+import { DEFAULT_TENANT_ID, withTenant } from "./tenants";
 import type { Category, MenuItem } from "./types";
 
 type JsonLd = Record<string, unknown>;
+
+function tenantUrl(path: string, tenantId: string): string {
+  return absoluteUrl(withTenant(path, tenantId));
+}
 
 const FULL_WEEKDAYS: Record<Weekday, string> = {
   mon: "Monday",
@@ -34,6 +39,7 @@ function openingHours(config: RestaurantConfig) {
 
 export function restaurantJsonLd(
   config: RestaurantConfig = DEFAULT_RESTAURANT_CONFIG,
+  tenantId = DEFAULT_TENANT_ID,
 ): JsonLd {
   const socialProfiles = SOCIAL_NETWORKS.map(
     (network) => config.appearance.socialLinks?.[network],
@@ -49,11 +55,11 @@ export function restaurantJsonLd(
   return {
     "@context": "https://schema.org",
     "@type": "Restaurant",
-    "@id": absoluteUrl("/#restaurant"),
+    "@id": tenantUrl("/#restaurant", tenantId),
     name: config.name,
     description: config.aiSearch.description?.trim() || config.slogan,
     slogan: config.heroBadge,
-    url: absoluteUrl("/"),
+    url: tenantUrl("/", tenantId),
     telephone: config.phone,
     servesCuisine: ["Colombiana", "Latinoamericana"],
     priceRange: "$$",
@@ -72,23 +78,24 @@ export function restaurantJsonLd(
       addressCountry: siteConfig.country,
     },
     openingHoursSpecification: openingHours(config),
-    hasMenu: absoluteUrl("/menu"),
+    hasMenu: tenantUrl("/menu", tenantId),
     acceptsReservations: true,
   };
 }
 
 export function websiteJsonLd(
   config: RestaurantConfig = DEFAULT_RESTAURANT_CONFIG,
+  tenantId = DEFAULT_TENANT_ID,
 ): JsonLd {
   return {
     "@context": "https://schema.org",
     "@type": "WebSite",
     name: config.name,
-    url: absoluteUrl("/"),
+    url: tenantUrl("/", tenantId),
     inLanguage: "es-CO",
     potentialAction: {
       "@type": "SearchAction",
-      target: `${absoluteUrl("/menu")}?q={search_term_string}`,
+      target: `${tenantUrl("/menu", tenantId)}?q={search_term_string}`,
       "query-input": "required name=search_term_string",
     },
   };
@@ -98,13 +105,14 @@ export function menuJsonLd(
   categories: Category[],
   items: MenuItem[],
   config: RestaurantConfig = DEFAULT_RESTAURANT_CONFIG,
+  tenantId = DEFAULT_TENANT_ID,
 ): JsonLd {
   return {
     "@context": "https://schema.org",
     "@type": "Menu",
-    "@id": absoluteUrl("/menu#menu"),
+    "@id": tenantUrl("/menu#menu", tenantId),
     name: `Menú de ${config.name}`,
-    url: absoluteUrl("/menu"),
+    url: tenantUrl("/menu", tenantId),
     inLanguage: "es-CO",
     hasMenuSection: categories.map((category) => ({
       "@type": "MenuSection",
@@ -116,7 +124,7 @@ export function menuJsonLd(
           "@type": "MenuItem",
           name: item.name,
           description: item.description,
-          url: absoluteUrl(`/menu/${item.slug}`),
+          url: tenantUrl(`/menu/${item.slug}`, tenantId),
           suitableForDiet:
             item.allergens.length === 0
               ? "https://schema.org/VegetarianDiet"
@@ -139,14 +147,15 @@ export function menuItemJsonLd(
   item: MenuItem,
   category: Category,
   config: RestaurantConfig = DEFAULT_RESTAURANT_CONFIG,
+  tenantId = DEFAULT_TENANT_ID,
 ): JsonLd {
   return {
     "@context": "https://schema.org",
     "@type": "MenuItem",
-    "@id": absoluteUrl(`/menu/${item.slug}#menuitem`),
+    "@id": tenantUrl(`/menu/${item.slug}#menuitem`, tenantId),
     name: item.name,
     description: item.description,
-    url: absoluteUrl(`/menu/${item.slug}`),
+    url: tenantUrl(`/menu/${item.slug}`, tenantId),
     menuAddOn: item.ingredients,
     suitableForDiet:
       item.allergens.length === 0
@@ -160,12 +169,12 @@ export function menuItemJsonLd(
         item.status === "available"
           ? "https://schema.org/InStock"
           : "https://schema.org/LimitedAvailability",
-      url: absoluteUrl(`/menu/${item.slug}`),
+      url: tenantUrl(`/menu/${item.slug}`, tenantId),
     },
     isPartOf: {
       "@type": "MenuSection",
       name: category.name,
-      url: absoluteUrl(`/menu#${category.slug}`),
+      url: tenantUrl(`/menu#${category.slug}`, tenantId),
     },
     nutrition: {
       "@type": "NutritionInformation",
@@ -174,13 +183,14 @@ export function menuItemJsonLd(
     seller: {
       "@type": "Restaurant",
       name: config.name,
-      url: absoluteUrl("/"),
+      url: tenantUrl("/", tenantId),
     },
   };
 }
 
 export function breadcrumbJsonLd(
   crumbs: Array<{ name: string; path: string }>,
+  tenantId = DEFAULT_TENANT_ID,
 ): JsonLd {
   return {
     "@context": "https://schema.org",
@@ -189,7 +199,7 @@ export function breadcrumbJsonLd(
       "@type": "ListItem",
       position: index + 1,
       name: crumb.name,
-      item: absoluteUrl(crumb.path),
+      item: tenantUrl(crumb.path, tenantId),
     })),
   };
 }

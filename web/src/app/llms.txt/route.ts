@@ -7,12 +7,14 @@ import {
   type SocialNetwork,
 } from "@/lib/restaurant-config";
 import { siteConfig, whatsappUrl } from "@/lib/site";
-import { resolveTenantFromRequest } from "@/lib/tenants";
+import { resolveTenantFromRequest, withTenant } from "@/lib/tenants";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   const tenantId = resolveTenantFromRequest(request);
+  const webUrl = (path: string) =>
+    `${siteConfig.siteUrl}${withTenant(path, tenantId)}`;
   const [{ categories, items, source }, { config }] = await Promise.all([
     getPublicMenu(tenantId),
     getRestaurantConfig(tenantId),
@@ -45,9 +47,12 @@ export async function GET(request: Request) {
     `- Moneda: ${siteConfig.currency}`,
     `- Redes sociales: ${socialLinks.length > 0 ? socialLinks.join(" | ") : "no publicadas"}`,
     `- Mapa / GPS: ${config.appearance.gpsUrl ?? "no publicado"}`,
+    `- Portada con selector de restaurantes: ${siteConfig.siteUrl}/`,
     `- Configuración pública (JSON): ${siteConfig.siteUrl}/api/restaurant/config`,
-    `- Pedidos en línea: ${siteConfig.siteUrl}/menu`,
+    `- Pedidos en línea: ${webUrl("/")}`,
+    `- Menú: ${webUrl("/menu")}`,
     `- Menú en JSON: ${siteConfig.siteUrl}/api/menu`,
+    `- Software Manía (POS y plataforma para restaurantes): https://wa.me/5731258666072`,
     "",
     "## Datos para búsqueda con IA",
     `- Descripción: ${config.aiSearch.description ?? config.heroDescription}`,
@@ -63,11 +68,11 @@ export async function GET(request: Request) {
       (item) =>
         `- ${item.name} (${item.categorySlug}) — ${formatCOP(item.price)} — ${
           item.status === "available" ? "disponible" : item.status
-        }. ${item.description} [${siteConfig.siteUrl}/menu/${item.slug}]`,
+        }. ${item.description} [${webUrl(`/menu/${item.slug}`)}]`,
     ),
     "",
     "## Cómo pedir",
-    "1. Entra a /menu y agrega productos al carrito.",
+    `1. Entra a ${withTenant("/menu", tenantId)} y agrega productos al carrito.`,
     "2. Confirma nombre, teléfono y modalidad (recoger, domicilio o mesa).",
     "3. La cocina recibe el pedido en tiempo real.",
     "",

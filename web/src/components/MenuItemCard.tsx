@@ -5,6 +5,7 @@ import { ArrowUpRight, Clock, Flame } from "lucide-react";
 import { AddToCartButton } from "./AddToCartButton";
 import { CartQuantityBadge } from "./CartQuantityBadge";
 import { formatCOP } from "@/lib/format";
+import { DEFAULT_TENANT_ID, withTenant } from "@/lib/tenants";
 import type { MenuItem } from "@/lib/types";
 
 const statusLabel: Record<MenuItem["status"], string> = {
@@ -13,11 +14,18 @@ const statusLabel: Record<MenuItem["status"], string> = {
   unavailable: "Agotado",
 };
 
-export function MenuItemCard({ item }: { item: MenuItem }) {
+export function MenuItemCard({
+  item,
+  tenantId = DEFAULT_TENANT_ID,
+}: {
+  item: MenuItem;
+  tenantId?: string;
+}) {
+  const detailHref = withTenant(`/menu/${item.slug}`, tenantId);
   return (
     <article className="surface-card group flex flex-col overflow-hidden transition duration-300 hover:-translate-y-1 hover:shadow-glow">
       <Link
-        href={`/menu/${item.slug}`}
+        href={detailHref}
         className="relative block h-44 overflow-hidden bg-gradient-to-br from-brand-100 via-surface to-accent-soft sm:h-56"
         aria-label={`Ver ${item.name}`}
       >
@@ -55,7 +63,7 @@ export function MenuItemCard({ item }: { item: MenuItem }) {
         <div className="flex items-start justify-between gap-3">
           <h3 className="font-display text-base font-bold leading-tight text-ink sm:text-lg">
             <Link
-              href={`/menu/${item.slug}`}
+              href={detailHref}
               className="transition hover:text-brand-strong"
             >
               {item.name}
@@ -70,7 +78,7 @@ export function MenuItemCard({ item }: { item: MenuItem }) {
         </p>
         <div className="mt-auto flex items-center justify-between gap-1.5 pt-3 sm:gap-2 sm:pt-5">
           <Link
-            href={`/menu/${item.slug}`}
+            href={detailHref}
             className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-ink-soft underline-offset-4 transition hover:text-brand-strong hover:underline sm:gap-1 sm:text-xs"
           >
             Ver detalle <ArrowUpRight size={13} aria-hidden />

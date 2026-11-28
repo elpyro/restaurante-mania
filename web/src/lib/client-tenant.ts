@@ -4,6 +4,7 @@ import {
   DEFAULT_TENANT_ID,
   isKnownTenant,
   normalizeTenantId,
+  tenantFromPath,
   tenantStorageKey,
 } from "./tenants";
 
@@ -29,6 +30,8 @@ function cookieTenant(): string | null {
 /** Tenant efectivo en el navegador, con el mismo orden de prioridad que el server. */
 export function getClientTenantId(): string {
   if (typeof window === "undefined") return DEFAULT_TENANT_ID;
+  const fromPath = tenantFromPath(window.location.pathname);
+  if (fromPath) return fromPath;
   const injected = normalizeTenantId((window as TenantWindow).__RM_TENANT_ID__);
   if (injected) return injected;
   const query = new URL(window.location.href).searchParams.get("tenant");

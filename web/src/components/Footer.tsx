@@ -20,6 +20,7 @@ import {
   type SocialNetwork,
 } from "@/lib/restaurant-config";
 import { whatsappUrl } from "@/lib/site";
+import { withTenant } from "@/lib/tenants";
 
 // Lucide no publica iconos de marca; usamos glifos genéricos con etiqueta textual.
 const socialMeta: Record<SocialNetwork, { label: string; icon: LucideIcon }> = {
@@ -28,7 +29,13 @@ const socialMeta: Record<SocialNetwork, { label: string; icon: LucideIcon }> = {
   facebook: { label: "Facebook", icon: Share2 },
 };
 
-export function Footer({ config }: { config: RestaurantConfig }) {
+export function Footer({
+  config,
+  tenantId,
+}: {
+  config: RestaurantConfig;
+  tenantId: string;
+}) {
   const logoUrl = config.appearance.logoUrl;
   const gpsUrl = config.appearance.gpsUrl;
   const socialLinks = SOCIAL_NETWORKS.map((network) => {
@@ -150,7 +157,11 @@ export function Footer({ config }: { config: RestaurantConfig }) {
               ].map((link) => (
                 <li key={link.href}>
                   <Link
-                    href={link.href}
+                    href={
+                      link.href === "/llms.txt"
+                        ? link.href
+                        : withTenant(link.href, tenantId)
+                    }
                     className="inline-flex items-center gap-1.5 transition hover:text-brand-300"
                   >
                     <ArrowRight size={14} aria-hidden />

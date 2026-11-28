@@ -17,7 +17,7 @@ import type { RestaurantConfig } from "@/lib/restaurant-config";
 import { whatsappUrl } from "@/lib/site";
 import { useCart } from "./CartProvider";
 import { getClientTenantId, tenantStorageKey } from "@/lib/client-tenant";
-import { DEFAULT_TENANT_ID, withTenant } from "@/lib/tenants";
+import { withTenant } from "@/lib/tenants";
 
 const links = [
   { href: "/", label: "Inicio", icon: House },
@@ -26,12 +26,19 @@ const links = [
   { href: "/cuenta", label: "Mi cuenta", icon: UserRound },
 ];
 
-export function Header({ config }: { config: RestaurantConfig }) {
+export function Header({
+  config,
+  tenantId: serverTenantId,
+}: {
+  config: RestaurantConfig;
+  tenantId: string;
+}) {
   const pathname = usePathname();
   const { count, ready } = useCart();
   const [hasProfile, setHasProfile] = useState(false);
   const [open, setOpen] = useState(false);
-  const [tenantId, setTenantId] = useState(DEFAULT_TENANT_ID);
+  const [tenantId, setTenantId] = useState(serverTenantId);
+  const [clientPathname, setClientPathname] = useState<string | null>(null);
   const logoUrl = config.appearance.logoUrl;
   const waUrl = whatsappUrl(undefined, config.whatsapp, config.name);
 
@@ -55,8 +62,17 @@ export function Header({ config }: { config: RestaurantConfig }) {
 
   useEffect(() => setOpen(false), [pathname]);
 
-  const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname.startsWith(href);
+  // Con rewrites, usePathname puede diferir entre servidor y navegador;
+  // solo se usa después del mount para evitar hydration mismatch.
+  useEffect(() => setClientPathname(pathname), [pathname]);
+
+  const isActive = (href: string) => {
+    if (!clientPathname) return false;
+    const target = withTenant(href, tenantId);
+    return href === "/"
+      ? clientPathname === target
+      : clientPathname.startsWith(target);
+  };
 
   return (
     <>

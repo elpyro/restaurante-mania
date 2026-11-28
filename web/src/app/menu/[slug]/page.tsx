@@ -24,6 +24,7 @@ import { getRestaurantConfig } from "@/lib/restaurant-config";
 import { breadcrumbJsonLd, menuItemJsonLd } from "@/lib/seo";
 import { whatsappUrl } from "@/lib/site";
 import { getServerTenantId } from "@/lib/tenant-server";
+import { withTenant } from "@/lib/tenants";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -63,11 +64,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title: `${item.name} — ${formatCOP(item.price)}`,
     description,
-    alternates: { canonical: `/menu/${item.slug}` },
+    alternates: { canonical: withTenant(`/menu/${item.slug}`, tenantId) },
     openGraph: {
       title: `${item.name} | ${config.name}`,
       description,
-      url: `/menu/${item.slug}`,
+      url: withTenant(`/menu/${item.slug}`, tenantId),
       images: [
         {
           url: image,
@@ -104,20 +105,23 @@ export default async function DishPage({ params }: Props) {
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-14">
       <JsonLd
         data={[
-          menuItemJsonLd(item, category, config),
-          breadcrumbJsonLd([
-            { name: "Inicio", path: "/" },
-            { name: "Menú", path: "/menu" },
-            { name: category.name, path: `/menu#${category.slug}` },
-            { name: item.name, path: `/menu/${item.slug}` },
-          ]),
+          menuItemJsonLd(item, category, config, tenantId),
+          breadcrumbJsonLd(
+            [
+              { name: "Inicio", path: "/" },
+              { name: "Menú", path: "/menu" },
+              { name: category.name, path: `/menu#${category.slug}` },
+              { name: item.name, path: `/menu/${item.slug}` },
+            ],
+            tenantId,
+          ),
         ]}
       />
 
       <nav className="mb-6 flex flex-wrap items-center gap-1.5 text-xs text-ink-muted" aria-label="Ruta de navegación">
-        <Link href="/" className="transition hover:text-brand-strong">Inicio</Link>
+        <Link href={withTenant("/", tenantId)} className="transition hover:text-brand-strong">Inicio</Link>
         <span aria-hidden>/</span>
-        <Link href="/menu" className="transition hover:text-brand-strong">Menú</Link>
+        <Link href={withTenant("/menu", tenantId)} className="transition hover:text-brand-strong">Menú</Link>
         <span aria-hidden>/</span>
         <span className="font-medium text-ink-soft">{item.name}</span>
       </nav>
@@ -255,7 +259,7 @@ export default async function DishPage({ params }: Props) {
           <div className="mb-6 flex items-center justify-between">
             <h2 className="section-title text-2xl">También te puede gustar</h2>
             <Link
-              href="/menu"
+              href={withTenant("/menu", tenantId)}
               className="inline-flex items-center gap-1 text-sm font-semibold text-brand-strong hover:underline"
             >
               Ver todo <ArrowRight size={15} aria-hidden />
@@ -263,7 +267,7 @@ export default async function DishPage({ params }: Props) {
           </div>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {related.map((entry) => (
-              <MenuItemCard key={entry.id} item={entry} />
+              <MenuItemCard key={entry.id} item={entry} tenantId={tenantId} />
             ))}
           </div>
         </section>

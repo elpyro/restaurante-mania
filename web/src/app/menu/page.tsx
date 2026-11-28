@@ -6,6 +6,7 @@ import { getPublicMenu } from "@/lib/menu";
 import { getRestaurantConfig } from "@/lib/restaurant-config";
 import { breadcrumbJsonLd, menuJsonLd } from "@/lib/seo";
 import { getServerTenantId } from "@/lib/tenant-server";
+import { withTenant } from "@/lib/tenants";
 
 export const dynamic = "force-dynamic";
 
@@ -21,11 +22,11 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: "Menú completo",
     description,
-    alternates: { canonical: "/menu" },
+    alternates: { canonical: withTenant("/menu", tenantId) },
     openGraph: {
       title: `Menú completo | ${config.name}`,
       description,
-      url: "/menu",
+      url: withTenant("/menu", tenantId),
       images: [{ url: image, width: 1200, height: 630, alt: `Menú de ${config.name}` }],
     },
     twitter: {
@@ -53,11 +54,14 @@ export default async function MenuPage({
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-14">
       <JsonLd
         data={[
-          menuJsonLd(categories, items, config),
-          breadcrumbJsonLd([
-            { name: "Inicio", path: "/" },
-            { name: "Menú", path: "/menu" },
-          ]),
+          menuJsonLd(categories, items, config, tenantId),
+          breadcrumbJsonLd(
+            [
+              { name: "Inicio", path: "/" },
+              { name: "Menú", path: "/menu" },
+            ],
+            tenantId,
+          ),
         ]}
       />
 
@@ -76,6 +80,7 @@ export default async function MenuPage({
       <MenuBrowser
         categories={categories}
         items={items}
+        tenantId={tenantId}
         initialQuery={params.q ?? ""}
       />
     </div>

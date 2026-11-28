@@ -40,19 +40,32 @@ verdad.
 
 Resolución del tenant activo (primera señal que gana):
 
-1. Query string `?tenant=`.
-2. Header `X-Tenant-Id`.
-3. Cookie `rm_tenant_id`.
-4. Subdominio (`fuego.ejemplo.com`).
-5. Fallback `mania`.
+1. Ruta pública `/menu/restaurante-<id>` (slug visible; `/menu` es `mania`).
+2. Query string `?tenant=` (legado; redirige a la ruta amigable en páginas).
+3. Header `X-Tenant-Id` (APIs y APK; no cambia).
+4. Cookie `rm_tenant_id`.
+5. Subdominio (`fuego.ejemplo.com`).
+6. Fallback `mania`.
 
 ### Web
 
 - `src/lib/tenants.ts`: registry, `normalizeTenantId`, `resolveTenantId`,
-  `resolveTenantFromRequest` y `tenantStorageKey`.
-- `src/proxy.ts` inyecta `x-tenant-id` y la cookie; `tenant-server.ts` lee las
-  cabeceras con `headers()` async en componentes servidor; `client-tenant.ts`
-  añade el header en `fetch` del cliente.
+  `resolveTenantFromRequest`, `tenantStorageKey`, `tenantFromPath`,
+  `tenantSlug` y `withTenant`. `withTenant("/", "mania")` → `/menu`;
+  `withTenant("/", "taquitos-mexicanos")` →
+  `/menu/restaurante-taquitos-mexicanos`.
+- `src/proxy.ts` resuelve el tenant una vez por petición: `/` sirve la portada
+  neutra, `/menu...` reescribe a las rutas internas (`/inicio`, `/menu`, …)
+  conservando la URL visible, `/?tenant=<id>` redirige 307 a la ruta amigable
+  y `/inicio` no se expone públicamente. Inyecta `x-tenant-id` y la cookie.
+- `src/lib/tenant-directory.ts` construye el selector desde los tenants fijos
+  más los documentos públicos `tenants/{id}` de Firestore. La portada es
+  neutral (sin Header/Footer de restaurante) y muestra el aviso de
+  **Software Manía** con WhatsApp `+57 312 586 6072`.
+- `tenant-server.ts` lee las cabeceras con `headers()` async (incluido
+  `x-rm-landing` para distinguir `/`); `client-tenant.ts` prioriza la ruta y
+  añade el header en `fetch` del cliente. Header, Footer, `MenuBrowser` y
+  `MenuItemCard` prefijan sus enlaces con `withTenant`.
 - `src/lib/demo-store.ts` mantiene un estado por tenant **solo como fallback**
   cuando Firestore no está configurado. `menu.ts`, `orders.ts`,
   `cash-shifts.ts`, `restaurant-config.ts` y todas las rutas API resuelven el
@@ -99,9 +112,14 @@ denegación de colecciones raíz.
 
 | Ruta | Tipo | Propósito |
 |---|---|---|
-| `/` | Dinámica (RSC) | Home con banner, logo, carrusel de favoritos y JSON-LD `Restaurant` |
-| `/menu` | Dinámica (RSC) | Catálogo por categorías, filtros y búsqueda |
-| `/menu/[slug]` | Dinámica | Ficha de plato con JSON-LD `MenuItem` |
+| `/` | Dinámica (RSC) | Portada neutra: logo APK, selector de restaurantes y aviso de Software Manía |
+| `/menu` | Dinámica (RSC) | Portada de Manía (tenant por defecto) |
+| `/menu/menu` | Dinámica (RSC) | Catálogo de Manía por categorías, filtros y búsqueda |
+| `/menu/restaurante-<id>` | Dinámica (RSC) | Portada del restaurante `<id>` |
+| `/menu/restaurante-<id>/menu` | Dinámica (RSC) | Catálogo del restaurante `<id>` |
+| `/menu/restaurante-<id>/menu/[slug]` | Dinámica | Ficha de plato con JSON-LD `MenuItem` |
+| `/inicio` | Interna (rewrite) | Portada del tenant; no se expone directamente (307 a `/menu`) |
+| `/?tenant=<id>` | Redirección 307 | Compatibilidad: lleva a `/menu/restaurante-<id>` (o `/menu` si es Manía) |
 | `/cart` | Estática (cliente) | Carrito persistido en `localStorage` |
 | `/checkout` | Estática (cliente) | Contacto, entrega y pago según configuración publicada |
 | `/order/[id]` | Dinámica | Confirmación con enlace `wa.me` |
@@ -140,12 +158,20 @@ denegación de colecciones raíz.
    `Restaurant` (home), `Menu` + `MenuItem` (catálogo y fichas),
    `BreadcrumbList` y `WebSite`. `Restaurant` incluye `sameAs` (redes) y
    `hasMap` (GPS) cuando se publican, además de `areaServed`/`keywords` de IA.
-3. `sitemap.ts` incluye home, menú y todas las fichas de plato.
-4. `robots.ts` permite todo el catálogo y declara el sitemap.
-5. `llms.txt` expone resumen, horarios, redes, mapa, la sección «Datos para
-   búsqueda con IA», categorías, platos y endpoints para agentes (ChatGPT,
-   Gemini, Perplexity).
-6. El pie renderiza Instagram, TikTok, Facebook y «Ver en el mapa» solo cuando
+3. Las URL canónicas, `openGraph.url` y todo el JSON-LD usan rutas amigables
+   por tenant (`/menu`, `/menu/restaurante-<id>`, `/menu/[slug]`); se construyen
+   con `withTenant()`/`tenantUrl()` en `seo.ts`.
+4. `sitemap.ts` incluye la portada neutra, la portada y el menú de cada tenant
+   del directorio y las fichas del tenant activo.
+5. `robots.ts` permite `/`, `/menu`, `/llms.txt` y el catálogo; declara el
+   sitemap.
+6. `llms.txt` expone resumen, horarios, redes, mapa, la sección «Datos para
+   búsqueda con IA», categorías, platos, endpoints para agentes (ChatGPT,
+   Gemini, Perplexity) y el WhatsApp de Software Manía. Las URL web usan el
+   prefijo `/menu...` del tenant resuelto.
+7. El pie y las tarjetas de plato enlazan dentro del mismo restaurante; el
+   enlace «Inicio» nunca vuelve al selector.
+8. El pie renderiza Instagram, TikTok, Facebook y «Ver en el mapa» solo cuando
    la APK publicó esos enlaces.
 
 ## 3. App Administrativa (Flutter)

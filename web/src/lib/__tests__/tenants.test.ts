@@ -9,7 +9,9 @@ import {
   resolveTenantId,
   tenantDefinition,
   tenantFromHost,
+  tenantFromPath,
   tenantStorageKey,
+  withTenant,
 } from "../tenants";
 
 function request(url: string, headers: Record<string, string> = {}): Request {
@@ -23,7 +25,7 @@ describe("resolución de tenant", () => {
     expect(isDemoTenant("fuego")).toBe(true);
   });
 
-  it("respeta la prioridad query > header > cookie > subdominio", () => {
+  it("respeta la prioridad query > header > cookie > subdominio sin ruta", () => {
     expect(
       resolveTenantId({
         query: "verde",
@@ -86,6 +88,44 @@ describe("resolución de tenant", () => {
         }),
       ),
     ).toBe("verde");
+  });
+});
+
+describe("rutas públicas por restaurante", () => {
+  it("construye /menu para Manía y /menu/restaurante-<id> para los demás", () => {
+    expect(withTenant("/", "mania")).toBe("/menu");
+    expect(withTenant("/menu", "mania")).toBe("/menu/menu");
+    expect(withTenant("/cart", "taquitos-mexicanos")).toBe(
+      "/menu/restaurante-taquitos-mexicanos/cart",
+    );
+    expect(withTenant("/", "fuego")).toBe("/menu/restaurante-fuego");
+  });
+
+  it("resuelve el tenant desde la ruta pública", () => {
+    expect(tenantFromPath("/menu")).toBe("mania");
+    expect(tenantFromPath("/menu/menu")).toBe("mania");
+    expect(tenantFromPath("/menu/cart")).toBe("mania");
+    expect(tenantFromPath("/menu/restaurante-taquitos-mexicanos")).toBe(
+      "taquitos-mexicanos",
+    );
+    expect(tenantFromPath("/menu/restaurante-fuego/menu")).toBe("fuego");
+    expect(tenantFromPath("/api/menu")).toBeNull();
+  });
+
+  it("da prioridad a la ruta sobre query, header y cookie", () => {
+    expect(
+      resolveTenantId({
+        path: "/menu/restaurante-fuego/menu",
+        query: "verde",
+        header: "fuego",
+        cookie: "rm_tenant_id=verde",
+      }),
+    ).toBe("fuego");
+    expect(
+      resolveTenantFromRequest(
+        request("http://localhost/menu/restaurante-fuego/menu"),
+      ),
+    ).toBe("fuego");
   });
 });
 

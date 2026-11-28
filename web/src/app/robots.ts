@@ -7,7 +7,17 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: ["/", "/menu", "/llms.txt", "/sitemap.xml"],
-        disallow: ["/api/", "/cart", "/checkout", "/cuenta", "/order/"],
+        disallow: [
+          "/api/",
+          "/menu/cart",
+          "/menu/checkout",
+          "/menu/cuenta",
+          "/menu/order",
+          "/menu/*/cart",
+          "/menu/*/checkout",
+          "/menu/*/cuenta",
+          "/menu/*/order",
+        ],
       },
       {
         userAgent: ["GPTBot", "ChatGPT-User", "PerplexityBot", "Google-Extended"],

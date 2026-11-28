@@ -10,6 +10,12 @@
 export const DEFAULT_TENANT_ID = "mania";
 export const TENANT_HEADER = "x-tenant-id";
 export const TENANT_COOKIE = "rm_tenant_id";
+export const LANDING_HEADER = "x-rm-landing";
+
+/** Base pública de las páginas de cada restaurante. */
+export const MENU_BASE_PATH = "/menu";
+/** Prefijo visible del slug: `restaurante-taquitos-mexicanos`. */
+export const TENANT_SLUG_PREFIX = "restaurante-";
 
 export interface TenantDefinition {
   id: string;
@@ -157,6 +163,37 @@ export function tenantLabel(tenantId: string): string {
   return tenantDefinition(tenantId).label;
 }
 
+/** Slug visible de un tenant: `taquitos-mexicanos` → `restaurante-taquitos-mexicanos`. */
+export function tenantSlug(tenantId: string): string {
+  const id = normalizeTenantId(tenantId) ?? DEFAULT_TENANT_ID;
+  return id.startsWith(TENANT_SLUG_PREFIX) ? id : `${TENANT_SLUG_PREFIX}${id}`;
+}
+
+const RESERVED_MENU_SEGMENTS = new Set([
+  "menu",
+  "cart",
+  "checkout",
+  "cuenta",
+  "order",
+]);
+
+/**
+ * Extrae el tenant de una ruta pública. `/menu` y `/menu/menu` son de Manía;
+ * `/menu/restaurante-<id>/...` resuelve al tenant `<id>`.
+ */
+export function tenantFromPath(
+  pathname: string | null | undefined,
+): string | null {
+  if (!pathname) return null;
+  const [root, slug] = pathname.split("/").filter(Boolean);
+  if (root !== MENU_BASE_PATH.slice(1)) return null;
+  if (!slug || RESERVED_MENU_SEGMENTS.has(slug)) return DEFAULT_TENANT_ID;
+  const raw = slug.startsWith(TENANT_SLUG_PREFIX)
+    ? slug.slice(TENANT_SLUG_PREFIX.length)
+    : slug;
+  return normalizeTenantId(raw);
+}
+
 /** `fuego.localhost:3000` → `fuego`. El host raíz no especifica tenant. */
 export function tenantFromHost(host: string | null | undefined): string | null {
   if (!host) return null;
@@ -190,6 +227,7 @@ function tenantFromCookie(cookie: string | null | undefined): string | null {
 }
 
 export interface TenantResolutionInput {
+  path?: string | null;
   header?: string | null;
   query?: string | null;
   cookie?: string | null;
@@ -197,11 +235,12 @@ export interface TenantResolutionInput {
 }
 
 /**
- * Prioridad: query `?tenant=` > header `X-Tenant-Id` > cookie > subdominio.
- * El fallback es siempre `mania`, para que el comportamiento actual no cambie.
+ * Prioridad: ruta `/menu/<restaurante>` > query `?tenant=` > header
+ * `X-Tenant-Id` > cookie > subdominio. El fallback es siempre `mania`.
  */
 export function resolveTenantId(input: TenantResolutionInput = {}): string {
   return (
+    tenantFromPath(input.path) ??
     normalizeTenantId(input.query) ??
     normalizeTenantId(input.header) ??
     tenantFromCookie(input.cookie) ??
@@ -213,6 +252,7 @@ export function resolveTenantId(input: TenantResolutionInput = {}): string {
 export function resolveTenantFromRequest(request: Request): string {
   const url = new URL(request.url);
   return resolveTenantId({
+    path: url.pathname,
     query: url.searchParams.get("tenant"),
     header: request.headers.get(TENANT_HEADER),
     cookie: request.headers.get("cookie"),
@@ -240,9 +280,17 @@ export function tenantClientScript(tenantId: string): string {
   return `window.__RM_TENANT_ID__=${JSON.stringify(tenantId)};`;
 }
 
-/** Prefija una ruta interna con `?tenant=` cuando no es el tenant por defecto. */
+/**
+ * Construye una ruta pública legible: `/menu` para Manía y
+ * `/menu/restaurante-<id>` para cualquier otro restaurante.
+ */
 export function withTenant(path: string, tenantId: string): string {
-  if (!tenantId || tenantId === DEFAULT_TENANT_ID) return path;
-  const sep = path.includes("?") ? "&" : "?";
-  return `${path}${sep}tenant=${encodeURIComponent(tenantId)}`;
+  const id = normalizeTenantId(tenantId) ?? DEFAULT_TENANT_ID;
+  const base =
+    id === DEFAULT_TENANT_ID
+      ? MENU_BASE_PATH
+      : `${MENU_BASE_PATH}/${tenantSlug(id)}`;
+  if (!path || path === "/") return base;
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${suffix}`;
 }

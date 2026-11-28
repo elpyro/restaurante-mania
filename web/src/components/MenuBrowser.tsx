@@ -9,10 +9,16 @@ import type { Category, MenuItem } from "@/lib/types";
 interface Props {
   categories: Category[];
   items: MenuItem[];
+  tenantId: string;
   initialQuery?: string;
 }
 
-export function MenuBrowser({ categories, items, initialQuery = "" }: Props) {
+export function MenuBrowser({
+  categories,
+  items,
+  tenantId,
+  initialQuery = "",
+}: Props) {
   const [query, setQuery] = useState(initialQuery);
   const [activeCategory, setActiveCategory] = useState<string>("all");
 
@@ -138,7 +144,7 @@ export function MenuBrowser({ categories, items, initialQuery = "" }: Props) {
               </div>
               <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3">
                 {categoryItems.map((item) => (
-                  <MenuItemCard key={item.id} item={item} />
+                  <MenuItemCard key={item.id} item={item} tenantId={tenantId} />
                 ))}
               </div>
             </section>
@@ -147,7 +153,7 @@ export function MenuBrowser({ categories, items, initialQuery = "" }: Props) {
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-3">
           {visible.map((item) => (
-            <MenuItemCard key={item.id} item={item} />
+            <MenuItemCard key={item.id} item={item} tenantId={tenantId} />
           ))}
         </div>
       )}

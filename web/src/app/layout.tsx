@@ -12,8 +12,12 @@ import {
   tokensToCssVars,
 } from "@/lib/restaurant-config";
 import { siteConfig } from "@/lib/site";
-import { getServerTenantId } from "@/lib/tenant-server";
-import { tenantClientScript } from "@/lib/tenants";
+import { getServerTenantId, isLandingRequest } from "@/lib/tenant-server";
+import {
+  DEFAULT_TENANT_ID,
+  tenantClientScript,
+  withTenant,
+} from "@/lib/tenants";
 
 const sans = Manrope({
   subsets: ["latin"],
@@ -65,6 +69,38 @@ function metadataKeywords(config: RestaurantConfigFromWeb) {
 }
 
 export async function generateMetadata(): Promise<Metadata> {
+  if (await isLandingRequest()) {
+    return {
+      metadataBase: new URL(siteConfig.siteUrl),
+      title: "Restaurante Manía | Elige tu restaurante",
+      description:
+        "Bienvenido a Restaurante Manía. Elige un restaurante para ver su menú y pedir en línea, o descubre Software Manía para tu negocio.",
+      applicationName: siteConfig.name,
+      alternates: { canonical: "/" },
+      openGraph: {
+        type: "website",
+        locale: "es_CO",
+        url: "/",
+        siteName: siteConfig.name,
+        title: "Bienvenido a Restaurante Manía",
+        description: "Elige un restaurante para empezar.",
+        images: [{ url: "/rm-logo.png", width: 512, height: 512, alt: "Logo de Restaurante Manía" }],
+      },
+      twitter: {
+        card: "summary_large_image",
+        title: "Bienvenido a Restaurante Manía",
+        description: "Elige un restaurante para empezar.",
+        images: ["/rm-logo.png"],
+      },
+      robots: {
+        index: true,
+        follow: true,
+        googleBot: { index: true, follow: true },
+      },
+      icons: { icon: "/favicon.svg", apple: "/favicon.svg" },
+    };
+  }
+
   const tenantId = await getServerTenantId();
   const { config } = await getRestaurantConfig(tenantId);
   const title = `${config.name} | ${config.slogan}`;
@@ -93,7 +129,7 @@ export async function generateMetadata(): Promise<Metadata> {
     openGraph: {
       type: "website",
       locale: "es_CO",
-      url: "/",
+      url: withTenant("/", tenantId),
       siteName: config.name,
       title,
       description,
@@ -117,7 +153,7 @@ export async function generateMetadata(): Promise<Metadata> {
       follow: true,
       googleBot: { index: true, follow: true, "max-image-preview": "large" },
     },
-    alternates: { canonical: "/" },
+    alternates: { canonical: withTenant("/", tenantId) },
     icons: { icon: "/favicon.svg", apple: "/favicon.svg" },
   };
 }
@@ -135,7 +171,8 @@ export async function generateViewport(): Promise<Viewport> {
 export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const tenantId = await getServerTenantId();
+  const landing = await isLandingRequest();
+  const tenantId = landing ? DEFAULT_TENANT_ID : await getServerTenantId();
   const { config } = await getRestaurantConfig(tenantId);
 
   return (
@@ -145,13 +182,17 @@ export default async function RootLayout({
         <style dangerouslySetInnerHTML={{ __html: tokensToCssVars(config) }} />
       </head>
       <body>
-        <CartProvider>
-          <VisitTracker />
-          <Header config={config} />
-          <main className="min-h-[70vh] pb-28 md:pb-24">{children}</main>
-          <Footer config={config} />
-          <FloatingCartBar />
-        </CartProvider>
+        {landing ? (
+          children
+        ) : (
+          <CartProvider>
+            <VisitTracker />
+            <Header config={config} tenantId={tenantId} />
+            <main className="min-h-[70vh] pb-28 md:pb-24">{children}</main>
+            <Footer config={config} tenantId={tenantId} />
+            <FloatingCartBar />
+          </CartProvider>
+        )}
       </body>
     </html>
   );
